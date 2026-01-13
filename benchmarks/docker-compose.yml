@@ -1,0 +1,429 @@
+# FlyMQ Benchmark Docker Compose Configuration
+# Provides FlyMQ and Kafka instances for fair comparison benchmarks
+# Both systems run with identical resource constraints
+version: '3.8'
+
+x-resource-limits: &resource-limits
+  deploy:
+    resources:
+      limits:
+        cpus: '2.0'
+        memory: 1G
+      reservations:
+        cpus: '0.5'
+        memory: 512M
+
+services:
+  # ==========================================================================
+  # FlyMQ Services
+  # ==========================================================================
+  
+  # FlyMQ Standalone for single-node benchmarks
+  flymq-standalone:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-standalone
+    profiles: ["standalone", "all"]
+    ports:
+      - "19092:9092"
+    environment:
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: standalone
+    volumes:
+      - flymq-standalone-data:/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # FlyMQ 2-Node Cluster - Node 1
+  flymq-2node-1:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-2node-1
+    profiles: ["cluster-2", "all"]
+    ports:
+      - "19092:9092"
+    environment:
+      FLYMQ_NODE_ID: node1
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: "flymq-2node-1:9092"
+      FLYMQ_ADVERTISE_CLUSTER: "flymq-2node-1:9093"
+      FLYMQ_PEERS: "flymq-2node-2:9093"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: cluster
+    volumes:
+      - flymq-2node-1-data:/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # FlyMQ 2-Node Cluster - Node 2
+  flymq-2node-2:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-2node-2
+    profiles: ["cluster-2", "all"]
+    ports:
+      - "19094:9092"
+    environment:
+      FLYMQ_NODE_ID: node2
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: "flymq-2node-2:9092"
+      FLYMQ_ADVERTISE_CLUSTER: "flymq-2node-2:9093"
+      FLYMQ_PEERS: "flymq-2node-1:9093"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: cluster
+    volumes:
+      - flymq-2node-2-data:/data
+    depends_on:
+      flymq-2node-1:
+        condition: service_healthy
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # FlyMQ 3-Node Cluster - Node 1
+  flymq-3node-1:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-3node-1
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "19092:9092"
+    environment:
+      FLYMQ_NODE_ID: node1
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: "flymq-3node-1:9092"
+      FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-1:9093"
+      FLYMQ_PEERS: "flymq-3node-2:9093,flymq-3node-3:9093"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: cluster
+    volumes:
+      - flymq-3node-1-data:/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # FlyMQ 3-Node Cluster - Node 2
+  flymq-3node-2:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-3node-2
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "19094:9092"
+    environment:
+      FLYMQ_NODE_ID: node2
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: "flymq-3node-2:9092"
+      FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-2:9093"
+      FLYMQ_PEERS: "flymq-3node-1:9093,flymq-3node-3:9093"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: cluster
+    volumes:
+      - flymq-3node-2-data:/data
+    depends_on:
+      flymq-3node-1:
+        condition: service_healthy
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # FlyMQ 3-Node Cluster - Node 3
+  flymq-3node-3:
+    build:
+      context: ../
+      dockerfile: deploy/docker/Dockerfile
+    container_name: flymq-3node-3
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "19096:9092"
+    environment:
+      FLYMQ_NODE_ID: node3
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: "flymq-3node-3:9092"
+      FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-3:9093"
+      FLYMQ_PEERS: "flymq-3node-1:9093,flymq-3node-2:9093"
+      FLYMQ_DATA_DIR: /data
+      FLYMQ_LOG_LEVEL: info
+      FLYMQ_ROLE: cluster
+    volumes:
+      - flymq-3node-3-data:/data
+    depends_on:
+      flymq-3node-1:
+        condition: service_healthy
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9095/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ==========================================================================
+  # Kafka Services
+  # ==========================================================================
+
+  # Standalone Kafka for single-node benchmarks
+  kafka-standalone:
+    image: apache/kafka:3.7.0
+    container_name: kafka-standalone
+    profiles: ["standalone", "all"]
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-standalone:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-standalone:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 1
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      CLUSTER_ID: "benchmark-standalone-cluster"
+    volumes:
+      - kafka-standalone-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka 2-Node Cluster - Node 1
+  kafka-2node-1:
+    image: apache/kafka:3.7.0
+    container_name: kafka-2node-1
+    profiles: ["cluster-2", "all"]
+    ports:
+      - "39092:39092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:39092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2node-1:9092,EXTERNAL://localhost:39092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-2node-1:9093,2@kafka-2node-2:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 1
+      CLUSTER_ID: "benchmark-2node-cluster"
+    volumes:
+      - kafka-2node-1-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka 2-Node Cluster - Node 2
+  kafka-2node-2:
+    image: apache/kafka:3.7.0
+    container_name: kafka-2node-2
+    profiles: ["cluster-2", "all"]
+    ports:
+      - "39093:39093"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:39093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2node-2:9092,EXTERNAL://localhost:39093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-2node-1:9093,2@kafka-2node-2:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_RETENTION_HOURS: 1
+      CLUSTER_ID: "benchmark-2node-cluster"
+    volumes:
+      - kafka-2node-2-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka 3-Node Cluster - Node 1
+  kafka-3node-1:
+    image: apache/kafka:3.7.0
+    container_name: kafka-3node-1
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "49092:49092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:49092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3node-1:9092,EXTERNAL://localhost:49092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-3node-1:9093,2@kafka-3node-2:9093,3@kafka-3node-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_LOG_RETENTION_HOURS: 1
+      CLUSTER_ID: "benchmark-3node-cluster"
+    volumes:
+      - kafka-3node-1-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka 3-Node Cluster - Node 2
+  kafka-3node-2:
+    image: apache/kafka:3.7.0
+    container_name: kafka-3node-2
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "49093:49093"
+    environment:
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:49093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3node-2:9092,EXTERNAL://localhost:49093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-3node-1:9093,2@kafka-3node-2:9093,3@kafka-3node-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_LOG_RETENTION_HOURS: 1
+      CLUSTER_ID: "benchmark-3node-cluster"
+    volumes:
+      - kafka-3node-2-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Kafka 3-Node Cluster - Node 3
+  kafka-3node-3:
+    image: apache/kafka:3.7.0
+    container_name: kafka-3node-3
+    profiles: ["cluster-3", "all"]
+    ports:
+      - "49094:49094"
+    environment:
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:49094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3node-3:9092,EXTERNAL://localhost:49094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-3node-1:9093,2@kafka-3node-2:9093,3@kafka-3node-3:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_LOG_RETENTION_HOURS: 1
+      CLUSTER_ID: "benchmark-3node-cluster"
+    volumes:
+      - kafka-3node-3-data:/var/lib/kafka/data
+    <<: *resource-limits
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  # FlyMQ volumes
+  flymq-standalone-data:
+  flymq-2node-1-data:
+  flymq-2node-2-data:
+  flymq-3node-1-data:
+  flymq-3node-2-data:
+  flymq-3node-3-data:
+  # Kafka volumes
+  kafka-standalone-data:
+  kafka-2node-1-data:
+  kafka-2node-2-data:
+  kafka-3node-1-data:
+  kafka-3node-2-data:
+  kafka-3node-3-data:
+
