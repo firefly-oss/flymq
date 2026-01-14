@@ -1,0 +1,60 @@
+# FlyMQ Systemd Service File
+# Standalone Mode
+#
+# Installation:
+#   sudo cp flymq.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable flymq
+#   sudo systemctl start flymq
+
+[Unit]
+Description=FlyMQ Message Queue Server
+Documentation=https://github.com/firefly-oss/flymq
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flymq
+Group=flymq
+
+# Configuration
+Environment=FLYMQ_CONFIG=/etc/flymq/flymq.json
+ExecStart=/usr/local/bin/flymq --config ${FLYMQ_CONFIG}
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitInterval=60
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/flymq /var/log/flymq
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitCORE=infinity
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flymq
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+

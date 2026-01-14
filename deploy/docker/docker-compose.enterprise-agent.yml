@@ -1,0 +1,138 @@
+# =============================================================================
+# FlyMQ Enterprise Agent Node Configuration
+# =============================================================================
+#
+# Agent node that joins an enterprise FlyMQ cluster with all features enabled.
+# Run this on remote hosts after starting the bootstrap server.
+#
+# PREREQUISITES:
+#   1. Copy TLS certificates from bootstrap server to ./certs/
+#   2. Get the join token from bootstrap server logs
+#   3. Set FLYMQ_SERVER and FLYMQ_JOIN_TOKEN environment variables
+#
+# USAGE:
+#   FLYMQ_SERVER=<bootstrap-ip>:9093 \
+#   FLYMQ_JOIN_TOKEN=<token> \
+#   docker compose -f deploy/docker/docker-compose.enterprise-agent.yml up -d
+#
+# =============================================================================
+
+services:
+  flymq-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: flymq:enterprise
+    container_name: flymq-agent
+    hostname: flymq-agent
+    environment:
+      # =========================================================================
+      # Core Configuration
+      # =========================================================================
+      FLYMQ_ROLE: agent
+      FLYMQ_NODE_ID: ${FLYMQ_NODE_ID:-flymq-agent-${HOSTNAME}}
+      FLYMQ_SERVER: ${FLYMQ_SERVER:?FLYMQ_SERVER is required}
+      FLYMQ_JOIN_TOKEN: ${FLYMQ_JOIN_TOKEN:?FLYMQ_JOIN_TOKEN is required}
+      FLYMQ_LOG_LEVEL: ${FLYMQ_LOG_LEVEL:-info}
+
+      # Network addresses
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: ${FLYMQ_ADVERTISE_ADDR:-}
+      FLYMQ_ADVERTISE_CLUSTER: ${FLYMQ_ADVERTISE_CLUSTER:-}
+
+      # =========================================================================
+      # Security Configuration (must match bootstrap)
+      # =========================================================================
+      FLYMQ_TLS_ENABLED: "true"
+      FLYMQ_TLS_CERT_FILE: "/etc/flymq/certs/server.crt"
+      FLYMQ_TLS_KEY_FILE: "/etc/flymq/certs/server.key"
+      FLYMQ_TLS_CA_FILE: "/etc/flymq/certs/ca.crt"
+
+      FLYMQ_ENCRYPTION_ENABLED: "true"
+      FLYMQ_ENCRYPTION_KEY: ${FLYMQ_ENCRYPTION_KEY:?FLYMQ_ENCRYPTION_KEY is required}
+
+      FLYMQ_AUTH_ENABLED: "true"
+      FLYMQ_AUTH_ADMIN_USERNAME: ${FLYMQ_AUTH_ADMIN_USERNAME:-admin}
+      FLYMQ_AUTH_ADMIN_PASSWORD: ${FLYMQ_AUTH_ADMIN_PASSWORD:-secure-password}
+      FLYMQ_AUTH_ALLOW_ANONYMOUS: "false"
+      FLYMQ_AUTH_DEFAULT_PUBLIC: "false"
+
+      # =========================================================================
+      # Advanced Features (must match bootstrap)
+      # =========================================================================
+      FLYMQ_SCHEMA_ENABLED: "true"
+      FLYMQ_SCHEMA_VALIDATION: "strict"
+
+      FLYMQ_DLQ_ENABLED: "true"
+      FLYMQ_DLQ_MAX_RETRIES: "3"
+      FLYMQ_DLQ_RETRY_DELAY: "1000"
+
+      FLYMQ_DEFAULT_TTL: "86400000"
+      FLYMQ_TTL_CLEANUP_INTERVAL: "60000"
+
+      FLYMQ_DELAYED_ENABLED: "true"
+      FLYMQ_DELAYED_MAX_DELAY: "604800000"
+
+      FLYMQ_TRANSACTION_ENABLED: "true"
+      FLYMQ_TRANSACTION_TIMEOUT: "60"
+
+      # =========================================================================
+      # Observability
+      # =========================================================================
+      FLYMQ_METRICS_ENABLED: "true"
+      FLYMQ_METRICS_ADDR: "0.0.0.0:9094"
+
+      FLYMQ_HEALTH_ENABLED: "true"
+      FLYMQ_HEALTH_ADDR: "0.0.0.0:9095"
+
+      FLYMQ_ADMIN_ENABLED: "true"
+      FLYMQ_ADMIN_ADDR: "0.0.0.0:9096"
+
+      FLYMQ_TRACING_ENABLED: ${FLYMQ_TRACING_ENABLED:-false}
+      FLYMQ_TRACING_ENDPOINT: ${FLYMQ_TRACING_ENDPOINT:-localhost:4317}
+
+      # =========================================================================
+      # Cluster Configuration
+      # =========================================================================
+      FLYMQ_REPLICATION_FACTOR: ${FLYMQ_REPLICATION_FACTOR:-3}
+      FLYMQ_MIN_ISR: ${FLYMQ_MIN_ISR:-2}
+
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+      - "9094:9094"
+      - "9095:9095"
+      - "9096:9096"
+    volumes:
+      # Named volumes for better portability and data management
+      - flymq-agent-data:/data
+      - flymq-agent-config:/var/lib/flymq
+      - flymq-certs:/etc/flymq/certs:ro
+    networks:
+      - flymq-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9095/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+networks:
+  flymq-network:
+    driver: bridge
+
+volumes:
+  # Agent data volume - stores message data, logs, and state
+  flymq-agent-data:
+    driver: local
+  # Agent config volume - stores node configuration
+  flymq-agent-config:
+    driver: local
+  # TLS certificates volume - shared between server and agents
+  # This is an external volume created by setup-enterprise.sh
+  flymq-certs:
+    external: true
+    name: flymq-certs
+

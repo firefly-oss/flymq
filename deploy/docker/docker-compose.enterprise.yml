@@ -1,0 +1,154 @@
+# =============================================================================
+# FlyMQ Enterprise Cluster Configuration
+# =============================================================================
+#
+# Full-featured FlyMQ cluster with all enterprise features enabled by default:
+# - TLS encryption for client connections
+# - Data-at-rest encryption (AES-256)
+# - Authentication with RBAC
+# - Schema validation (strict mode)
+# - Dead Letter Queue
+# - Message TTL (24-hour default)
+# - Delayed message delivery
+# - Transaction support
+# - Full observability (metrics, health, admin API)
+#
+# PREREQUISITES:
+#   1. Generate TLS certificates:
+#      ./scripts/generate-certs.sh ./certs
+#
+#   2. Generate encryption key (or set FLYMQ_ENCRYPTION_KEY):
+#      export FLYMQ_ENCRYPTION_KEY=$(./scripts/generate-encryption-key.sh)
+#
+# USAGE:
+#   docker compose -f deploy/docker/docker-compose.enterprise.yml up -d --build
+#
+# =============================================================================
+
+services:
+  flymq-bootstrap:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: flymq:enterprise
+    container_name: flymq-bootstrap
+    hostname: flymq-bootstrap
+    environment:
+      # =========================================================================
+      # Core Configuration
+      # =========================================================================
+      FLYMQ_ROLE: bootstrap
+      FLYMQ_NODE_ID: ${FLYMQ_NODE_ID:-flymq-bootstrap}
+      FLYMQ_CLUSTER_TOKEN: ${FLYMQ_CLUSTER_TOKEN:-}
+      FLYMQ_LOG_LEVEL: ${FLYMQ_LOG_LEVEL:-info}
+
+      # Network addresses
+      FLYMQ_BIND_ADDR: "0.0.0.0:9092"
+      FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
+      FLYMQ_ADVERTISE_ADDR: ${FLYMQ_ADVERTISE_ADDR:-}
+      FLYMQ_ADVERTISE_CLUSTER: ${FLYMQ_ADVERTISE_CLUSTER:-}
+
+      # =========================================================================
+      # Security Configuration (ENABLED BY DEFAULT)
+      # =========================================================================
+      # TLS encryption for client connections
+      FLYMQ_TLS_ENABLED: "true"
+      FLYMQ_TLS_CERT_FILE: "/etc/flymq/certs/server.crt"
+      FLYMQ_TLS_KEY_FILE: "/etc/flymq/certs/server.key"
+      FLYMQ_TLS_CA_FILE: "/etc/flymq/certs/ca.crt"
+
+      # Data-at-rest encryption (AES-256)
+      FLYMQ_ENCRYPTION_ENABLED: "true"
+      FLYMQ_ENCRYPTION_KEY: ${FLYMQ_ENCRYPTION_KEY:-}
+
+      # Authentication with RBAC
+      FLYMQ_AUTH_ENABLED: "true"
+      FLYMQ_AUTH_ADMIN_USERNAME: ${FLYMQ_AUTH_ADMIN_USERNAME:-admin}
+      FLYMQ_AUTH_ADMIN_PASSWORD: ${FLYMQ_AUTH_ADMIN_PASSWORD:-secure-password}
+      FLYMQ_AUTH_ALLOW_ANONYMOUS: "false"
+      FLYMQ_AUTH_DEFAULT_PUBLIC: "false"
+
+      # =========================================================================
+      # Advanced Features (ENABLED BY DEFAULT)
+      # =========================================================================
+      # Schema validation (strict mode)
+      FLYMQ_SCHEMA_ENABLED: "true"
+      FLYMQ_SCHEMA_VALIDATION: "strict"
+
+      # Dead Letter Queue
+      FLYMQ_DLQ_ENABLED: "true"
+      FLYMQ_DLQ_MAX_RETRIES: "3"
+      FLYMQ_DLQ_RETRY_DELAY: "1000"
+
+      # Message TTL (24 hours default = 86400000 ms)
+      FLYMQ_DEFAULT_TTL: "86400000"
+      FLYMQ_TTL_CLEANUP_INTERVAL: "60000"
+
+      # Delayed message delivery
+      FLYMQ_DELAYED_ENABLED: "true"
+      FLYMQ_DELAYED_MAX_DELAY: "604800000"
+
+      # Transaction support
+      FLYMQ_TRANSACTION_ENABLED: "true"
+      FLYMQ_TRANSACTION_TIMEOUT: "60"
+
+      # =========================================================================
+      # Observability (ENABLED BY DEFAULT)
+      # =========================================================================
+      FLYMQ_METRICS_ENABLED: "true"
+      FLYMQ_METRICS_ADDR: "0.0.0.0:9094"
+
+      FLYMQ_HEALTH_ENABLED: "true"
+      FLYMQ_HEALTH_ADDR: "0.0.0.0:9095"
+
+      FLYMQ_ADMIN_ENABLED: "true"
+      FLYMQ_ADMIN_ADDR: "0.0.0.0:9096"
+
+      FLYMQ_TRACING_ENABLED: ${FLYMQ_TRACING_ENABLED:-false}
+      FLYMQ_TRACING_ENDPOINT: ${FLYMQ_TRACING_ENDPOINT:-localhost:4317}
+      FLYMQ_TRACING_SAMPLE_RATE: ${FLYMQ_TRACING_SAMPLE_RATE:-0.1}
+
+      # =========================================================================
+      # Cluster Configuration
+      # =========================================================================
+      FLYMQ_REPLICATION_FACTOR: ${FLYMQ_REPLICATION_FACTOR:-3}
+      FLYMQ_MIN_ISR: ${FLYMQ_MIN_ISR:-2}
+
+    ports:
+      - "9092:9092"   # Client connections (TLS)
+      - "9093:9093"   # Cluster communication
+      - "9094:9094"   # Prometheus metrics
+      - "9095:9095"   # Health check
+      - "9096:9096"   # Admin API
+    volumes:
+      # Named volumes for better portability and data management
+      - flymq-server-data:/data
+      - flymq-server-config:/var/lib/flymq
+      - flymq-certs:/etc/flymq/certs:ro
+    networks:
+      - flymq-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9095/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+networks:
+  flymq-network:
+    driver: bridge
+
+volumes:
+  # Server data volume - stores message data, logs, and state
+  flymq-server-data:
+    driver: local
+  # Server config volume - stores cluster tokens and node configuration
+  flymq-server-config:
+    driver: local
+  # TLS certificates volume - shared between server and agents
+  # This is an external volume created by setup-enterprise.sh
+  flymq-certs:
+    external: true
+    name: flymq-certs
+

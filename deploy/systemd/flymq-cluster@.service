@@ -1,0 +1,72 @@
+# FlyMQ Cluster Node Systemd Service Template
+# Cluster Mode - Instance Template
+#
+# This is a template unit file for running multiple FlyMQ nodes on the same host
+# or for cluster deployments where each node has a unique identifier.
+#
+# Usage:
+#   sudo systemctl start flymq-cluster@node1
+#   sudo systemctl start flymq-cluster@node2
+#   sudo systemctl start flymq-cluster@node3
+#
+# Each instance uses its own config file: /etc/flymq/flymq-%i.json
+# where %i is the instance name (e.g., node1, node2, node3)
+
+[Unit]
+Description=FlyMQ Cluster Node %i
+Documentation=https://github.com/firefly-oss/flymq
+After=network-online.target
+Wants=network-online.target
+
+# Cluster coordination - wait for network to be fully ready
+After=systemd-networkd-wait-online.service
+
+[Service]
+Type=simple
+User=flymq
+Group=flymq
+
+# Instance-specific configuration
+Environment=FLYMQ_NODE_ID=%i
+Environment=FLYMQ_CONFIG=/etc/flymq/flymq-%i.json
+ExecStart=/usr/local/bin/flymq --config ${FLYMQ_CONFIG}
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy - more aggressive for cluster nodes
+Restart=always
+RestartSec=3
+StartLimitBurst=5
+StartLimitInterval=60
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/flymq/%i /var/log/flymq
+
+# Resource limits - higher for cluster nodes
+LimitNOFILE=131072
+LimitNPROC=8192
+LimitCORE=infinity
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flymq-%i
+
+# Graceful shutdown - longer timeout for cluster coordination
+TimeoutStopSec=60
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Watchdog for cluster health
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target
+
