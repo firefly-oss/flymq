@@ -118,6 +118,22 @@ func Error(format string, args ...interface{}) {
 	fmt.Fprintln(os.Stderr, colorize(Red, IconError+" "+msg))
 }
 
+// ErrorWithHint prints an error message with a helpful hint.
+func ErrorWithHint(message string, hint string) {
+	fmt.Fprintln(os.Stderr, colorize(Red, IconError+" "+message))
+	if hint != "" {
+		fmt.Fprintln(os.Stderr, colorize(Dim, "  "+IconArrow+" Hint: "+hint))
+	}
+}
+
+// ErrorWithSuggestion prints an error with a suggested command.
+func ErrorWithSuggestion(message string, suggestion string) {
+	fmt.Fprintln(os.Stderr, colorize(Red, IconError+" "+message))
+	if suggestion != "" {
+		fmt.Fprintln(os.Stderr, colorize(Cyan, "  "+IconArrow+" Try: "+suggestion))
+	}
+}
+
 // Warning prints a warning message.
 func Warning(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
@@ -128,6 +144,12 @@ func Warning(format string, args ...interface{}) {
 func Info(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Println(colorize(Cyan, IconInfo+" "+msg))
+}
+
+// Hint prints a hint message (dimmed).
+func Hint(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Println(colorize(Dim, "  "+IconArrow+" "+msg))
 }
 
 // Header prints a header/title.
@@ -143,4 +165,10 @@ func KeyValue(key string, value interface{}) {
 // Separator prints a horizontal line.
 func Separator() {
 	fmt.Println(colorize(Dim, "────────────────────────────────────────"))
+}
+
+// Example prints an example command.
+func Example(description, command string) {
+	fmt.Printf("  %s\n", colorize(Dim, "# "+description))
+	fmt.Printf("  %s\n", colorize(Cyan, command))
 }

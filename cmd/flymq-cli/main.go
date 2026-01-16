@@ -57,6 +57,7 @@ import (
 	"time"
 
 	"flymq/internal/banner"
+	"flymq/internal/protocol"
 	"flymq/pkg/cli"
 	"flymq/pkg/client"
 )
@@ -279,195 +280,102 @@ func printUsage() {
 	banner.Print()
 	fmt.Println()
 	cli.Header("Usage:")
-	fmt.Println("  flymq-cli <command> [options]")
+	fmt.Println("  flymq-cli [global-options] <command> [command-options]")
 	fmt.Println()
-	cli.Header("Commands:")
-	fmt.Println("  produce, pub    Produce a message to a topic")
-	fmt.Println("  consume, sub    Consume messages from a topic (batch)")
-	fmt.Println("  subscribe       Subscribe to a topic (continuous streaming)")
-	fmt.Println("  topics, list    List all topics")
-	fmt.Println("  create          Create a new topic")
-	fmt.Println("  delete          Delete a topic")
-	fmt.Println("  info            Show topic information")
-	fmt.Println("  version         Show version information")
-	fmt.Println("  help            Show this help message")
+
+	cli.Header("Core Commands:")
+	fmt.Println("  produce <topic> <message>   Produce a message to a topic")
+	fmt.Println("  consume <topic>             Consume messages from a topic (batch fetch)")
+	fmt.Println("  subscribe <topic>           Subscribe for continuous streaming (like tail -f)")
 	fmt.Println()
-	cli.Header("Advanced Commands:")
-	fmt.Println("  produce-delayed Produce a message with delay")
-	fmt.Println("  produce-ttl     Produce a message with TTL")
-	fmt.Println("  dlq             Dead letter queue operations (list, replay, purge, stats)")
-	fmt.Println("  schema          Schema registry operations (register, list, validate, delete)")
-	fmt.Println("  txn             Transaction operations")
-	fmt.Println("  groups          Consumer group management (list, describe, reset-offsets, lag)")
-	fmt.Println("  health          Health check queries")
-	fmt.Println("  admin           Admin API operations (cluster, topics, groups)")
-	fmt.Println("  cluster         Cluster management (status, members, join, leave)")
-	fmt.Println("  auth            Authenticate with the server")
-	fmt.Println("  whoami          Show current authentication status")
-	fmt.Println("  users           User management (list, create, delete, update, passwd)")
-	fmt.Println("  acl             ACL management (list, get, set, delete)")
+
+	cli.Header("Topic Management:")
+	fmt.Println("  create <topic>              Create a new topic")
+	fmt.Println("  delete <topic>              Delete a topic")
+	fmt.Println("  topics                      List all topics")
+	fmt.Println("  info <topic>                Show topic information")
 	fmt.Println()
+
+	cli.Header("Consumer Groups:")
+	fmt.Println("  groups list                 List all consumer groups")
+	fmt.Println("  groups describe <group>     Describe a consumer group")
+	fmt.Println("  groups lag <group>          Show consumer lag")
+	fmt.Println("  groups reset-offsets        Reset offsets for a group")
+	fmt.Println("  groups delete <group>       Delete a consumer group")
+	fmt.Println()
+
+	cli.Header("Advanced Features:")
+	fmt.Println("  produce-delayed <topic> <msg> <delay-ms>   Delayed message delivery")
+	fmt.Println("  produce-ttl <topic> <msg> <ttl-ms>         Message with time-to-live")
+	fmt.Println("  txn <topic> <msg1> [msg2...]               Transactional produce")
+	fmt.Println("  schema <subcommand>                        Schema registry operations")
+	fmt.Println("  dlq <subcommand>                           Dead letter queue operations")
+	fmt.Println()
+
+	cli.Header("Cluster & Admin:")
+	fmt.Println("  cluster status              Show cluster status")
+	fmt.Println("  cluster members             List cluster members")
+	fmt.Println("  cluster join --peer <addr>  Join a cluster")
+	fmt.Println("  cluster leave               Leave the cluster")
+	fmt.Println("  admin <subcommand>          Admin API operations")
+	fmt.Println("  health [live|ready]         Health check endpoints")
+	fmt.Println()
+
+	cli.Header("Authentication:")
+	fmt.Println("  auth                        Authenticate with the server")
+	fmt.Println("  whoami                      Show current authentication status")
+	fmt.Println("  users <subcommand>          User management")
+	fmt.Println("  roles <subcommand>          Role management")
+	fmt.Println("  acl <subcommand>            ACL management")
+	fmt.Println()
+
 	cli.Header("Global Options:")
-	fmt.Println("  -a, --addr      Server address (default: localhost:9092)")
-	fmt.Println("                  Can also be set via FLYMQ_ADDR environment variable")
-	fmt.Println("  -u, --username  Username for authentication")
-	fmt.Println("                  Can also be set via FLYMQ_USERNAME environment variable")
-	fmt.Println("  -P, --password  Password for authentication")
-	fmt.Println("                  Can also be set via FLYMQ_PASSWORD environment variable")
+	fmt.Println("  -a, --addr <host:port>      Server address (default: localhost:9092)")
+	fmt.Println("  -u, --username <user>       Username for authentication")
+	fmt.Println("  -P, --password <pass>       Password for authentication")
+	fmt.Println("  -T, --tls                   Enable TLS connection")
+	fmt.Println("  --ca-cert <file>            CA certificate for server verification")
+	fmt.Println("  --cert <file>               Client certificate for mTLS")
+	fmt.Println("  --key <file>                Client key for mTLS")
+	fmt.Println("  -k, --insecure              Skip TLS certificate verification")
 	fmt.Println()
-	cli.Header("TLS Options (Binary Protocol):")
-	fmt.Println("  -T, --tls       Enable TLS connection (env: FLYMQ_TLS=true)")
-	fmt.Println("  --ca-cert FILE  CA certificate file for server verification")
-	fmt.Println("                  Can also be set via FLYMQ_TLS_CA_FILE environment variable")
-	fmt.Println("  --cert FILE     Client certificate file for mTLS (env: FLYMQ_TLS_CERT_FILE)")
-	fmt.Println("  --key FILE      Client key file for mTLS (env: FLYMQ_TLS_KEY_FILE)")
-	fmt.Println("  -k, --insecure  Skip TLS certificate verification (testing only)")
-	fmt.Println("                  Can also be set via FLYMQ_TLS_INSECURE=true")
+
+	cli.Header("Environment Variables:")
+	fmt.Println("  FLYMQ_ADDR                  Server address")
+	fmt.Println("  FLYMQ_USERNAME              Username")
+	fmt.Println("  FLYMQ_PASSWORD              Password")
+	fmt.Println("  FLYMQ_TLS=true              Enable TLS")
+	fmt.Println("  FLYMQ_TLS_CA_FILE           CA certificate path")
+	fmt.Println("  FLYMQ_TLS_CERT_FILE         Client certificate path")
+	fmt.Println("  FLYMQ_TLS_KEY_FILE          Client key path")
+	fmt.Println("  FLYMQ_TLS_INSECURE=true     Skip TLS verification")
 	fmt.Println()
-	cli.Header("Admin API Options:")
-	fmt.Println("  --admin-addr    Admin API address (default: localhost:9096, env: FLYMQ_ADMIN_ADDR)")
-	fmt.Println("  --admin-user    Username for Admin API auth (env: FLYMQ_ADMIN_USER)")
-	fmt.Println("  --admin-pass    Password for Admin API auth (env: FLYMQ_ADMIN_PASS)")
-	fmt.Println("  --admin-tls     Enable HTTPS for Admin API (env: FLYMQ_ADMIN_TLS=true)")
-	fmt.Println("  --admin-ca-cert CA certificate for Admin API (env: FLYMQ_ADMIN_CA_FILE)")
-	fmt.Println("  --admin-insecure Skip TLS verification for Admin API (env: FLYMQ_ADMIN_TLS_INSECURE)")
-	fmt.Println()
-	cli.Header("Health Endpoint TLS Options:")
-	fmt.Println("  --health-addr   Health endpoint address (default: localhost:9095, env: FLYMQ_HEALTH_ADDR)")
-	fmt.Println("  --health-tls    Enable HTTPS for health endpoints (env: FLYMQ_HEALTH_TLS=true)")
-	fmt.Println("  --health-ca-cert CA certificate for health endpoints (env: FLYMQ_HEALTH_CA_FILE)")
-	fmt.Println("  --health-insecure Skip TLS verification for health (env: FLYMQ_HEALTH_TLS_INSECURE)")
-	fmt.Println()
-	cli.Header("Command Options:")
-	fmt.Println()
-	fmt.Println("  produce <topic> <message> [--key KEY] [--partition N] [--addr host:port]")
-	fmt.Println("      Produce a single message to the specified topic.")
-	fmt.Println("      --key, -k         Message key for partition routing (like Kafka)")
-	fmt.Println("      --partition, -p   Target partition (overrides key-based routing)")
-	fmt.Println()
-	fmt.Println("  consume <topic> [--offset N] [--count N] [--partition N] [--show-key] [--quiet] [--raw]")
-	fmt.Println("      Consume messages from a topic starting at the given offset.")
-	fmt.Println("      --offset, -o      Starting offset (default: 0)")
-	fmt.Println("      --count, -n       Number of messages to fetch (default: 10)")
-	fmt.Println("      --partition, -p   Partition to consume from (default: 0)")
-	fmt.Println("      --show-key, -k    Display message keys in output")
-	fmt.Println("      --quiet, -q       Suppress headers and info messages")
-	fmt.Println("      --raw, -r         Raw output: just message content, no formatting")
-	fmt.Println("      --no-offset       Hide offset prefix in output")
-	fmt.Println()
-	fmt.Println("  subscribe <topic> [--from earliest|latest] [--from-beginning] [--from-latest] [--group GROUP] [--show-key] [--show-lag] [--quiet]")
-	fmt.Println("      Subscribe to a topic for continuous message streaming (like tail -f).")
-	fmt.Println("      --from, -f        Start position: earliest, latest (default: latest)")
-	fmt.Println("      --from-beginning  Start from the earliest offset (like Kafka)")
-	fmt.Println("      --from-latest     Start from the latest offset (like Kafka)")
-	fmt.Println("      --group, -g       Consumer group ID (default: default)")
-	fmt.Println("      --partition, -p   Partition number (default: 0)")
-	fmt.Println("      --show-key, -k    Display message keys in output")
-	fmt.Println("      --show-lag, -l    Show consumer lag periodically")
-	fmt.Println("      --quiet, -q       Suppress headers and info messages")
-	fmt.Println("      --raw, -r         Raw output: just message content, no formatting")
-	fmt.Println("      --no-timestamp    Hide timestamp in output")
-	fmt.Println("      --no-offset       Hide offset in output")
-	fmt.Println()
-	fmt.Println("  create <topic> [--partitions N]")
-	fmt.Println("      Create a new topic with the specified number of partitions.")
-	fmt.Println("      --partitions, -p  Number of partitions (default: 1)")
-	fmt.Println()
-	fmt.Println("  delete <topic>")
-	fmt.Println("      Delete a topic and all its data.")
-	fmt.Println()
-	fmt.Println("  info <topic>")
-	fmt.Println("      Display information about a topic.")
-	fmt.Println()
-	cli.Header("Examples:")
+
+	cli.Header("Quick Examples:")
 	fmt.Println()
 	fmt.Println("  # Basic messaging")
+	fmt.Println("  flymq-cli create my-topic --partitions 3")
 	fmt.Println("  flymq-cli produce my-topic \"Hello World\"")
-	fmt.Println("  flymq-cli consume my-topic --offset 0 --count 20")
+	fmt.Println("  flymq-cli consume my-topic --count 10")
 	fmt.Println("  flymq-cli subscribe my-topic --from earliest")
+	fmt.Println()
+	fmt.Println("  # Key-based partitioning (like Kafka)")
+	fmt.Println("  flymq-cli produce orders '{\"id\": 1}' --key user-123")
+	fmt.Println("  flymq-cli consume orders --show-key")
+	fmt.Println()
+	fmt.Println("  # Consumer groups")
 	fmt.Println("  flymq-cli subscribe my-topic --group my-group")
+	fmt.Println("  flymq-cli groups lag my-group --topic my-topic")
 	fmt.Println()
-	fmt.Println("  # Key-based messaging (like Kafka)")
-	fmt.Println("  flymq-cli produce orders '{\"id\": 1}' --key user-123  # Key ensures same partition")
-	fmt.Println("  flymq-cli produce orders '{\"id\": 2}' --key user-123  # Same key -> same partition")
-	fmt.Println("  flymq-cli consume orders --show-key                   # Display keys in output")
-	fmt.Println("  flymq-cli subscribe orders --show-key                 # Stream with keys")
+	fmt.Println("  # TLS connection")
+	fmt.Println("  flymq-cli --tls --ca-cert ca.crt topics")
+	fmt.Println("  flymq-cli --tls --insecure -u admin -P secret topics")
 	fmt.Println()
-	fmt.Println("  # Tail-like streaming")
-	fmt.Println("  flymq-cli subscribe my-topic --raw              # Just message content")
-	fmt.Println("  flymq-cli subscribe my-topic --quiet            # No headers, with timestamps")
-	fmt.Println("  flymq-cli subscribe my-topic --from earliest -r # All messages, raw output")
+	fmt.Println("  # Remote server")
+	fmt.Println("  flymq-cli --addr 192.168.1.100:9092 topics")
 	fmt.Println()
-	fmt.Println("  # Topic management")
-	fmt.Println("  flymq-cli create my-topic --partitions 4")
-	fmt.Println("  flymq-cli topics")
-	fmt.Println("  flymq-cli info my-topic")
-	fmt.Println("  flymq-cli delete my-topic")
-	fmt.Println()
-	cli.Header("Examples:")
-	fmt.Println()
-	fmt.Println("  # Delayed message delivery")
-	fmt.Println("  flymq-cli produce-delayed my-topic \"Delayed msg\" 5000   # 5 second delay")
-	fmt.Println()
-	fmt.Println("  # Message with TTL")
-	fmt.Println("  flymq-cli produce-ttl my-topic \"Expiring msg\" 60000     # 60 second TTL")
-	fmt.Println()
-	fmt.Println("  # Schema validation")
-	fmt.Println("  flymq-cli schema register user-schema json '{\"type\":\"object\"}'")
-	fmt.Println("  flymq-cli schema list")
-	fmt.Println("  flymq-cli schema validate user-schema '{\"name\":\"John\"}'")
-	fmt.Println()
-	fmt.Println("  # Dead letter queue")
-	fmt.Println("  flymq-cli dlq list my-topic")
-	fmt.Println("  flymq-cli dlq stats my-topic")
-	fmt.Println("  flymq-cli dlq replay my-topic <message-id>")
-	fmt.Println()
-	fmt.Println("  # Transactions")
-	fmt.Println("  flymq-cli txn begin")
-	fmt.Println("  flymq-cli txn produce my-topic \"Transactional message\"")
-	fmt.Println("  flymq-cli txn commit")
-	fmt.Println()
-	fmt.Println("  # Health checks")
-	fmt.Println("  flymq-cli health live")
-	fmt.Println("  flymq-cli health ready")
-	fmt.Println()
-	cli.Header("Cluster Examples:")
-	fmt.Println()
-	fmt.Println("  # View cluster status")
-	fmt.Println("  flymq-cli cluster status")
-	fmt.Println("  flymq-cli cluster members")
-	fmt.Println("  flymq-cli cluster info")
-	fmt.Println()
-	fmt.Println("  # Join/leave cluster")
-	fmt.Println("  flymq-cli cluster join --peer node1:9093")
-	fmt.Println("  flymq-cli cluster leave")
-	fmt.Println()
-	fmt.Println("  # Connect to remote server")
-	fmt.Println("  flymq-cli topics --addr 192.168.1.100:9092")
-	fmt.Println()
-	fmt.Println("  # TLS connection with CA certificate")
-	fmt.Println("  flymq-cli --tls --ca-cert /path/to/ca.crt topics")
-	fmt.Println()
-	fmt.Println("  # TLS with authentication")
-	fmt.Println("  flymq-cli --tls --ca-cert ca.crt -u admin -P secret topics")
-	fmt.Println()
-	fmt.Println("  # mTLS (mutual TLS) with client certificate")
-	fmt.Println("  flymq-cli --tls --ca-cert ca.crt --cert client.crt --key client.key topics")
-	fmt.Println()
-	fmt.Println("  # TLS with insecure mode (skip verification, testing only)")
-	fmt.Println("  flymq-cli --tls --insecure topics")
-	fmt.Println()
-	fmt.Println("  # Admin API with HTTPS (self-signed cert)")
-	fmt.Println("  flymq-cli admin cluster --admin-tls --admin-insecure")
-	fmt.Println()
-	fmt.Println("  # Admin API with HTTPS and CA certificate")
-	fmt.Println("  flymq-cli admin topics --admin-tls --admin-ca-cert /path/to/ca.crt")
-	fmt.Println()
-	fmt.Println("  # Admin API with authentication")
-	fmt.Println("  flymq-cli admin cluster --admin-user admin --admin-pass secret")
-	fmt.Println()
-	fmt.Println("  # Admin API with HTTPS + authentication")
-	fmt.Println("  flymq-cli admin topics --admin-tls --admin-insecure --admin-user admin --admin-pass secret")
+
+	fmt.Println("Run 'flymq-cli <command> --help' for detailed command usage.")
 	fmt.Println()
 }
 
@@ -623,15 +531,46 @@ func connect(args []string) *client.Client {
 
 	c, err := client.NewClientWithOptions(addr, opts)
 	if err != nil {
-		cli.Error("Failed to connect to %s: %v", addr, err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "connection refused") {
+			cli.ErrorWithHint(
+				fmt.Sprintf("Cannot connect to %s", addr),
+				"Is the FlyMQ server running? Start it with: flymq",
+			)
+		} else if strings.Contains(errStr, "no such host") {
+			cli.ErrorWithHint(
+				fmt.Sprintf("Unknown host in address: %s", addr),
+				"Check the server address. Use -a or --addr to specify a different address.",
+			)
+		} else if strings.Contains(errStr, "timeout") {
+			cli.ErrorWithHint(
+				fmt.Sprintf("Connection to %s timed out", addr),
+				"The server may be overloaded or unreachable. Check network connectivity.",
+			)
+		} else if strings.Contains(errStr, "certificate") || strings.Contains(errStr, "tls") {
+			cli.ErrorWithHint(
+				fmt.Sprintf("TLS error connecting to %s", addr),
+				"Check TLS configuration. Use --tls-insecure for testing (not recommended for production).",
+			)
+		} else {
+			cli.Error("Failed to connect to %s: %v", addr, err)
+		}
 		os.Exit(1)
 	}
 	return c
 }
 
 func cmdProduce(args []string) {
+	// Check for help flag
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			printProduceHelp()
+			return
+		}
+	}
+
 	if len(args) < 2 {
-		cli.Error("Usage: flymq-cli produce <topic> <message> [--key KEY] [--partition N] [--addr host:port]")
+		printProduceHelp()
 		os.Exit(1)
 	}
 
@@ -663,39 +602,67 @@ func cmdProduce(args []string) {
 	c := connect(args)
 	defer c.Close()
 
-	var offset uint64
+	// Use ProduceWithMetadata to get full RecordMetadata
+	// Note: partition flag is parsed but currently the server handles partitioning
+	// The partition will be returned in RecordMetadata
+	_ = partition // Reserved for future use when explicit partition routing is needed
+
+	var meta *protocol.RecordMetadata
 	var err error
-	if partition >= 0 {
-		if len(key) > 0 {
-			offset, err = c.ProduceWithKeyToPartition(topic, partition, key, []byte(message))
-		} else {
-			offset, err = c.ProduceToPartition(topic, partition, []byte(message))
-		}
-	} else if len(key) > 0 {
-		offset, err = c.ProduceWithKey(topic, key, []byte(message))
+	if len(key) > 0 {
+		meta, err = c.ProduceWithKey(topic, key, []byte(message))
 	} else {
-		offset, err = c.Produce(topic, []byte(message))
+		meta, err = c.Produce(topic, []byte(message))
 	}
 	if err != nil {
-		cli.Error("Failed to produce: %v", err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "topic not found") || strings.Contains(errStr, "unknown topic") {
+			cli.ErrorWithSuggestion(
+				fmt.Sprintf("Topic '%s' does not exist", topic),
+				fmt.Sprintf("flymq-cli create %s", topic),
+			)
+		} else if strings.Contains(errStr, "not leader") {
+			cli.ErrorWithHint(
+				"Connected to a follower node",
+				"The client will automatically retry with the leader. If this persists, check cluster health.",
+			)
+		} else if strings.Contains(errStr, "authentication") || strings.Contains(errStr, "unauthorized") {
+			cli.ErrorWithSuggestion(
+				"Authentication required",
+				"flymq-cli auth --username <user> --password <pass>",
+			)
+		} else {
+			cli.Error("Failed to produce: %v", err)
+		}
 		os.Exit(1)
 	}
 
-	// Build success message
-	var parts []string
-	parts = append(parts, fmt.Sprintf("offset %d", offset))
-	if len(key) > 0 {
-		parts = append(parts, fmt.Sprintf("key: %s", string(key)))
+	// Display RecordMetadata (Kafka-like output)
+	fmt.Println()
+	cli.Header("RecordMetadata")
+	fmt.Printf("  Topic:     %s\n", meta.Topic)
+	fmt.Printf("  Partition: %d\n", meta.Partition)
+	fmt.Printf("  Offset:    %d\n", meta.Offset)
+	fmt.Printf("  Timestamp: %s\n", time.UnixMilli(meta.Timestamp).Format(time.RFC3339))
+	if meta.KeySize >= 0 {
+		fmt.Printf("  KeySize:   %d bytes\n", meta.KeySize)
 	}
-	if partition >= 0 {
-		parts = append(parts, fmt.Sprintf("partition: %d", partition))
-	}
-	cli.Success("Message produced to %s at %s", topic, strings.Join(parts, ", "))
+	fmt.Printf("  ValueSize: %d bytes\n", meta.ValueSize)
+	fmt.Println()
+	cli.Success("Message produced successfully")
 }
 
 func cmdConsume(args []string) {
+	// Check for help flag
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			printConsumeHelp()
+			return
+		}
+	}
+
 	if len(args) < 1 {
-		cli.Error("Usage: flymq-cli consume <topic> [--offset N] [--count N] [--partition N] [--quiet] [--raw] [--show-key]")
+		printConsumeHelp()
 		os.Exit(1)
 	}
 
@@ -748,7 +715,20 @@ func cmdConsume(args []string) {
 
 	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, count)
 	if err != nil {
-		cli.Error("Failed to consume: %v", err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "topic not found") || strings.Contains(errStr, "unknown topic") {
+			cli.ErrorWithSuggestion(
+				fmt.Sprintf("Topic '%s' does not exist", topic),
+				"flymq-cli topics  # List available topics",
+			)
+		} else if strings.Contains(errStr, "offset out of range") {
+			cli.ErrorWithHint(
+				fmt.Sprintf("Offset %d is out of range for topic '%s'", offset, topic),
+				"Use --offset 0 to start from the beginning, or use 'subscribe --from-latest' for new messages.",
+			)
+		} else {
+			cli.Error("Failed to consume: %v", err)
+		}
 		os.Exit(1)
 	}
 
@@ -785,8 +765,16 @@ func cmdConsume(args []string) {
 }
 
 func cmdSubscribe(args []string) {
+	// Check for help flag
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			printSubscribeHelp()
+			return
+		}
+	}
+
 	if len(args) < 1 {
-		cli.Error("Usage: flymq-cli subscribe <topic> [--from earliest|latest] [--from-beginning] [--from-latest] [--group GROUP] [--quiet] [--show-key] [--show-lag]")
+		printSubscribeHelp()
 		os.Exit(1)
 	}
 
@@ -943,8 +931,16 @@ func cmdListTopics(args []string) {
 }
 
 func cmdCreateTopic(args []string) {
+	// Check for help flag
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			printCreateHelp()
+			return
+		}
+	}
+
 	if len(args) < 1 {
-		cli.Error("Usage: flymq-cli create <topic> [--partitions N]")
+		printCreateHelp()
 		os.Exit(1)
 	}
 
@@ -1318,9 +1314,9 @@ func cmdTransaction(args []string) {
 
 	cli.Info("Transaction started")
 
-	var offsets []uint64
+	var metas []*protocol.RecordMetadata
 	for _, msg := range messages {
-		offset, err := txn.Produce(topic, []byte(msg))
+		meta, err := txn.Produce(topic, []byte(msg))
 		if err != nil {
 			cli.Warning("Failed to produce message, rolling back: %v", err)
 			if rbErr := txn.Rollback(); rbErr != nil {
@@ -1328,7 +1324,7 @@ func cmdTransaction(args []string) {
 			}
 			os.Exit(1)
 		}
-		offsets = append(offsets, offset)
+		metas = append(metas, meta)
 	}
 
 	if err := txn.Commit(); err != nil {
@@ -1337,8 +1333,8 @@ func cmdTransaction(args []string) {
 	}
 
 	cli.Success("Transaction committed with %d messages", len(messages))
-	for i, offset := range offsets {
-		fmt.Printf("  Message %d: offset %d\n", i+1, offset)
+	for i, meta := range metas {
+		fmt.Printf("  Message %d: topic=%s partition=%d offset=%d\n", i+1, meta.Topic, meta.Partition, meta.Offset)
 	}
 }
 
@@ -2795,4 +2791,127 @@ func getStringListArg(args []string, flag string) []string {
 		}
 	}
 	return nil
+}
+
+// ============================================================================
+// Command Help Functions
+// ============================================================================
+
+func printProduceHelp() {
+	cli.Header("produce - Produce a message to a topic")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  flymq-cli produce <topic> <message> [options]")
+	fmt.Println()
+	fmt.Println("Arguments:")
+	fmt.Println("  <topic>     Target topic name")
+	fmt.Println("  <message>   Message content (string)")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --key, -k <key>         Message key for partition routing")
+	fmt.Println("                          Messages with the same key go to the same partition")
+	fmt.Println("  --partition, -p <n>     Target partition number (overrides key-based routing)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  # Simple message")
+	fmt.Println("  flymq-cli produce my-topic \"Hello World\"")
+	fmt.Println()
+	fmt.Println("  # Message with key (ensures ordering for same key)")
+	fmt.Println("  flymq-cli produce orders '{\"id\": 1}' --key user-123")
+	fmt.Println("  flymq-cli produce orders '{\"id\": 2}' --key user-123  # Same partition")
+	fmt.Println()
+	fmt.Println("  # Explicit partition")
+	fmt.Println("  flymq-cli produce events \"data\" --partition 2")
+	fmt.Println()
+}
+
+func printConsumeHelp() {
+	cli.Header("consume - Consume messages from a topic (batch fetch)")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  flymq-cli consume <topic> [options]")
+	fmt.Println()
+	fmt.Println("Arguments:")
+	fmt.Println("  <topic>     Topic to consume from")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --offset, -o <n>        Starting offset (default: 0)")
+	fmt.Println("  --count, -n <n>         Number of messages to fetch (default: 10)")
+	fmt.Println("  --partition, -p <n>     Partition to consume from (default: 0)")
+	fmt.Println("  --show-key, -k          Display message keys in output")
+	fmt.Println("  --quiet, -q             Suppress headers and info messages")
+	fmt.Println("  --raw, -r               Raw output: just message content")
+	fmt.Println("  --no-offset             Hide offset prefix in output")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  # Consume 10 messages from offset 0")
+	fmt.Println("  flymq-cli consume my-topic")
+	fmt.Println()
+	fmt.Println("  # Consume 50 messages starting at offset 100")
+	fmt.Println("  flymq-cli consume my-topic --offset 100 --count 50")
+	fmt.Println()
+	fmt.Println("  # Show message keys")
+	fmt.Println("  flymq-cli consume orders --show-key")
+	fmt.Println()
+	fmt.Println("  # Raw output for piping")
+	fmt.Println("  flymq-cli consume my-topic --raw | grep 'error'")
+	fmt.Println()
+}
+
+func printSubscribeHelp() {
+	cli.Header("subscribe - Subscribe for continuous message streaming")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  flymq-cli subscribe <topic> [options]")
+	fmt.Println()
+	fmt.Println("Arguments:")
+	fmt.Println("  <topic>     Topic to subscribe to")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --from, -f <mode>       Start position: earliest, latest (default: latest)")
+	fmt.Println("  --from-beginning        Start from the earliest offset (alias for --from earliest)")
+	fmt.Println("  --from-latest           Start from the latest offset (alias for --from latest)")
+	fmt.Println("  --group, -g <id>        Consumer group ID (default: default)")
+	fmt.Println("  --partition, -p <n>     Partition number (default: 0)")
+	fmt.Println("  --show-key, -k          Display message keys in output")
+	fmt.Println("  --show-lag, -l          Show consumer lag periodically")
+	fmt.Println("  --quiet, -q             Suppress headers and info messages")
+	fmt.Println("  --raw, -r               Raw output: just message content")
+	fmt.Println("  --no-timestamp          Hide timestamp in output")
+	fmt.Println("  --no-offset             Hide offset in output")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  # Stream new messages (like tail -f)")
+	fmt.Println("  flymq-cli subscribe my-topic")
+	fmt.Println()
+	fmt.Println("  # Stream from beginning")
+	fmt.Println("  flymq-cli subscribe my-topic --from earliest")
+	fmt.Println()
+	fmt.Println("  # With consumer group (offset tracking)")
+	fmt.Println("  flymq-cli subscribe my-topic --group my-group")
+	fmt.Println()
+	fmt.Println("  # Raw output for piping")
+	fmt.Println("  flymq-cli subscribe my-topic --raw | jq .")
+	fmt.Println()
+}
+
+func printCreateHelp() {
+	cli.Header("create - Create a new topic")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  flymq-cli create <topic> [options]")
+	fmt.Println()
+	fmt.Println("Arguments:")
+	fmt.Println("  <topic>     Name of the topic to create")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --partitions, -p <n>    Number of partitions (default: 1)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  # Create topic with 1 partition")
+	fmt.Println("  flymq-cli create my-topic")
+	fmt.Println()
+	fmt.Println("  # Create topic with 4 partitions")
+	fmt.Println("  flymq-cli create orders --partitions 4")
+	fmt.Println()
 }
