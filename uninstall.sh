@@ -70,28 +70,32 @@ print_step() { echo -e "\n${CYAN}${BOLD}==>${RESET} ${BOLD}$1${RESET}"; }
 print_section() { echo -e "\n  ${BOLD}${CYAN}━━━ $1 ━━━${RESET}\n"; }
 
 # =============================================================================
-# Banner
+# Banner - Clean Uninstall Experience
 # =============================================================================
 
 print_banner() {
     local banner_file="${SCRIPT_DIR}/internal/banner/banner.txt"
+
+    # Clear screen for a clean start
+    if [[ -t 1 ]]; then
+        clear 2>/dev/null || true
+    fi
+
     echo ""
+    echo -e "${RED}${BOLD}"
     if [[ -f "$banner_file" ]]; then
         while IFS= read -r line; do
-            # Output line with colors, then reset (avoids backslash escaping RESET)
-            echo -ne "${CYAN}${BOLD}"
-            echo -e "${line}"
-            echo -ne "${RESET}"
+            echo "  $line"
         done < "$banner_file"
     else
-        echo -e "${CYAN}${BOLD}  FlyMQ${RESET}"
+        echo "  F L Y M Q"
     fi
+    echo -e "${RESET}"
     echo ""
-    echo -e "  ${BOLD}Uninstaller${RESET}"
-    echo -e "  ${DIM}Version ${SCRIPT_VERSION}${RESET}"
+    echo -e "  ${YELLOW}${BOLD}FlyMQ Uninstaller${RESET} ${DIM}v${SCRIPT_VERSION}${RESET}"
     echo ""
-    echo -e "  ${DIM}Copyright (c) 2026 Firefly Software Solutions Inc.${RESET}"
-    echo -e "  ${DIM}Licensed under the Apache License 2.0${RESET}"
+    echo -e "  ${DIM}This tool will safely remove FlyMQ from your system.${RESET}"
+    echo -e "  ${DIM}You will be prompted before any destructive actions.${RESET}"
     echo ""
 }
 

@@ -72,32 +72,60 @@ func GetBannerLines() []string {
 
 // Print displays the startup banner with version and copyright information.
 func Print() {
-	fmt.Println(AnsiCyan + bannerText + AnsiReset)
-	fmt.Println(AnsiCyan + AnsiBold + ":: FlyMQ ::                     (v" + Version + ")" + AnsiReset)
-	fmt.Println(AnsiGreen + AnsiBold + Copyright + AnsiReset)
-	fmt.Println(AnsiGreen + License + AnsiReset)
+	fmt.Println()
+	fmt.Println(AnsiCyan + AnsiBold)
+	for _, line := range GetBannerLines() {
+		fmt.Println("  " + line)
+	}
+	fmt.Println(AnsiReset)
+	fmt.Println(AnsiGreen + AnsiBold + "  FlyMQ" + AnsiReset + " " + AnsiDim + "v" + Version + AnsiReset)
+	fmt.Println(AnsiDim + "  High-Performance Message Queue" + AnsiReset)
+	fmt.Println()
+	fmt.Println(AnsiDim + "  " + Copyright + AnsiReset)
 	fmt.Println()
 }
 
 // PrintTo writes the banner to the specified writer.
 func PrintTo(w io.Writer) {
-	fmt.Fprintln(w, AnsiCyan+bannerText+AnsiReset)
-	fmt.Fprintln(w, AnsiCyan+AnsiBold+":: FlyMQ ::                     (v"+Version+")"+AnsiReset)
-	fmt.Fprintln(w, AnsiGreen+AnsiBold+Copyright+AnsiReset)
-	fmt.Fprintln(w, AnsiGreen+License+AnsiReset)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, AnsiCyan+AnsiBold)
+	for _, line := range GetBannerLines() {
+		fmt.Fprintln(w, "  "+line)
+	}
+	fmt.Fprintln(w, AnsiReset)
+	fmt.Fprintln(w, AnsiGreen+AnsiBold+"  FlyMQ"+AnsiReset+" "+AnsiDim+"v"+Version+AnsiReset)
+	fmt.Fprintln(w, AnsiDim+"  High-Performance Message Queue"+AnsiReset)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, AnsiDim+"  "+Copyright+AnsiReset)
 	fmt.Fprintln(w)
 }
 
 // PrintCompact prints a compact version of the banner.
 func PrintCompact() {
-	fmt.Println(AnsiCyan + AnsiBold + "FlyMQ" + AnsiReset + " v" + Version + " - High-Performance Message Queue")
+	fmt.Println(AnsiCyan + AnsiBold + "FlyMQ" + AnsiReset + " v" + Version)
 }
 
 // PrintServer prints the banner suitable for server startup.
 func PrintServer() {
 	fmt.Println()
-	fmt.Println(AnsiCyan + bannerText + AnsiReset)
-	fmt.Println(AnsiCyan + AnsiBold + "  FlyMQ Message Queue Server" + AnsiReset)
-	fmt.Println(AnsiDim + "  Version " + Version + " | " + Copyright + AnsiReset)
+	fmt.Println(AnsiCyan + AnsiBold)
+	for _, line := range GetBannerLines() {
+		fmt.Println("  " + line)
+	}
+	fmt.Println(AnsiReset)
+	fmt.Println(AnsiGreen + AnsiBold + "  FlyMQ Server" + AnsiReset + " " + AnsiDim + "v" + Version + AnsiReset)
+	fmt.Println(AnsiDim + "  Starting..." + AnsiReset)
+	fmt.Println()
+}
+
+// PrintCLI prints the banner suitable for CLI startup.
+func PrintCLI() {
+	fmt.Println()
+	fmt.Println(AnsiCyan + AnsiBold)
+	for _, line := range GetBannerLines() {
+		fmt.Println("  " + line)
+	}
+	fmt.Println(AnsiReset)
+	fmt.Println(AnsiGreen + AnsiBold + "  FlyMQ CLI" + AnsiReset + " " + AnsiDim + "v" + Version + AnsiReset)
 	fmt.Println()
 }

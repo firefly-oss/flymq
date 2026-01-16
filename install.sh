@@ -27,6 +27,12 @@ AUTO_CONFIRM=false
 UNINSTALL=false
 CONFIG_FILE=""
 
+# =============================================================================
+# Smart Defaults - Production-Ready Out of the Box
+# =============================================================================
+# These defaults provide a secure, feature-rich standalone deployment.
+# Users can customize by section if needed.
+
 # Configuration values (will be set during interactive setup)
 CFG_DATA_DIR=""
 CFG_BIND_ADDR=":9092"
@@ -35,13 +41,17 @@ CFG_NODE_ID=""
 CFG_LOG_LEVEL="info"
 CFG_SEGMENT_BYTES="67108864"
 CFG_RETENTION_BYTES="0"
+
+# TLS/SSL - Disabled by default (use reverse proxy for TLS in production)
 CFG_TLS_ENABLED="false"
 CFG_TLS_CERT_FILE=""
 CFG_TLS_KEY_FILE=""
-CFG_ENCRYPTION_ENABLED="false"
+
+# Data-at-Rest Encryption - ENABLED by default (auto-generated key)
+CFG_ENCRYPTION_ENABLED="true"
 CFG_ENCRYPTION_KEY=""
 
-# Cluster Configuration
+# Cluster Configuration - Standalone by default
 CFG_DEPLOYMENT_MODE="standalone"  # standalone or cluster
 CFG_CLUSTER_PEERS=""              # comma-separated list of peer addresses
 CFG_ADVERTISE_CLUSTER=""          # advertised cluster address
@@ -49,39 +59,39 @@ CFG_ADVERTISE_CLUSTER=""          # advertised cluster address
 # Performance Configuration
 CFG_ACKS="leader"                 # Durability mode: all, leader, none
 
-# Schema validation
-CFG_SCHEMA_ENABLED="false"
+# Schema validation - ENABLED by default
+CFG_SCHEMA_ENABLED="true"
 CFG_SCHEMA_VALIDATION="strict"
 CFG_SCHEMA_REGISTRY_DIR=""
 
-# Dead Letter Queue
-CFG_DLQ_ENABLED="false"
+# Dead Letter Queue - ENABLED by default
+CFG_DLQ_ENABLED="true"
 CFG_DLQ_MAX_RETRIES="3"
 CFG_DLQ_RETRY_DELAY="1000"
 CFG_DLQ_TOPIC_SUFFIX="-dlq"
 
-# Message TTL
-CFG_TTL_DEFAULT="0"
+# Message TTL - ENABLED by default (7 days)
+CFG_TTL_DEFAULT="604800"
 CFG_TTL_CLEANUP_INTERVAL="60"
 
-# Delayed Message Delivery
-CFG_DELAYED_ENABLED="false"
+# Delayed Message Delivery - ENABLED by default
+CFG_DELAYED_ENABLED="true"
 CFG_DELAYED_MAX_DELAY="604800"
 
-# Transaction Support
-CFG_TXN_ENABLED="false"
+# Transaction Support - ENABLED by default
+CFG_TXN_ENABLED="true"
 CFG_TXN_TIMEOUT="60"
 
-# Observability - Metrics
-CFG_METRICS_ENABLED="false"
+# Observability - Metrics - ENABLED by default
+CFG_METRICS_ENABLED="true"
 CFG_METRICS_ADDR=":9094"
 
-# Observability - Tracing
-CFG_TRACING_ENABLED="false"
+# Observability - Tracing - ENABLED by default
+CFG_TRACING_ENABLED="true"
 CFG_TRACING_ENDPOINT="localhost:4317"
 CFG_TRACING_SAMPLE_RATE="0.1"
 
-# Observability - Health Checks
+# Observability - Health Checks - ENABLED by default
 CFG_HEALTH_ENABLED="true"
 CFG_HEALTH_ADDR=":9095"
 CFG_HEALTH_TLS_ENABLED="false"
@@ -90,19 +100,19 @@ CFG_HEALTH_TLS_KEY_FILE=""
 CFG_HEALTH_TLS_AUTO_GENERATE="false"
 CFG_HEALTH_TLS_USE_ADMIN_CERT="false"
 
-# Observability - Admin API
-CFG_ADMIN_ENABLED="false"
+# Observability - Admin API - ENABLED by default
+CFG_ADMIN_ENABLED="true"
 CFG_ADMIN_ADDR=":9096"
 CFG_ADMIN_TLS_ENABLED="false"
 CFG_ADMIN_TLS_CERT_FILE=""
 CFG_ADMIN_TLS_KEY_FILE=""
 CFG_ADMIN_TLS_AUTO_GENERATE="false"
 
-# Authentication
-CFG_AUTH_ENABLED="false"
+# Authentication - ENABLED by default (auto-generated credentials)
+CFG_AUTH_ENABLED="true"
 CFG_AUTH_ADMIN_USER="admin"
 CFG_AUTH_ADMIN_PASS=""
-CFG_AUTH_ALLOW_ANONYMOUS="true"
+CFG_AUTH_ALLOW_ANONYMOUS="false"
 
 # System service installation
 INSTALL_SYSTEMD="false"
@@ -170,28 +180,36 @@ show_spinner() {
 }
 
 # =============================================================================
-# Banner - Read from banner.txt
+# Banner - Premium Welcome Experience
 # =============================================================================
 
 print_banner() {
     local banner_file="${SCRIPT_DIR}/internal/banner/banner.txt"
+
+    # Clear screen for a clean start (optional, only in interactive mode)
+    if [[ -t 1 ]] && [[ "$AUTO_CONFIRM" != true ]]; then
+        clear 2>/dev/null || true
+    fi
+
     echo ""
+    echo -e "${CYAN}${BOLD}"
     if [[ -f "$banner_file" ]]; then
         while IFS= read -r line; do
-            # Output line with colors, then reset (avoids backslash escaping RESET)
-            echo -ne "${CYAN}${BOLD}"
-            echo -e "${line}"
-            echo -ne "${RESET}"
+            echo "  $line"
         done < "$banner_file"
     else
-        echo -e "${CYAN}${BOLD}  FlyMQ${RESET}"
+        echo "  F L Y M Q"
     fi
+    echo -e "${RESET}"
     echo ""
-    echo -e "  ${BOLD}High-Performance Message Queue${RESET}"
-    echo -e "  ${DIM}Version ${FLYMQ_VERSION}${RESET}"
+    echo -e "  ${GREEN}${BOLD}FlyMQ Installer${RESET} ${DIM}v${FLYMQ_VERSION}${RESET}"
+    echo -e "  ${DIM}High-Performance Message Queue for Modern Applications${RESET}"
+    echo ""
+    echo -e "  ${CYAN}✓${RESET} Sub-millisecond latency     ${CYAN}✓${RESET} Zero external dependencies"
+    echo -e "  ${CYAN}✓${RESET} Kafka-compatible API        ${CYAN}✓${RESET} Built-in encryption & auth"
+    echo -e "  ${CYAN}✓${RESET} Single binary deployment    ${CYAN}✓${RESET} Production-ready defaults"
     echo ""
     echo -e "  ${DIM}Copyright (c) 2026 Firefly Software Solutions Inc.${RESET}"
-    echo -e "  ${DIM}Licensed under the Apache License 2.0${RESET}"
     echo ""
 }
 
@@ -281,13 +299,13 @@ prompt_yes_no() {
 
     while true; do
         if [[ "$default" == "y" ]]; then
-            echo -en "  ${prompt} [${DIM}Y/n${RESET}]: " >&2
+            echo -en "  ${prompt} [${GREEN}Y${RESET}/${DIM}n${RESET}]: " >&2
         else
-            echo -en "  ${prompt} [${DIM}y/N${RESET}]: " >&2
+            echo -en "  ${prompt} [${DIM}y${RESET}/${GREEN}N${RESET}]: " >&2
         fi
         read -r result </dev/tty
         result="${result:-$default}"
-        
+
         if [[ "$result" =~ ^[YyNn]$ ]] || [[ -z "$result" ]]; then
             [[ "$result" =~ ^[Yy] ]] && return 0
             return 1
@@ -440,8 +458,8 @@ configure_cluster_mode() {
 
     # Determine if this is the first node or joining an existing cluster
     echo -e "  ${BOLD}Cluster Role${RESET}"
-    echo -e "    ${DIM}1)${RESET} Bootstrap - First node in a new cluster (no peers needed)"
-    echo -e "    ${DIM}2)${RESET} Join      - Join an existing cluster (peers required)"
+    echo -e "    ${CYAN}1${RESET}) Bootstrap - First node in a new cluster ${DIM}(no peers needed)${RESET}"
+    echo -e "    ${CYAN}2${RESET}) Join      - Join an existing cluster ${DIM}(peers required)${RESET}"
     echo ""
 
     local role_choice
@@ -498,9 +516,7 @@ configure_cluster_bootstrap() {
 
     print_info "Bootstrap node configured."
     echo ""
-    echo -e "  ${GREEN}${BOLD}╔════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "  ${GREEN}${BOLD}║              BOOTSTRAP NODE SETUP COMPLETE                 ║${RESET}"
-    echo -e "  ${GREEN}${BOLD}╚════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "  ${GREEN}${BOLD}✓ BOOTSTRAP NODE SETUP COMPLETE${RESET}"
     echo ""
     echo -e "  ${BOLD}This Node:${RESET}"
     echo -e "    Node ID:         ${CYAN}${CFG_NODE_ID}${RESET}"
@@ -603,9 +619,7 @@ configure_cluster_join() {
 
     print_info "Join configuration complete."
     echo ""
-    echo -e "  ${GREEN}${BOLD}╔════════════════════════════════════════════════════════════╗${RESET}"
-    echo -e "  ${GREEN}${BOLD}║               JOINING NODE SETUP COMPLETE                  ║${RESET}"
-    echo -e "  ${GREEN}${BOLD}╚════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "  ${GREEN}${BOLD}✓ JOINING NODE SETUP COMPLETE${RESET}"
     echo ""
     echo -e "  ${BOLD}This Node:${RESET}"
     echo -e "    Node ID:         ${CYAN}${CFG_NODE_ID}${RESET}"
@@ -685,289 +699,6 @@ get_local_ip() {
     fi
     
     echo "$ip"
-}
-
-configure_interactive() {
-    echo ""
-    print_step "Configuration"
-    echo ""
-    echo -e "  ${DIM}Press Enter to accept defaults shown in brackets.${RESET}"
-    echo -e "  ${DIM}Press Ctrl+C at any time to cancel.${RESET}"
-    echo ""
-
-    # =========================================================================
-    # Deployment Mode Selection
-    # =========================================================================
-    print_section "Deployment Mode"
-    echo -e "  ${DIM}Choose how you want to deploy FlyMQ:${RESET}"
-    echo -e "    ${DIM}1)${RESET} Standalone - Single node deployment (development/testing)"
-    echo -e "    ${DIM}2)${RESET} Cluster    - Multi-node deployment (production)"
-    echo ""
-
-    local mode_choice
-    mode_choice=$(prompt_choice "Deployment mode (1=standalone, 2=cluster)" "1" "1" "2" "standalone" "cluster")
-
-    if [[ "$mode_choice" == "2" ]] || [[ "$mode_choice" == "cluster" ]]; then
-        CFG_DEPLOYMENT_MODE="cluster"
-        configure_cluster_mode
-    else
-        CFG_DEPLOYMENT_MODE="standalone"
-        print_info "Configuring standalone mode..."
-    fi
-    echo ""
-
-    # Network Configuration (only if not already configured in cluster mode)
-    if [[ "$CFG_DEPLOYMENT_MODE" == "standalone" ]]; then
-        echo ""
-        echo -e "  ${BOLD}Network Settings${RESET}"
-        echo ""
-        CFG_BIND_ADDR=$(prompt_value "Client bind address" ":9092")
-        CFG_NODE_ID=$(prompt_value "Node ID" "$CFG_NODE_ID")
-        echo ""
-    fi
-
-    # Storage Configuration
-    echo -e "  ${BOLD}Storage Settings${RESET}"
-    echo ""
-    CFG_DATA_DIR=$(prompt_value "Data directory" "$(get_default_data_dir)")
-    CFG_SEGMENT_BYTES=$(prompt_number "Segment size (bytes)" "67108864" "1024")
-    CFG_RETENTION_BYTES=$(prompt_number "Retention limit (0=unlimited)" "0" "0")
-    echo ""
-
-    # Logging Configuration
-    echo -e "  ${BOLD}Logging Settings${RESET}"
-    echo -e "  ${DIM}Available levels: debug, info, warn, error${RESET}"
-    echo ""
-    CFG_LOG_LEVEL=$(prompt_choice "Log level" "info" "debug" "info" "warn" "error")
-    echo ""
-
-    # Performance Configuration
-    echo -e "  ${BOLD}Performance Settings${RESET}"
-    echo -e "  ${DIM}Acks mode controls durability vs. latency trade-off:${RESET}"
-    echo -e "    ${DIM}none${RESET}   - Fire-and-forget, maximum throughput (like Kafka acks=0)"
-    echo -e "    ${DIM}leader${RESET} - Leader acknowledges, balanced (like Kafka acks=1) [DEFAULT]"
-    echo -e "    ${DIM}all${RESET}    - All replicas acknowledge, maximum durability (like Kafka acks=-1)"
-    echo ""
-    CFG_ACKS=$(prompt_choice "Acks mode" "leader" "none" "leader" "all")
-    echo ""
-
-    # Security Configuration
-    echo -e "  ${BOLD}Security Settings${RESET}"
-    echo ""
-    if prompt_yes_no "Enable TLS encryption" "n"; then
-        CFG_TLS_ENABLED="true"
-        CFG_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
-        CFG_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
-        if [[ -z "$CFG_TLS_CERT_FILE" ]] || [[ -z "$CFG_TLS_KEY_FILE" ]]; then
-            print_warning "TLS files not specified. You can configure them later in flymq.json"
-        fi
-    fi
-    echo ""
-
-    if prompt_yes_no "Enable data-at-rest encryption" "n"; then
-        CFG_ENCRYPTION_ENABLED="true"
-        CFG_ENCRYPTION_KEY=$(prompt_value "Encryption key (leave empty to auto-generate)" "")
-        if [[ -z "$CFG_ENCRYPTION_KEY" ]]; then
-            CFG_ENCRYPTION_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 64)
-            print_info "Generated encryption key (save this securely)"
-        fi
-    fi
-    echo ""
-
-    # =========================================================================
-    # Advanced Features
-    # =========================================================================
-
-    print_section "Advanced Features"
-    echo -e "  ${DIM}Configure optional advanced features for enhanced functionality.${RESET}"
-    echo ""
-
-    # Schema Validation
-    echo -e "  ${BOLD}Schema Validation${RESET}"
-    echo -e "  ${DIM}Validate messages against JSON Schema, Avro, or Protobuf schemas${RESET}"
-    if prompt_yes_no "Enable schema validation" "n"; then
-        CFG_SCHEMA_ENABLED="true"
-        echo -e "  ${DIM}Validation modes: strict (reject invalid), lenient (warn only), none${RESET}"
-        CFG_SCHEMA_VALIDATION=$(prompt_choice "Validation mode" "strict" "strict" "lenient" "none")
-        CFG_SCHEMA_REGISTRY_DIR=$(prompt_value "Schema registry directory" "${CFG_DATA_DIR}/schemas")
-    fi
-    echo ""
-
-    # Dead Letter Queue
-    echo -e "  ${BOLD}Dead Letter Queue (DLQ)${RESET}"
-    echo -e "  ${DIM}Route failed messages to a separate queue for later analysis${RESET}"
-    if prompt_yes_no "Enable dead letter queues" "n"; then
-        CFG_DLQ_ENABLED="true"
-        CFG_DLQ_MAX_RETRIES=$(prompt_number "Max retry attempts before DLQ" "3" "1")
-        CFG_DLQ_RETRY_DELAY=$(prompt_number "Retry delay (milliseconds)" "1000" "100")
-        CFG_DLQ_TOPIC_SUFFIX=$(prompt_value "DLQ topic suffix" "-dlq")
-    fi
-    echo ""
-
-    # Message TTL
-    echo -e "  ${BOLD}Message TTL (Time-To-Live)${RESET}"
-    echo -e "  ${DIM}Automatically expire messages after a specified time${RESET}"
-    CFG_TTL_DEFAULT=$(prompt_number "Default TTL in seconds (0=no expiry)" "0" "0")
-    if [[ "$CFG_TTL_DEFAULT" != "0" ]]; then
-        CFG_TTL_CLEANUP_INTERVAL=$(prompt_number "Cleanup interval (seconds)" "60" "1")
-    fi
-    echo ""
-
-    # Delayed Message Delivery
-    echo -e "  ${BOLD}Delayed Message Delivery${RESET}"
-    echo -e "  ${DIM}Schedule messages for future delivery${RESET}"
-    if prompt_yes_no "Enable delayed message delivery" "n"; then
-        CFG_DELAYED_ENABLED="true"
-        CFG_DELAYED_MAX_DELAY=$(prompt_number "Maximum delay (seconds)" "604800" "1")
-        print_info "Max delay: $(( CFG_DELAYED_MAX_DELAY / 86400 )) days"
-    fi
-    echo ""
-
-    # Transaction Support
-    echo -e "  ${BOLD}Transaction Support${RESET}"
-    echo -e "  ${DIM}Enable exactly-once semantics with atomic message operations${RESET}"
-    if prompt_yes_no "Enable transaction support" "n"; then
-        CFG_TXN_ENABLED="true"
-        CFG_TXN_TIMEOUT=$(prompt_number "Transaction timeout (seconds)" "60" "1")
-    fi
-    echo ""
-
-    # =========================================================================
-    # Observability Features
-    # =========================================================================
-
-    print_section "Observability Features"
-    echo -e "  ${DIM}Enable monitoring and debugging capabilities.${RESET}"
-    echo ""
-
-    # Prometheus Metrics
-    echo -e "  ${BOLD}Prometheus Metrics${RESET}"
-    echo -e "  ${DIM}Expose metrics for monitoring throughput, latency, and errors${RESET}"
-    if prompt_yes_no "Enable Prometheus metrics endpoint" "y"; then
-        CFG_METRICS_ENABLED="true"
-        CFG_METRICS_ADDR=$(prompt_value "Metrics HTTP address" ":9094")
-    fi
-    echo ""
-
-    # OpenTelemetry Tracing
-    echo -e "  ${BOLD}OpenTelemetry Tracing${RESET}"
-    echo -e "  ${DIM}Distributed tracing for debugging and performance analysis${RESET}"
-    if prompt_yes_no "Enable OpenTelemetry tracing" "n"; then
-        CFG_TRACING_ENABLED="true"
-        CFG_TRACING_ENDPOINT=$(prompt_value "OTLP endpoint" "localhost:4317")
-        CFG_TRACING_SAMPLE_RATE=$(prompt_value "Sample rate (0.0-1.0)" "0.1")
-    fi
-    echo ""
-
-    # Health Check Endpoints
-    echo -e "  ${BOLD}Health Check Endpoints${RESET}"
-    echo -e "  ${DIM}Kubernetes-compatible liveness and readiness probes${RESET}"
-    if prompt_yes_no "Enable health check endpoints" "y"; then
-        CFG_HEALTH_ENABLED="true"
-        CFG_HEALTH_ADDR=$(prompt_value "Health check HTTP address" ":9095")
-        echo ""
-        echo -e "  ${BOLD}Health Endpoint HTTPS/TLS${RESET}"
-        echo -e "  ${DIM}Secure health endpoints with TLS/SSL encryption${RESET}"
-        if prompt_yes_no "Enable HTTPS for health endpoints" "n"; then
-            CFG_HEALTH_TLS_ENABLED="true"
-            echo -e "  ${DIM}You can share Admin API certs, provide your own, or auto-generate${RESET}"
-            if prompt_yes_no "Use Admin API TLS certificate (if Admin API HTTPS is enabled later)" "y"; then
-                CFG_HEALTH_TLS_USE_ADMIN_CERT="true"
-                print_info "Health endpoints will share Admin API TLS certificates"
-            elif prompt_yes_no "Auto-generate self-signed certificate" "y"; then
-                CFG_HEALTH_TLS_AUTO_GENERATE="true"
-                print_info "A self-signed certificate will be generated on first startup"
-            else
-                CFG_HEALTH_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
-                CFG_HEALTH_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
-                if [[ -z "$CFG_HEALTH_TLS_CERT_FILE" ]] || [[ -z "$CFG_HEALTH_TLS_KEY_FILE" ]]; then
-                    print_warning "TLS files not specified. You can configure them later in flymq.json"
-                fi
-            fi
-        fi
-    fi
-    echo ""
-
-    # Admin API
-    echo -e "  ${BOLD}Admin REST API${RESET}"
-    echo -e "  ${DIM}REST API for cluster management, topic operations, and monitoring${RESET}"
-    if prompt_yes_no "Enable Admin REST API" "n"; then
-        CFG_ADMIN_ENABLED="true"
-        CFG_ADMIN_ADDR=$(prompt_value "Admin API HTTP address" ":9096")
-        echo ""
-        echo -e "  ${BOLD}Admin API HTTPS/TLS${RESET}"
-        echo -e "  ${DIM}Secure the Admin API with TLS/SSL encryption${RESET}"
-        if prompt_yes_no "Enable HTTPS for Admin API" "n"; then
-            CFG_ADMIN_TLS_ENABLED="true"
-            echo -e "  ${DIM}You can provide your own certificates or auto-generate self-signed ones${RESET}"
-            if prompt_yes_no "Auto-generate self-signed certificate" "y"; then
-                CFG_ADMIN_TLS_AUTO_GENERATE="true"
-                print_info "A self-signed certificate will be generated on first startup"
-            else
-                CFG_ADMIN_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
-                CFG_ADMIN_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
-                if [[ -z "$CFG_ADMIN_TLS_CERT_FILE" ]] || [[ -z "$CFG_ADMIN_TLS_KEY_FILE" ]]; then
-                    print_warning "TLS files not specified. You can configure them later in flymq.json"
-                fi
-            fi
-        fi
-    fi
-    echo ""
-
-    # =========================================================================
-    # Authentication
-    # =========================================================================
-
-    print_section "Authentication"
-    echo -e "  ${BOLD}Authentication & Authorization${RESET}"
-    echo -e "  ${DIM}Enable username/password authentication with role-based access control${RESET}"
-    if prompt_yes_no "Enable authentication" "n"; then
-        CFG_AUTH_ENABLED="true"
-        CFG_AUTH_ADMIN_USER=$(prompt_value "Admin username" "admin")
-        echo -e "  ${DIM}Enter a password for the admin user (leave empty to generate one)${RESET}"
-        read -sp "  Admin password: " CFG_AUTH_ADMIN_PASS
-        echo ""
-        if [[ -z "$CFG_AUTH_ADMIN_PASS" ]]; then
-            CFG_AUTH_ADMIN_PASS=$(openssl rand -base64 16 2>/dev/null || head -c 16 /dev/urandom | base64)
-            echo -e "  ${YELLOW}Generated admin password: ${CYAN}$CFG_AUTH_ADMIN_PASS${RESET}"
-            echo -e "  ${YELLOW}Please save this password securely!${RESET}"
-        fi
-        if prompt_yes_no "Allow anonymous connections (read-only)" "n"; then
-            CFG_AUTH_ALLOW_ANONYMOUS="true"
-        else
-            CFG_AUTH_ALLOW_ANONYMOUS="false"
-        fi
-    fi
-    echo ""
-
-    # =========================================================================
-    # System Integration
-    # =========================================================================
-
-    # System Integration - Platform specific
-    if [[ "$OS" == "linux" ]] && command -v systemctl &> /dev/null; then
-        print_section "System Integration"
-        echo -e "  ${BOLD}Systemd Service${RESET}"
-        echo -e "  ${DIM}Install systemd service for automatic startup and management${RESET}"
-        if prompt_yes_no "Install systemd service" "y"; then
-            INSTALL_SYSTEMD="true"
-        fi
-        echo ""
-    elif [[ "$OS" == "darwin" ]]; then
-        print_section "System Integration"
-        echo -e "  ${BOLD}Launch Agent (macOS)${RESET}"
-        echo -e "  ${DIM}Install launchd service for automatic startup${RESET}"
-        if prompt_yes_no "Install Launch Agent" "n"; then
-            INSTALL_LAUNCHD="true"
-        fi
-        echo ""
-    elif [[ "$OS" == "windows" ]]; then
-        print_section "System Integration"
-        echo -e "  ${BOLD}Windows Service${RESET}"
-        echo -e "  ${DIM}Note: Windows service installation requires additional tools (NSSM or sc.exe)${RESET}"
-        print_info "See documentation for Windows service setup"
-        echo ""
-    fi
 }
 
 # =============================================================================
@@ -1363,197 +1094,101 @@ print_post_install() {
     local bin_dir="$prefix/bin"
 
     echo ""
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
-    print_success "FlyMQ v${FLYMQ_VERSION} installed successfully!"
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
     echo ""
-    echo -e "${BOLD}Installation Summary:${RESET}"
-    echo -e "  ${ICON_ARROW} Binaries:      ${CYAN}$bin_dir${RESET}"
-    echo -e "  ${ICON_ARROW} Configuration: ${CYAN}$config_dir/flymq.json${RESET}"
-    echo -e "  ${ICON_ARROW} Data:          ${CYAN}$CFG_DATA_DIR${RESET}"
+    echo -e "  ${GREEN}${BOLD}✓ INSTALLATION COMPLETE${RESET}"
+    echo ""
+    echo -e "  ${BOLD}FlyMQ v${FLYMQ_VERSION}${RESET} is ready to use!"
     echo ""
 
-    # Show enabled features
-    echo -e "${BOLD}Enabled Features:${RESET}"
-    echo -e "  ${ICON_ARROW} TLS Encryption:     ${CYAN}$CFG_TLS_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Data Encryption:    ${CYAN}$CFG_ENCRYPTION_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Schema Validation:  ${CYAN}$CFG_SCHEMA_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Dead Letter Queue:  ${CYAN}$CFG_DLQ_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Delayed Delivery:   ${CYAN}$CFG_DELAYED_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Transactions:       ${CYAN}$CFG_TXN_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Prometheus Metrics: ${CYAN}$CFG_METRICS_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Health Checks:      ${CYAN}$CFG_HEALTH_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Admin API:          ${CYAN}$CFG_ADMIN_ENABLED${RESET}"
-    echo -e "  ${ICON_ARROW} Authentication:     ${CYAN}$CFG_AUTH_ENABLED${RESET}"
+    # Installation paths - compact
+    echo -e "  ${DIM}Binaries${RESET}       ${CYAN}$bin_dir${RESET}"
+    echo -e "  ${DIM}Config${RESET}         ${CYAN}$config_dir/flymq.json${RESET}"
+    echo -e "  ${DIM}Data${RESET}           ${CYAN}$CFG_DATA_DIR${RESET}"
     echo ""
 
-    echo -e "${BOLD}Quick Start:${RESET}"
+    # Features - only show enabled ones in a compact format
+    local enabled_features=""
+    [[ "$CFG_TLS_ENABLED" == "true" ]] && enabled_features+="TLS "
+    [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && enabled_features+="Encryption "
+    [[ "$CFG_AUTH_ENABLED" == "true" ]] && enabled_features+="Auth "
+    [[ "$CFG_METRICS_ENABLED" == "true" ]] && enabled_features+="Metrics "
+    [[ "$CFG_HEALTH_ENABLED" == "true" ]] && enabled_features+="Health "
+    [[ "$CFG_ADMIN_ENABLED" == "true" ]] && enabled_features+="Admin "
+    [[ "$CFG_SCHEMA_ENABLED" == "true" ]] && enabled_features+="Schema "
+    [[ "$CFG_DLQ_ENABLED" == "true" ]] && enabled_features+="DLQ "
+    [[ "$CFG_DELAYED_ENABLED" == "true" ]] && enabled_features+="Delayed "
+    [[ "$CFG_TXN_ENABLED" == "true" ]] && enabled_features+="Transactions "
+
+    if [[ -n "$enabled_features" ]]; then
+        echo -e "  ${DIM}Features${RESET}       ${GREEN}${enabled_features}${RESET}"
+        echo ""
+    fi
+
+    # Quick Start
+    echo -e "  ${CYAN}${BOLD}QUICK START${RESET}"
     echo ""
 
     if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
-        # Bootstrap node has no peers, joining node has peers
         if [[ -z "$CFG_CLUSTER_PEERS" ]]; then
-            echo -e "  ${BOLD}Bootstrap Node (First Node):${RESET}"
+            echo -e "  ${DIM}# Start bootstrap node${RESET}"
+            echo -e "  flymq --config $config_dir/flymq.json"
             echo ""
-            echo "  1. Start this node:"
-            echo -e "     ${CYAN}flymq --config $config_dir/flymq.json${RESET}"
-            echo ""
-            echo "  2. On other nodes, run install.sh and choose 'Join' mode"
-            echo -e "     Use this address to join: ${CYAN}${CFG_ADVERTISE_CLUSTER}${RESET}"
-            echo ""
-            echo "  3. Once all nodes are running, check cluster status:"
-            echo -e "     ${CYAN}flymq-cli cluster status${RESET}"
-            echo ""
+            echo -e "  ${DIM}# Other nodes join with:${RESET} ${CYAN}${CFG_ADVERTISE_CLUSTER}${RESET}"
         else
-            echo -e "  ${BOLD}Joining Node:${RESET}"
-            echo ""
-            echo "  1. Ensure the cluster is running"
-            echo ""
-            echo "  2. Start this node:"
-            echo -e "     ${CYAN}flymq --config $config_dir/flymq.json${RESET}"
-            echo ""
-            echo "  3. This node will automatically join the cluster"
-            echo ""
-            echo "  4. Check cluster status:"
-            echo -e "     ${CYAN}flymq-cli cluster status${RESET}"
-            echo ""
+            echo -e "  ${DIM}# Start this node (will auto-join cluster)${RESET}"
+            echo -e "  flymq --config $config_dir/flymq.json"
         fi
     else
-        echo "  1. Start the server:"
-        echo -e "     ${CYAN}flymq --config $config_dir/flymq.json${RESET}"
+        echo -e "  ${DIM}# Start server${RESET}"
+        echo -e "  flymq --config $config_dir/flymq.json"
+    fi
+    echo ""
+    echo -e "  ${DIM}# Send a message${RESET}"
+    echo -e "  flymq-cli produce my-topic \"Hello World\""
+    echo ""
+    echo -e "  ${DIM}# Subscribe to messages${RESET}"
+    echo -e "  flymq-cli subscribe my-topic"
+    echo ""
+
+    # Endpoints - compact
+    local has_endpoints=false
+    if [[ "$CFG_METRICS_ENABLED" == "true" ]] || [[ "$CFG_HEALTH_ENABLED" == "true" ]] || [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
+        has_endpoints=true
+        echo -e "  ${CYAN}${BOLD}ENDPOINTS${RESET}"
+        echo ""
+        echo -e "  ${DIM}Client${RESET}         localhost${CFG_BIND_ADDR}"
+        [[ "$CFG_METRICS_ENABLED" == "true" ]] && echo -e "  ${DIM}Metrics${RESET}        http://localhost${CFG_METRICS_ADDR}/metrics"
+        [[ "$CFG_HEALTH_ENABLED" == "true" ]] && echo -e "  ${DIM}Health${RESET}         http://localhost${CFG_HEALTH_ADDR}/health"
+        [[ "$CFG_ADMIN_ENABLED" == "true" ]] && echo -e "  ${DIM}Admin API${RESET}      http://localhost${CFG_ADMIN_ADDR}/api/v1"
         echo ""
     fi
 
-    echo "  2. Produce a message:"
-    echo -e "     ${CYAN}flymq-cli produce my-topic \"Hello World\"${RESET}"
-    echo ""
-    echo "  3. Subscribe to messages:"
-    echo -e "     ${CYAN}flymq-cli subscribe my-topic --from earliest${RESET}"
-    echo ""
-    echo "  4. List topics:"
-    echo -e "     ${CYAN}flymq-cli topics${RESET}"
-    echo ""
-
-    # Show advanced feature examples if enabled
-    if [[ "$CFG_SCHEMA_ENABLED" == "true" ]] || [[ "$CFG_DLQ_ENABLED" == "true" ]] || \
-       [[ "$CFG_DELAYED_ENABLED" == "true" ]] || [[ "$CFG_TXN_ENABLED" == "true" ]]; then
-        echo -e "${BOLD}Advanced Feature Examples:${RESET}"
+    # Credentials - important, highlighted
+    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+        echo -e "  ${YELLOW}${BOLD}⚠ SAVE THESE CREDENTIALS${RESET}"
         echo ""
-
-        if [[ "$CFG_SCHEMA_ENABLED" == "true" ]]; then
-            echo "  # Register a JSON schema"
-            echo -e "  ${CYAN}flymq-cli schema register user-schema json '{\"type\":\"object\"}'${RESET}"
-            echo ""
-        fi
-
-        if [[ "$CFG_DLQ_ENABLED" == "true" ]]; then
-            echo "  # View dead letter queue messages"
-            echo -e "  ${CYAN}flymq-cli dlq list my-topic${RESET}"
-            echo ""
-        fi
-
-        if [[ "$CFG_DELAYED_ENABLED" == "true" ]]; then
-            echo "  # Send a delayed message (5 second delay)"
-            echo -e "  ${CYAN}flymq-cli produce-delayed my-topic \"Delayed message\" 5000${RESET}"
-            echo ""
-        fi
-
-        if [[ "$CFG_TXN_ENABLED" == "true" ]]; then
-            echo "  # Send messages in a transaction"
-            echo -e "  ${CYAN}flymq-cli txn my-topic \"Message 1\" \"Message 2\"${RESET}"
-            echo ""
-        fi
-    fi
-
-    # Show observability endpoints if enabled
-    if [[ "$CFG_METRICS_ENABLED" == "true" ]] || [[ "$CFG_HEALTH_ENABLED" == "true" ]] || \
-       [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
-        echo -e "${BOLD}Observability Endpoints:${RESET}"
+        echo -e "  ${DIM}Username${RESET}       ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
+        echo -e "  ${DIM}Password${RESET}       ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
         echo ""
-
-        if [[ "$CFG_METRICS_ENABLED" == "true" ]]; then
-            echo -e "  ${ICON_ARROW} Prometheus Metrics: ${CYAN}http://localhost${CFG_METRICS_ADDR}/metrics${RESET}"
-        fi
-
-        if [[ "$CFG_HEALTH_ENABLED" == "true" ]]; then
-            local health_protocol="http"
-            if [[ "$CFG_HEALTH_TLS_ENABLED" == "true" ]]; then
-                health_protocol="https"
-            fi
-            echo -e "  ${ICON_ARROW} Health Check:       ${CYAN}${health_protocol}://localhost${CFG_HEALTH_ADDR}/health${RESET}"
-            echo -e "  ${ICON_ARROW} Liveness Probe:     ${CYAN}${health_protocol}://localhost${CFG_HEALTH_ADDR}/health/live${RESET}"
-            echo -e "  ${ICON_ARROW} Readiness Probe:    ${CYAN}${health_protocol}://localhost${CFG_HEALTH_ADDR}/health/ready${RESET}"
-        fi
-
-        if [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
-            local admin_protocol="http"
-            if [[ "$CFG_ADMIN_TLS_ENABLED" == "true" ]]; then
-                admin_protocol="https"
-            fi
-            echo -e "  ${ICON_ARROW} Admin API:          ${CYAN}${admin_protocol}://localhost${CFG_ADMIN_ADDR}/api/v1${RESET}"
-            echo -e "  ${ICON_ARROW} Swagger UI:         ${CYAN}${admin_protocol}://localhost${CFG_ADMIN_ADDR}/swagger/${RESET}"
-        fi
-        echo ""
-    fi
-
-    # Check if bin_dir is in PATH
-    if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-        print_warning "Add $bin_dir to your PATH:"
-        echo ""
-        echo -e "  ${CYAN}export PATH=\"$bin_dir:\$PATH\"${RESET}"
+        echo -e "  ${DIM}# Use with CLI${RESET}"
+        echo -e "  flymq-cli -u ${CFG_AUTH_ADMIN_USER} -P '***' produce my-topic \"Hello\""
         echo ""
     fi
 
     if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
-        print_warning "IMPORTANT: Save your encryption key securely!"
-        echo -e "  ${DIM}Key: $CFG_ENCRYPTION_KEY${RESET}"
+        echo -e "  ${YELLOW}${BOLD}⚠ SAVE ENCRYPTION KEY${RESET}"
+        echo ""
+        echo -e "  ${DIM}${CFG_ENCRYPTION_KEY}${RESET}"
         echo ""
     fi
 
-    # Show authentication info if enabled
-    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
-        echo -e "${BOLD}${YELLOW}═══════════════════════════════════════════════════════════════${RESET}"
-        echo -e "${BOLD}${YELLOW}  AUTHENTICATION CREDENTIALS - SAVE THESE!${RESET}"
-        echo -e "${BOLD}${YELLOW}═══════════════════════════════════════════════════════════════${RESET}"
-        echo ""
-        echo -e "  ${BOLD}Username:${RESET} ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
-        echo -e "  ${BOLD}Password:${RESET} ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
-        echo ""
-        echo -e "${BOLD}CLI Usage Examples:${RESET}"
-        echo ""
-        echo -e "  ${DIM}# Binary protocol commands (produce, consume, subscribe):${RESET}"
-        echo -e "  ${CYAN}flymq-cli -u ${CFG_AUTH_ADMIN_USER} -P '${CFG_AUTH_ADMIN_PASS}' produce my-topic \"Hello\"${RESET}"
-        echo -e "  ${CYAN}flymq-cli -u ${CFG_AUTH_ADMIN_USER} -P '${CFG_AUTH_ADMIN_PASS}' subscribe my-topic --from earliest${RESET}"
-        echo ""
-        if [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
-            local admin_protocol="http"
-            local tls_flags=""
-            if [[ "$CFG_ADMIN_TLS_ENABLED" == "true" ]]; then
-                admin_protocol="https"
-                if [[ "$CFG_ADMIN_TLS_AUTO_GENERATE" == "true" ]]; then
-                    tls_flags=" --admin-tls --admin-insecure"
-                else
-                    tls_flags=" --admin-tls"
-                fi
-            fi
-            echo -e "  ${DIM}# Admin API commands (cluster, topics list, groups):${RESET}"
-            echo -e "  ${CYAN}flymq-cli${tls_flags} --admin-user ${CFG_AUTH_ADMIN_USER} --admin-pass '${CFG_AUTH_ADMIN_PASS}' cluster status${RESET}"
-            echo -e "  ${CYAN}flymq-cli${tls_flags} --admin-user ${CFG_AUTH_ADMIN_USER} --admin-pass '${CFG_AUTH_ADMIN_PASS}' topics${RESET}"
-            echo ""
-        fi
-        echo -e "  ${DIM}# Or set environment variables:${RESET}"
-        echo -e "  ${CYAN}export FLYMQ_USERNAME=${CFG_AUTH_ADMIN_USER}${RESET}"
-        echo -e "  ${CYAN}export FLYMQ_PASSWORD='${CFG_AUTH_ADMIN_PASS}'${RESET}"
-        if [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
-            echo -e "  ${CYAN}export FLYMQ_ADMIN_USER=${CFG_AUTH_ADMIN_USER}${RESET}"
-            echo -e "  ${CYAN}export FLYMQ_ADMIN_PASS='${CFG_AUTH_ADMIN_PASS}'${RESET}"
-        fi
-        echo ""
-        echo -e "${BOLD}${YELLOW}═══════════════════════════════════════════════════════════════${RESET}"
+    # PATH warning
+    if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+        echo -e "  ${DIM}Add to PATH:${RESET} export PATH=\"$bin_dir:\$PATH\""
         echo ""
     fi
 
-    echo -e "${DIM}For more information, visit: https://github.com/firefly-oss/flymq${RESET}"
+    echo -e "  ${DIM}Docs: https://github.com/firefly-oss/flymq${RESET}"
     echo ""
 }
 
@@ -1647,6 +1282,343 @@ parse_args() {
     done
 }
 
+# =============================================================================
+# New Configuration Flow - Show Defaults First, Customize by Section
+# =============================================================================
+
+show_default_configuration() {
+    local config_dir="$1"
+
+    echo -e "  ${GREEN}${BOLD}DEFAULT CONFIGURATION${RESET}"
+    echo -e "  ${DIM}FlyMQ comes with production-ready defaults. Review below:${RESET}"
+    echo ""
+
+    # Section 1: Deployment
+    echo -e "  ${WHITE}${BOLD}[${CYAN}1${WHITE}]${RESET} ${BOLD}DEPLOYMENT${RESET}"
+    echo -e "      Mode:              ${GREEN}Standalone${RESET} ${DIM}(single node)${RESET}"
+    echo -e "      Bind Address:      ${CYAN}${CFG_BIND_ADDR}${RESET}"
+    echo -e "      Data Directory:    ${CYAN}${CFG_DATA_DIR}${RESET}"
+    echo -e "      Node ID:           ${CYAN}${CFG_NODE_ID}${RESET}"
+    echo ""
+
+    # Section 2: Security
+    echo -e "  ${WHITE}${BOLD}[${CYAN}2${WHITE}]${RESET} ${BOLD}SECURITY${RESET}"
+    echo -e "      TLS/SSL:           ${YELLOW}Disabled${RESET} ${DIM}(use reverse proxy for TLS)${RESET}"
+    echo -e "      Data Encryption:   ${GREEN}Enabled${RESET} ${DIM}(AES-256-GCM, auto-generated key)${RESET}"
+    echo -e "      Authentication:    ${GREEN}Enabled${RESET} ${DIM}(auto-generated credentials)${RESET}"
+    echo -e "      Admin User:        ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
+    echo ""
+
+    # Section 3: Advanced Features
+    echo -e "  ${WHITE}${BOLD}[${CYAN}3${WHITE}]${RESET} ${BOLD}ADVANCED FEATURES${RESET}"
+    echo -e "      Schema Validation: ${GREEN}Enabled${RESET} ${DIM}(strict mode)${RESET}"
+    echo -e "      Dead Letter Queue: ${GREEN}Enabled${RESET} ${DIM}(3 retries)${RESET}"
+    echo -e "      Message TTL:       ${GREEN}Enabled${RESET} ${DIM}(7 days default)${RESET}"
+    echo -e "      Delayed Delivery:  ${GREEN}Enabled${RESET} ${DIM}(up to 7 days)${RESET}"
+    echo -e "      Transactions:      ${GREEN}Enabled${RESET} ${DIM}(60s timeout)${RESET}"
+    echo ""
+
+    # Section 4: Observability
+    echo -e "  ${WHITE}${BOLD}[${CYAN}4${WHITE}]${RESET} ${BOLD}OBSERVABILITY${RESET}"
+    echo -e "      Prometheus Metrics: ${GREEN}Enabled${RESET} ${DIM}(${CFG_METRICS_ADDR})${RESET}"
+    echo -e "      OpenTelemetry:      ${GREEN}Enabled${RESET} ${DIM}(localhost:4317)${RESET}"
+    echo -e "      Health Checks:      ${GREEN}Enabled${RESET} ${DIM}(${CFG_HEALTH_ADDR})${RESET}"
+    echo -e "      Admin API:          ${GREEN}Enabled${RESET} ${DIM}(${CFG_ADMIN_ADDR})${RESET}"
+    echo -e "      Admin API TLS:      ${YELLOW}Disabled${RESET} ${DIM}(HTTP only)${RESET}"
+    echo ""
+
+    # Section 5: Performance
+    echo -e "  ${WHITE}${BOLD}[${CYAN}5${WHITE}]${RESET} ${BOLD}PERFORMANCE${RESET}"
+    echo -e "      Acks Mode:         ${CYAN}leader${RESET} ${DIM}(balanced durability/latency)${RESET}"
+    echo -e "      Segment Size:      ${CYAN}64 MB${RESET}"
+    echo -e "      Log Level:         ${CYAN}info${RESET}"
+    echo ""
+}
+
+configure_by_sections() {
+    echo ""
+    echo -e "  ${BOLD}Select sections to customize:${RESET}"
+    echo -e "    ${CYAN}1${RESET} Deployment    ${CYAN}2${RESET} Security    ${CYAN}3${RESET} Advanced Features"
+    echo -e "    ${CYAN}4${RESET} Observability ${CYAN}5${RESET} Performance"
+    echo ""
+    echo -e "  ${DIM}Enter numbers separated by commas, 'all', or 'none' to skip${RESET}"
+    echo ""
+
+    local sections
+    sections=$(prompt_value "Sections" "none")
+
+    if [[ "$sections" == "none" ]] || [[ -z "$sections" ]]; then
+        return
+    fi
+
+    # Parse sections
+    if [[ "$sections" == "all" ]]; then
+        sections="1,2,3,4,5"
+    fi
+
+    IFS=',' read -ra section_array <<< "$sections"
+
+    for section in "${section_array[@]}"; do
+        section=$(echo "$section" | xargs)  # trim whitespace
+        case "$section" in
+            1) configure_section_deployment ;;
+            2) configure_section_security ;;
+            3) configure_section_advanced ;;
+            4) configure_section_observability ;;
+            5) configure_section_performance ;;
+            *) print_warning "Unknown section: $section" ;;
+        esac
+    done
+}
+
+configure_section_deployment() {
+    print_section "Deployment Configuration"
+
+    echo -e "  ${BOLD}Deployment Mode${RESET}"
+    echo -e "    ${CYAN}1${RESET}) Standalone - Single node ${DIM}(development/testing/small production)${RESET}"
+    echo -e "    ${CYAN}2${RESET}) Cluster    - Multi-node with Raft consensus ${DIM}(high availability)${RESET}"
+    echo ""
+
+    local mode_choice
+    mode_choice=$(prompt_choice "Deployment mode (1=standalone, 2=cluster)" "1" "1" "2" "standalone" "cluster")
+
+    if [[ "$mode_choice" == "2" ]] || [[ "$mode_choice" == "cluster" ]]; then
+        CFG_DEPLOYMENT_MODE="cluster"
+        configure_cluster_mode
+    else
+        CFG_DEPLOYMENT_MODE="standalone"
+        echo ""
+        echo -e "  ${BOLD}Network Settings${RESET}"
+        CFG_BIND_ADDR=$(prompt_value "Client bind address" "${CFG_BIND_ADDR}")
+        CFG_NODE_ID=$(prompt_value "Node ID" "${CFG_NODE_ID}")
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Storage Settings${RESET}"
+    CFG_DATA_DIR=$(prompt_value "Data directory" "${CFG_DATA_DIR}")
+}
+
+configure_section_security() {
+    print_section "Security Configuration"
+
+    echo -e "  ${BOLD}TLS/SSL Encryption (Client Connections)${RESET}"
+    echo -e "  ${DIM}Enable TLS for encrypted client-server communication.${RESET}"
+    echo -e "  ${DIM}Note: For production, consider using a reverse proxy (nginx, traefik) for TLS.${RESET}"
+    echo ""
+    if prompt_yes_no "Enable TLS encryption" "n"; then
+        CFG_TLS_ENABLED="true"
+        CFG_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
+        CFG_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
+    else
+        CFG_TLS_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Data-at-Rest Encryption${RESET}"
+    echo -e "  ${DIM}Encrypt all data stored on disk using AES-256-GCM.${RESET}"
+    echo ""
+    if prompt_yes_no "Enable data-at-rest encryption" "y"; then
+        CFG_ENCRYPTION_ENABLED="true"
+        local custom_key
+        custom_key=$(prompt_value "Encryption key (Enter for auto-generate)" "")
+        if [[ -n "$custom_key" ]]; then
+            CFG_ENCRYPTION_KEY="$custom_key"
+        fi
+    else
+        CFG_ENCRYPTION_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Authentication${RESET}"
+    echo -e "  ${DIM}Enable username/password authentication with RBAC.${RESET}"
+    echo ""
+    if prompt_yes_no "Enable authentication" "y"; then
+        CFG_AUTH_ENABLED="true"
+        CFG_AUTH_ADMIN_USER=$(prompt_value "Admin username" "${CFG_AUTH_ADMIN_USER}")
+        local custom_pass
+        echo -e "  ${DIM}Leave empty to use auto-generated password${RESET}"
+        read -sp "  Admin password: " custom_pass
+        echo ""
+        if [[ -n "$custom_pass" ]]; then
+            CFG_AUTH_ADMIN_PASS="$custom_pass"
+        fi
+        if prompt_yes_no "Allow anonymous read-only connections" "n"; then
+            CFG_AUTH_ALLOW_ANONYMOUS="true"
+        else
+            CFG_AUTH_ALLOW_ANONYMOUS="false"
+        fi
+    else
+        CFG_AUTH_ENABLED="false"
+    fi
+}
+
+configure_section_advanced() {
+    print_section "Advanced Features"
+
+    echo -e "  ${BOLD}Schema Validation${RESET}"
+    echo -e "  ${DIM}Validate messages against JSON Schema, Avro, or Protobuf.${RESET}"
+    if prompt_yes_no "Enable schema validation" "y"; then
+        CFG_SCHEMA_ENABLED="true"
+        CFG_SCHEMA_VALIDATION=$(prompt_choice "Validation mode (strict/lenient/none)" "strict" "strict" "lenient" "none")
+    else
+        CFG_SCHEMA_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Dead Letter Queue${RESET}"
+    echo -e "  ${DIM}Route failed messages to a separate queue for analysis.${RESET}"
+    if prompt_yes_no "Enable dead letter queues" "y"; then
+        CFG_DLQ_ENABLED="true"
+        CFG_DLQ_MAX_RETRIES=$(prompt_number "Max retries before DLQ" "${CFG_DLQ_MAX_RETRIES}" "1")
+    else
+        CFG_DLQ_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Message TTL${RESET}"
+    echo -e "  ${DIM}Automatically expire messages after a specified time.${RESET}"
+    CFG_TTL_DEFAULT=$(prompt_number "Default TTL in seconds (0=no expiry)" "${CFG_TTL_DEFAULT}" "0")
+    echo ""
+
+    echo -e "  ${BOLD}Delayed Delivery${RESET}"
+    echo -e "  ${DIM}Schedule messages for future delivery.${RESET}"
+    if prompt_yes_no "Enable delayed message delivery" "y"; then
+        CFG_DELAYED_ENABLED="true"
+    else
+        CFG_DELAYED_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Transactions${RESET}"
+    echo -e "  ${DIM}Enable exactly-once semantics with atomic operations.${RESET}"
+    if prompt_yes_no "Enable transaction support" "y"; then
+        CFG_TXN_ENABLED="true"
+    else
+        CFG_TXN_ENABLED="false"
+    fi
+}
+
+configure_section_observability() {
+    print_section "Observability"
+
+    echo -e "  ${BOLD}Prometheus Metrics${RESET}"
+    if prompt_yes_no "Enable Prometheus metrics" "y"; then
+        CFG_METRICS_ENABLED="true"
+        CFG_METRICS_ADDR=$(prompt_value "Metrics address" "${CFG_METRICS_ADDR}")
+    else
+        CFG_METRICS_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}OpenTelemetry Tracing${RESET}"
+    if prompt_yes_no "Enable OpenTelemetry tracing" "y"; then
+        CFG_TRACING_ENABLED="true"
+        CFG_TRACING_ENDPOINT=$(prompt_value "OTLP endpoint" "${CFG_TRACING_ENDPOINT}")
+    else
+        CFG_TRACING_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Health Check Endpoints${RESET}"
+    if prompt_yes_no "Enable health checks" "y"; then
+        CFG_HEALTH_ENABLED="true"
+        CFG_HEALTH_ADDR=$(prompt_value "Health check address" "${CFG_HEALTH_ADDR}")
+    else
+        CFG_HEALTH_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Admin REST API${RESET}"
+    if prompt_yes_no "Enable Admin API" "y"; then
+        CFG_ADMIN_ENABLED="true"
+        CFG_ADMIN_ADDR=$(prompt_value "Admin API address" "${CFG_ADMIN_ADDR}")
+    else
+        CFG_ADMIN_ENABLED="false"
+    fi
+}
+
+configure_section_performance() {
+    print_section "Performance"
+
+    echo -e "  ${BOLD}Acknowledgment Mode${RESET}"
+    echo -e "    ${DIM}none${RESET}   - Fire-and-forget (fastest, no durability)"
+    echo -e "    ${DIM}leader${RESET} - Leader acknowledges (balanced) [DEFAULT]"
+    echo -e "    ${DIM}all${RESET}    - All replicas acknowledge (safest)"
+    echo ""
+    CFG_ACKS=$(prompt_choice "Acks mode" "${CFG_ACKS}" "none" "leader" "all")
+    echo ""
+
+    echo -e "  ${BOLD}Storage Settings${RESET}"
+    CFG_SEGMENT_BYTES=$(prompt_number "Segment size (bytes)" "${CFG_SEGMENT_BYTES}" "1024")
+    CFG_RETENTION_BYTES=$(prompt_number "Retention limit (0=unlimited)" "${CFG_RETENTION_BYTES}" "0")
+    echo ""
+
+    echo -e "  ${BOLD}Logging${RESET}"
+    CFG_LOG_LEVEL=$(prompt_choice "Log level" "${CFG_LOG_LEVEL}" "debug" "info" "warn" "error")
+}
+
+show_final_configuration() {
+    local config_dir="$1"
+
+    echo -e "  ${GREEN}${BOLD}FINAL CONFIGURATION${RESET}"
+    echo ""
+
+    echo -e "  ${BOLD}Installation Paths:${RESET}"
+    echo -e "    Binaries:       ${CYAN}$PREFIX/bin${RESET}"
+    echo -e "    Configuration:  ${CYAN}$config_dir/flymq.json${RESET}"
+    echo -e "    Data:           ${CYAN}$CFG_DATA_DIR${RESET}"
+    echo ""
+
+    echo -e "  ${BOLD}Deployment:${RESET}"
+    echo -e "    Mode:           ${CYAN}$CFG_DEPLOYMENT_MODE${RESET}"
+    echo -e "    Bind Address:   ${CYAN}$CFG_BIND_ADDR${RESET}"
+    if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
+        echo -e "    Cluster Addr:   ${CYAN}$CFG_ADVERTISE_CLUSTER${RESET}"
+        [[ -n "$CFG_CLUSTER_PEERS" ]] && echo -e "    Peers:          ${CYAN}$CFG_CLUSTER_PEERS${RESET}"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}Security:${RESET}"
+    [[ "$CFG_TLS_ENABLED" == "true" ]] && echo -e "    TLS:            ${GREEN}Enabled${RESET}" || echo -e "    TLS:            ${YELLOW}Disabled${RESET}"
+    [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && echo -e "    Encryption:     ${GREEN}Enabled${RESET}" || echo -e "    Encryption:     ${YELLOW}Disabled${RESET}"
+    [[ "$CFG_AUTH_ENABLED" == "true" ]] && echo -e "    Authentication: ${GREEN}Enabled${RESET} (user: ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET})" || echo -e "    Authentication: ${YELLOW}Disabled${RESET}"
+    echo ""
+
+    echo -e "  ${BOLD}Features:${RESET}"
+    local features=""
+    [[ "$CFG_SCHEMA_ENABLED" == "true" ]] && features+="Schema "
+    [[ "$CFG_DLQ_ENABLED" == "true" ]] && features+="DLQ "
+    [[ "$CFG_DELAYED_ENABLED" == "true" ]] && features+="Delayed "
+    [[ "$CFG_TXN_ENABLED" == "true" ]] && features+="Transactions "
+    [[ -n "$features" ]] && echo -e "    Enabled:        ${GREEN}${features}${RESET}" || echo -e "    Enabled:        ${YELLOW}None${RESET}"
+    echo ""
+
+    echo -e "  ${BOLD}Observability:${RESET}"
+    [[ "$CFG_METRICS_ENABLED" == "true" ]] && echo -e "    Metrics:        ${GREEN}${CFG_METRICS_ADDR}${RESET}"
+    [[ "$CFG_HEALTH_ENABLED" == "true" ]] && echo -e "    Health:         ${GREEN}${CFG_HEALTH_ADDR}${RESET}"
+    if [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
+        if [[ "$CFG_ADMIN_TLS_ENABLED" == "true" ]]; then
+            echo -e "    Admin API:      ${GREEN}${CFG_ADMIN_ADDR}${RESET} ${DIM}(HTTPS)${RESET}"
+        else
+            echo -e "    Admin API:      ${GREEN}${CFG_ADMIN_ADDR}${RESET} ${YELLOW}(HTTP)${RESET}"
+        fi
+    fi
+
+    # Show credentials if auth is enabled
+    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+        echo ""
+        echo -e "  ${YELLOW}${BOLD}⚠ IMPORTANT: Save these credentials securely!${RESET}"
+        echo -e "    Admin Username: ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
+        echo -e "    Admin Password: ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
+    fi
+
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        echo ""
+        echo -e "  ${YELLOW}${BOLD}  Encryption Key (save securely):${RESET}"
+        echo -e "    ${DIM}${CFG_ENCRYPTION_KEY}${RESET}"
+    fi
+}
+
 main() {
     parse_args "$@"
 
@@ -1658,67 +1630,42 @@ main() {
         exit 0
     fi
 
-    print_info "Detected: $OS/$ARCH"
+    print_info "Detected: ${CYAN}$OS/$ARCH${RESET}"
+    echo ""
 
     # Set default prefix if not specified
     if [[ -z "$PREFIX" ]]; then
         PREFIX=$(get_default_prefix)
     fi
 
-    # Set default data dir
+    # Set default data dir and config dir
     CFG_DATA_DIR=$(get_default_data_dir)
     local config_dir=$(get_default_config_dir)
+    CFG_NODE_ID=$(hostname)
+    CFG_SCHEMA_REGISTRY_DIR="${CFG_DATA_DIR}/schemas"
+
+    # Auto-generate encryption key and admin password for defaults
+    if [[ -z "$CFG_ENCRYPTION_KEY" ]]; then
+        CFG_ENCRYPTION_KEY=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 64)
+    fi
+    if [[ -z "$CFG_AUTH_ADMIN_PASS" ]]; then
+        CFG_AUTH_ADMIN_PASS=$(openssl rand -base64 16 2>/dev/null || head -c 16 /dev/urandom | base64)
+    fi
 
     # Interactive configuration or use defaults
     if [[ "$AUTO_CONFIRM" != true ]]; then
-        echo ""
-        echo -e "  ${BOLD}Welcome to the FlyMQ installer!${RESET}"
-        echo -e "  ${DIM}This wizard will guide you through the installation process.${RESET}"
-        echo ""
+        # Show default configuration first
+        show_default_configuration "$config_dir"
 
-        if prompt_yes_no "Run interactive configuration" "y"; then
-            configure_interactive
+        echo ""
+        if prompt_yes_no "Would you like to customize this configuration" "n"; then
+            configure_by_sections
         else
-            print_info "Using default configuration"
+            print_success "Using production-ready defaults"
         fi
 
         echo ""
-        echo -e "  ${BOLD}Installation Summary:${RESET}"
-        echo -e "  ${ICON_ARROW} Install prefix: ${CYAN}$PREFIX${RESET}"
-        echo -e "  ${ICON_ARROW} Config dir:     ${CYAN}$config_dir${RESET}"
-        echo -e "  ${ICON_ARROW} Data dir:       ${CYAN}$CFG_DATA_DIR${RESET}"
-        echo -e "  ${ICON_ARROW} Bind address:   ${CYAN}$CFG_BIND_ADDR${RESET}"
-        echo ""
-        echo -e "  ${BOLD}Deployment:${RESET}"
-        echo -e "  ${ICON_ARROW} Mode:           ${CYAN}$CFG_DEPLOYMENT_MODE${RESET}"
-        if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
-            echo -e "  ${ICON_ARROW} Cluster addr:   ${CYAN}$CFG_ADVERTISE_CLUSTER${RESET}"
-            if [[ -n "$CFG_CLUSTER_PEERS" ]]; then
-                echo -e "  ${ICON_ARROW} Peers:          ${CYAN}$CFG_CLUSTER_PEERS${RESET}"
-            fi
-        fi
-        echo ""
-        echo -e "  ${BOLD}Security:${RESET}"
-        echo -e "  ${ICON_ARROW} TLS enabled:    ${CYAN}$CFG_TLS_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Encryption:     ${CYAN}$CFG_ENCRYPTION_ENABLED${RESET}"
-        echo ""
-        echo -e "  ${BOLD}Advanced Features:${RESET}"
-        echo -e "  ${ICON_ARROW} Schema Validation:  ${CYAN}$CFG_SCHEMA_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Dead Letter Queue:  ${CYAN}$CFG_DLQ_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Delayed Delivery:   ${CYAN}$CFG_DELAYED_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Transactions:       ${CYAN}$CFG_TXN_ENABLED${RESET}"
-        echo ""
-        echo -e "  ${BOLD}Observability:${RESET}"
-        echo -e "  ${ICON_ARROW} Metrics (${CFG_METRICS_ADDR}):  ${CYAN}$CFG_METRICS_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Health (${CFG_HEALTH_ADDR}):   ${CYAN}$CFG_HEALTH_ENABLED${RESET}"
-        echo -e "  ${ICON_ARROW} Admin API (${CFG_ADMIN_ADDR}): ${CYAN}$CFG_ADMIN_ENABLED${RESET}"
-        echo ""
-        echo -e "  ${BOLD}Security:${RESET}"
-        echo -e "  ${ICON_ARROW} Authentication:     ${CYAN}$CFG_AUTH_ENABLED${RESET}"
-        if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
-            echo -e "  ${ICON_ARROW} Admin User:         ${CYAN}$CFG_AUTH_ADMIN_USER${RESET}"
-            echo -e "  ${ICON_ARROW} Allow Anonymous:    ${CYAN}$CFG_AUTH_ALLOW_ANONYMOUS${RESET}"
-        fi
+        show_final_configuration "$config_dir"
         echo ""
 
         if ! prompt_yes_no "Proceed with installation" "y"; then
