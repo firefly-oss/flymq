@@ -17,6 +17,7 @@ package com.firefly.flymq.transaction;
 
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.exception.FlyMQException;
+import com.firefly.flymq.protocol.BinaryProtocol;
 
 import java.nio.charset.StandardCharsets;
 
@@ -80,10 +81,10 @@ public class Transaction implements AutoCloseable {
      *
      * @param topic target topic
      * @param data  message data
-     * @return message offset
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails or transaction is not active
      */
-    public long produce(String topic, byte[] data) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produce(String topic, byte[] data) throws FlyMQException {
         ensureActive();
         return client.produceInTransaction(txnId, topic, data);
     }
@@ -93,10 +94,10 @@ public class Transaction implements AutoCloseable {
      *
      * @param topic   target topic
      * @param message message string
-     * @return message offset
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails or transaction is not active
      */
-    public long produce(String topic, String message) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produce(String topic, String message) throws FlyMQException {
         return produce(topic, message.getBytes(StandardCharsets.UTF_8));
     }
 

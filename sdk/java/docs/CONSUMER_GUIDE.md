@@ -2,33 +2,106 @@
 
 Best practices for consuming messages with FlyMQ Java client.
 
-## Basic Consumer
+## Quick Start
 
 ```java
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    // Simple consume by offset
-    ConsumedMessage msg = client.consume("my-topic", 0);
-    System.out.println("Received: " + msg.dataAsString());
+import com.firefly.flymq.FlyMQClient;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (var consumer = client.consumer("my-topic", "my-group")) {
+        consumer.subscribe();
+
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Received: " + msg.dataAsString());
+        }
+    }
 }
 ```
 
-## High-Level Consumer
+## High-Level Consumer (Recommended)
 
-Use the `Consumer` class for Kafka-like consumption:
+The `Consumer` class provides a Kafka-like API with auto-commit and poll-based consumption.
+
+### Basic Usage
 
 ```java
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    try (Consumer consumer = new Consumer(client, "my-topic", "my-group")) {
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.consumer.Consumer;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (Consumer consumer = client.consumer("my-topic", "my-group")) {
         consumer.subscribe();
-        
+
         while (true) {
-            List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
-            for (ConsumedMessage msg : messages) {
-                process(msg);
+            var messages = consumer.poll(Duration.ofSeconds(1));
+            for (var msg : messages) {
+                System.out.println("Key: " + msg.keyAsString());
+                System.out.println("Value: " + msg.dataAsString());
+                System.out.println("Offset: " + msg.offset());
             }
-            consumer.commitSync();
+            // Auto-commit enabled by default
         }
     }
+}
+```
+
+### Consumer Configuration
+
+```java
+import com.firefly.flymq.consumer.ConsumerConfig;
+
+ConsumerConfig config = ConsumerConfig.builder()
+    .maxPollRecords(100)           // Max messages per poll
+    .enableAutoCommit(true)        // Enable auto-commit
+    .autoCommitIntervalMs(5000)    // Commit every 5 seconds
+    .sessionTimeoutMs(30000)       // Session timeout
+    .build();
+
+try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {
+    consumer.subscribe();
+    // ...
+}
+```
+
+### Manual Commit
+
+```java
+ConsumerConfig config = ConsumerConfig.builder()
+    .enableAutoCommit(false)  // Disable auto-commit
+    .build();
+
+try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {
+    consumer.subscribe();
+
+    while (true) {
+        var messages = consumer.poll(Duration.ofSeconds(1));
+        for (var msg : messages) {
+            process(msg);
+        }
+        consumer.commitSync();  // Manual commit after processing
+    }
+}
+```
+
+### Async Commit
+
+```java
+consumer.commitAsync((offsets, error) -> {
+    if (error != null) {
+        System.err.println("Commit failed: " + error.getMessage());
+    } else {
+        System.out.println("Committed: " + offsets);
+    }
+});
+```
+
+## Basic Consumer (Low-Level)
+
+```java
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // Simple consume by offset
+    ConsumedMessage msg = client.consume("my-topic", 0);
+    System.out.println("Received: " + msg.dataAsString());
 }
 ```
 
@@ -38,12 +111,16 @@ Multiple consumers sharing work:
 
 ```java
 // Consumer 1
-Consumer consumer1 = new Consumer(client, "orders", "order-processors");
-consumer1.subscribe();
+try (Consumer consumer1 = client.consumer("orders", "order-processors")) {
+    consumer1.subscribe();
+    // Processes partitions 0, 1
+}
 
 // Consumer 2 (same group - shares partitions)
-Consumer consumer2 = new Consumer(client, "orders", "order-processors");
-consumer2.subscribe();
+try (Consumer consumer2 = client.consumer("orders", "order-processors")) {
+    consumer2.subscribe();
+    // Processes partitions 2, 3
+}
 
 // Messages are distributed across consumers in the group
 ```

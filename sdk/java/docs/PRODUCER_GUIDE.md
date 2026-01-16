@@ -2,10 +2,96 @@
 
 Best practices for producing messages with FlyMQ Java client.
 
-## Basic Producer
+## Quick Start
 
 ```java
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+import com.firefly.flymq.FlyMQClient;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    long offset = client.produce("my-topic", "Hello".getBytes());
+    System.out.println("Produced at offset: " + offset);
+}
+```
+
+## High-Level Producer (Recommended)
+
+The `HighLevelProducer` provides batching, callbacks, and automatic retries for production workloads.
+
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.producer.HighLevelProducer;
+import com.firefly.flymq.producer.ProducerConfig;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(100)        // Max messages per batch
+        .lingerMs(10)          // Wait time for batching
+        .maxRetries(3)         // Retry attempts
+        .retryBackoffMs(100)   // Backoff between retries
+        .build();
+
+    try (HighLevelProducer producer = client.producer(config)) {
+        // Send with callback
+        producer.send("events", "{\"event\": \"click\"}".getBytes())
+            .whenComplete((metadata, error) -> {
+                if (error != null) {
+                    System.err.println("Failed: " + error.getMessage());
+                } else {
+                    System.out.println("✓ Sent to " + metadata.topic() +
+                        "[" + metadata.partition() + "] @ offset " + metadata.offset());
+                }
+            });
+
+        // Wait for result if needed
+        var metadata = producer.send("events", "data".getBytes()).get();
+        System.out.println("Offset: " + metadata.offset());
+
+        producer.flush();
+    }
+}
+```
+
+### High-Throughput Pattern
+
+```java
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(1000)
+        .lingerMs(50)
+        .build();
+
+    try (HighLevelProducer producer = client.producer(config)) {
+        // Send 100k messages efficiently
+        for (int i = 0; i < 100000; i++) {
+            producer.send("events", ("event-" + i).getBytes());
+        }
+        producer.flush();
+        System.out.println("All messages sent!");
+    }
+}
+```
+
+### Fire-and-Forget vs Wait
+
+```java
+// Fire-and-forget (fastest)
+producer.send("topic", data);
+
+// Wait for acknowledgment
+var future = producer.send("topic", data);
+var metadata = future.get();  // Blocks until sent
+
+// Check if sent without blocking
+if (future.isDone()) {
+    System.out.println("Sent at offset " + future.get().offset());
+}
+```
+
+## Basic Producer (Low-Level)
+
+```java
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
     // Simple produce
     long offset = client.produce("my-topic", "Hello".getBytes());
     System.out.println("Produced at offset: " + offset);
@@ -17,26 +103,35 @@ try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
 Messages with the same key go to the same partition:
 
 ```java
-// Produce with key
-client.produceWithKey("orders", "user-123", orderJson.getBytes());
-client.produceWithKey("orders", "user-123", anotherOrder.getBytes()); // Same partition
+// With HighLevelProducer
+producer.send("orders", orderJson.getBytes(), "user-123".getBytes());
+producer.send("orders", anotherOrder.getBytes(), "user-123".getBytes()); // Same partition
 
-// Ensures ordering for the same key
+// With low-level client
+client.produceWithKey("orders", "user-123", orderJson.getBytes());
 ```
 
 ## Batch Producing
 
-Produce multiple messages efficiently:
+### With HighLevelProducer (Recommended)
 
 ```java
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    List<String> messages = new ArrayList<>();
-    for (int i = 0; i < 1000; i++) {
-        messages.add("Message " + i);
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (HighLevelProducer producer = client.producer()) {
+        for (int i = 0; i < 1000; i++) {
+            producer.send("my-topic", ("Message " + i).getBytes());
+        }
+        producer.flush();  // Ensure all sent
     }
-    
-    for (String msg : messages) {
-        client.produce("my-topic", msg.getBytes());
+}
+```
+
+### With Low-Level Client
+
+```java
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    for (int i = 0; i < 1000; i++) {
+        client.produce("my-topic", ("Message " + i).getBytes());
     }
 }
 ```

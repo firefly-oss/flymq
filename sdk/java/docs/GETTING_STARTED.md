@@ -1,6 +1,6 @@
 # Getting Started with FlyMQ Java SDK
 
-Quick guide to get started with the FlyMQ Java client.
+Quick guide to get started with the FlyMQ Java client in 10 minutes.
 
 ## Installation
 
@@ -36,6 +36,26 @@ Add the dependency to your `pom.xml`:
 
 ## Your First Program
 
+### The Simplest Way: `connect()`
+
+```java
+import com.firefly.flymq.FlyMQClient;
+
+public class HelloFlyMQ {
+    public static void main(String[] args) throws Exception {
+        // One-liner connection
+        try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+            // Produce and consume
+            long offset = client.produce("hello", "Hello, FlyMQ!".getBytes());
+            byte[] data = client.consume("hello", offset);
+            System.out.println("Received: " + new String(data));
+        }
+    }
+}
+```
+
+### Full Example
+
 ```java
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.protocol.Records.ConsumedMessage;
@@ -43,14 +63,14 @@ import com.firefly.flymq.protocol.Records.ConsumedMessage;
 public class HelloFlyMQ {
     public static void main(String[] args) throws Exception {
         // Connect to FlyMQ
-        try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+        try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
             // Create topic
             client.createTopic("hello", 1);
-            
+
             // Produce message
             long offset = client.produce("hello", "Hello, FlyMQ!".getBytes());
             System.out.println("Produced at offset: " + offset);
-            
+
             // Consume message
             ConsumedMessage msg = client.consumeWithKey("hello", offset);
             System.out.println("Received: " + msg.dataAsString());
@@ -103,7 +123,7 @@ for (ConsumedMessage m : result.messages()) {
 }
 ```
 
-### Consumer Groups
+### Consumer Groups (Low-Level)
 
 Process messages as a coordinated group:
 
@@ -117,6 +137,61 @@ while (true) {
         process(msg);
     }
     consumer.commitSync(); // Save position
+}
+```
+
+## High-Level APIs (Kafka-like)
+
+FlyMQ provides high-level APIs that feel familiar to Kafka users.
+
+### High-Level Producer
+
+The `HighLevelProducer` provides batching, callbacks, and automatic retries:
+
+```java
+import com.firefly.flymq.producer.HighLevelProducer;
+import com.firefly.flymq.producer.ProducerConfig;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(100)
+        .lingerMs(10)
+        .build();
+
+    try (HighLevelProducer producer = client.producer(config)) {
+        // Send with callback
+        producer.send("events", "data".getBytes())
+            .whenComplete((metadata, error) -> {
+                if (error == null) {
+                    System.out.println("Sent @ offset " + metadata.offset());
+                }
+            });
+
+        producer.flush();
+    }
+}
+```
+
+### High-Level Consumer
+
+The `Consumer` provides auto-commit and poll-based consumption:
+
+```java
+import com.firefly.flymq.consumer.Consumer;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (Consumer consumer = client.consumer("my-topic", "my-group")) {
+        consumer.subscribe();
+
+        while (true) {
+            var messages = consumer.poll(Duration.ofSeconds(1));
+            for (var msg : messages) {
+                System.out.println("Key: " + msg.keyAsString());
+                System.out.println("Value: " + msg.dataAsString());
+            }
+            // Auto-commit enabled by default
+        }
+    }
 }
 ```
 
@@ -224,15 +299,48 @@ ClientConfig config = ClientConfig.builder()
 
 ## Error Handling
 
+FlyMQ exceptions include helpful hints for quick debugging:
+
 ```java
+import com.firefly.flymq.exception.FlyMQException;
+
+try {
+    client.produce("my-topic", data.getBytes());
+} catch (FlyMQException e) {
+    System.err.println("Error: " + e.getMessage());
+    System.err.println("Hint: " + e.getHint());  // Helpful suggestion!
+
+    // Or get full message with hint
+    System.err.println(e.getFullMessage());
+}
+```
+
+### Errors Include Hints
+
+```java
+try {
+    client.produce("nonexistent-topic", data);
+} catch (FlyMQException e) {
+    System.err.println(e.getHint());
+    // Output: Create the topic first with client.createTopic("nonexistent-topic", partitions)
+    //         or use the CLI: flymq-cli topic create nonexistent-topic
+}
+```
+
+### Exception Types
+
+```java
+import com.firefly.flymq.exception.FlyMQException;
+import com.firefly.flymq.exception.ProtocolException;
+
 try {
     client.produce("my-topic", data.getBytes());
 } catch (ProtocolException e) {
+    // Protocol-level errors
     log.error("Protocol error: " + e.getMessage());
 } catch (FlyMQException e) {
-    log.error("FlyMQ error: " + e.getMessage());
-} catch (Exception e) {
-    log.error("Unexpected error: " + e.getMessage());
+    // All FlyMQ errors (includes hint)
+    log.error("FlyMQ error: " + e.getFullMessage());
 }
 ```
 

@@ -75,6 +75,59 @@ public class FlyMQClient implements AutoCloseable {
     private volatile boolean authenticated = false;
     private volatile String authenticatedUsername = null;
 
+    // =========================================================================
+    // Static Factory Methods (Kafka-like convenience)
+    // =========================================================================
+
+    /**
+     * Creates and connects a new FlyMQ client.
+     *
+     * <p>This is the simplest way to connect to FlyMQ, similar to Kafka's
+     * KafkaProducer/KafkaConsumer constructors.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+     *     client.produce("my-topic", "Hello!".getBytes());
+     * }
+     * }</pre>
+     *
+     * @param bootstrapServers server address (host:port) or comma-separated list
+     * @return connected FlyMQ client
+     * @throws FlyMQException if connection fails
+     */
+    public static FlyMQClient connect(String bootstrapServers) throws FlyMQException {
+        return new FlyMQClient(bootstrapServers);
+    }
+
+    /**
+     * Creates and connects a new FlyMQ client with custom configuration.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * ClientConfig config = ClientConfig.builder()
+     *     .servers("server1:9092,server2:9092")
+     *     .tlsEnabled(true)
+     *     .tlsCaFile("/path/to/ca.crt")
+     *     .build();
+     *
+     * try (FlyMQClient client = FlyMQClient.connect(config)) {
+     *     client.produce("my-topic", "Hello!".getBytes());
+     * }
+     * }</pre>
+     *
+     * @param config client configuration
+     * @return connected FlyMQ client
+     * @throws FlyMQException if connection fails
+     */
+    public static FlyMQClient connect(ClientConfig config) throws FlyMQException {
+        return new FlyMQClient(config);
+    }
+
+    // =========================================================================
+    // Constructors
+    // =========================================================================
+
     /**
      * Creates a new FlyMQ client connected to the specified server.
      *
@@ -440,28 +493,28 @@ public class FlyMQClient implements AutoCloseable {
     // =========================================================================
 
     /**
-     * Produces a message to a topic.
+     * Produces a message to a topic and returns RecordMetadata (Kafka-like).
      *
      * @param topic target topic name
      * @param data  message data
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produce(String topic, byte[] data) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produce(String topic, byte[] data) throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceRequest(topic, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
-     * Produces a string message to a topic.
+     * Produces a string message to a topic and returns RecordMetadata.
      *
      * @param topic   target topic name
      * @param message message string
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produce(String topic, String message) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produce(String topic, String message) throws FlyMQException {
         return produce(topic, message.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -472,13 +525,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic target topic name
      * @param key   message key for partitioning
      * @param data  message data
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceWithKey(String topic, byte[] key, byte[] data) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produceWithKey(String topic, byte[] key, byte[] data)
+            throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceWithKeyRequest(topic, key, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
@@ -488,10 +542,11 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic   target topic name
      * @param key     message key for partitioning
      * @param message message string
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceWithKey(String topic, String key, String message) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produceWithKey(String topic, String key, String message)
+            throws FlyMQException {
         return produceWithKey(
             topic,
             key.getBytes(StandardCharsets.UTF_8),
@@ -506,13 +561,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic     target topic name
      * @param partition target partition number
      * @param data      message data
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceToPartition(String topic, int partition, byte[] data) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produceToPartition(String topic, int partition, byte[] data)
+            throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceWithPartitionRequest(topic, partition, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
@@ -523,15 +579,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param partition target partition number
      * @param key       message key (for tracking, not partition selection)
      * @param data      message data
-     * @return the offset of the produced message
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceWithKeyToPartition(String topic, int partition, byte[] key, byte[] data)
+    public BinaryProtocol.RecordMetadata produceWithKeyToPartition(String topic, int partition, byte[] key, byte[] data)
             throws FlyMQException {
-        // For now, ignore key and use partition-based produce
         byte[] payload = BinaryProtocol.encodeProduceWithPartitionRequest(topic, partition, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
@@ -586,16 +641,16 @@ public class FlyMQClient implements AutoCloseable {
      * @return fetch result with messages and next offset
      * @throws FlyMQException if the operation fails
      */
-    public FetchResult fetch(String topic, int partition, long offset, int maxMessages) 
+    public FetchResult fetch(String topic, int partition, long offset, int maxMessages)
             throws FlyMQException {
-        // Use binary fetch request - encode using group-based fetch for simplicity
-        byte[] payload = BinaryProtocol.encodeFetchRequest(topic, "", maxMessages, 5000);
+        // Use binary fetch request with correct format: topic, partition, offset, maxMessages
+        byte[] payload = BinaryProtocol.encodeFetchRequest(topic, partition, offset, maxMessages);
         byte[] response = sendBinaryRequest(OpCode.FETCH, payload);
 
         List<BinaryProtocol.FetchedMessage> fetched = BinaryProtocol.decodeFetchResponse(response);
         List<ConsumedMessage> messages = new ArrayList<>();
         long nextOffset = offset;
-        
+
         for (BinaryProtocol.FetchedMessage msg : fetched) {
             messages.add(new ConsumedMessage(topic, msg.partition(), msg.offset(), msg.key(), msg.data()));
             if (msg.offset() >= nextOffset) {
@@ -825,13 +880,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic   target topic
      * @param data    message data
      * @param delayMs delay in milliseconds
-     * @return message offset
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceDelayed(String topic, byte[] data, long delayMs) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produceDelayed(String topic, byte[] data, long delayMs)
+            throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceDelayedRequest(topic, data, delayMs);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE_DELAYED, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
@@ -840,13 +896,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic target topic
      * @param data  message data
      * @param ttlMs TTL in milliseconds
-     * @return message offset
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceWithTTL(String topic, byte[] data, long ttlMs) throws FlyMQException {
+    public BinaryProtocol.RecordMetadata produceWithTTL(String topic, byte[] data, long ttlMs)
+            throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceWithTTLRequest(topic, data, ttlMs);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE_WITH_TTL, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     /**
@@ -855,14 +912,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param topic      target topic
      * @param data       message data
      * @param schemaName schema to validate against
-     * @return message offset
+     * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
-    public long produceWithSchema(String topic, byte[] data, String schemaName) 
+    public BinaryProtocol.RecordMetadata produceWithSchema(String topic, byte[] data, String schemaName)
             throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceWithSchemaRequest(topic, data, schemaName);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE_WITH_SCHEMA, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     // =========================================================================
@@ -898,13 +955,13 @@ public class FlyMQClient implements AutoCloseable {
     }
 
     /**
-     * Internal: Produces within a transaction.
+     * Internal: Produces within a transaction and returns RecordMetadata.
      */
-    public long produceInTransaction(String txnId, String topic, byte[] data) 
+    public BinaryProtocol.RecordMetadata produceInTransaction(String txnId, String topic, byte[] data)
             throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeTxnProduceRequest(txnId, topic, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE_TX, payload);
-        return BinaryProtocol.decodeProduceResponse(response);
+        return BinaryProtocol.decodeRecordMetadata(response);
     }
 
     // =========================================================================
@@ -1030,5 +1087,127 @@ public class FlyMQClient implements AutoCloseable {
      */
     public boolean isTlsEnabled() {
         return sslContext != null;
+    }
+
+    // =========================================================================
+    // High-Level Producer API
+    // =========================================================================
+
+    /**
+     * Creates a high-level producer with default configuration.
+     *
+     * <p>The producer provides:
+     * <ul>
+     *   <li>Automatic batching for improved throughput</li>
+     *   <li>Configurable acknowledgment levels</li>
+     *   <li>Automatic retries with backoff</li>
+     *   <li>Async send with callbacks</li>
+     *   <li>Thread-safe operations</li>
+     * </ul>
+     *
+     * <p>Example:
+     * <pre>{@code
+     * try (HighLevelProducer producer = client.producer()) {
+     *     producer.send("topic", "message".getBytes());
+     *     producer.flush();
+     * }
+     * }</pre>
+     *
+     * @return a new HighLevelProducer instance
+     */
+    public com.firefly.flymq.producer.HighLevelProducer producer() {
+        return new com.firefly.flymq.producer.HighLevelProducer(this);
+    }
+
+    /**
+     * Creates a high-level producer with custom configuration.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * ProducerConfig config = ProducerConfig.builder()
+     *     .batchSize(32768)
+     *     .lingerMs(10)
+     *     .retries(5)
+     *     .build();
+     *
+     * try (HighLevelProducer producer = client.producer(config)) {
+     *     for (int i = 0; i < 1000; i++) {
+     *         producer.send("events", ("event-" + i).getBytes());
+     *     }
+     *     producer.flush();
+     * }
+     * }</pre>
+     *
+     * @param config producer configuration
+     * @return a new HighLevelProducer instance
+     */
+    public com.firefly.flymq.producer.HighLevelProducer producer(
+            com.firefly.flymq.producer.ProducerConfig config) {
+        return new com.firefly.flymq.producer.HighLevelProducer(this, config);
+    }
+
+    // =========================================================================
+    // High-Level Consumer API
+    // =========================================================================
+
+    /**
+     * Creates a high-level consumer for a topic.
+     *
+     * <p>The consumer provides:
+     * <ul>
+     *   <li>Automatic offset tracking</li>
+     *   <li>Auto-commit support</li>
+     *   <li>Kafka-like poll() API</li>
+     *   <li>Seek operations</li>
+     * </ul>
+     *
+     * <p>Example:
+     * <pre>{@code
+     * try (Consumer consumer = client.consumer("my-topic", "my-group")) {
+     *     consumer.subscribe();
+     *     while (true) {
+     *         List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
+     *         for (ConsumedMessage msg : messages) {
+     *             process(msg);
+     *         }
+     *     }
+     * }
+     * }</pre>
+     *
+     * @param topic   topic to consume from
+     * @param groupId consumer group ID
+     * @return a new Consumer instance
+     */
+    public com.firefly.flymq.consumer.Consumer consumer(String topic, String groupId) {
+        return new com.firefly.flymq.consumer.Consumer(this, topic, groupId);
+    }
+
+    /**
+     * Creates a high-level consumer with custom configuration.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * ConsumerConfig config = ConsumerConfig.builder()
+     *     .maxPollRecords(100)
+     *     .enableAutoCommit(true)
+     *     .autoCommitIntervalMs(5000)
+     *     .build();
+     *
+     * try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {
+     *     consumer.subscribe();
+     *     // ...
+     * }
+     * }</pre>
+     *
+     * @param topic     topic to consume from
+     * @param groupId   consumer group ID
+     * @param partition partition to consume from
+     * @param config    consumer configuration
+     * @return a new Consumer instance
+     */
+    public com.firefly.flymq.consumer.Consumer consumer(
+            String topic, String groupId, int partition,
+            com.firefly.flymq.consumer.ConsumerConfig config) {
+        return new com.firefly.flymq.consumer.Consumer(this, topic, groupId, partition, config);
     }
 }

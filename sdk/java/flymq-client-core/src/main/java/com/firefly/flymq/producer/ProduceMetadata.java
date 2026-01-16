@@ -24,12 +24,22 @@ package com.firefly.flymq.producer;
 public record ProduceMetadata(
     String topic,
     int partition,
-    long offset
+    long offset,
+    long timestamp,
+    int keySize,
+    int valueSize
 ) {
+    /**
+     * Legacy constructor for backward compatibility.
+     */
+    public ProduceMetadata(String topic, int partition, long offset) {
+        this(topic, partition, offset, System.currentTimeMillis(), -1, 0);
+    }
+
     @Override
     public String toString() {
-        return String.format("ProduceMetadata{topic='%s', partition=%d, offset=%d}",
-            topic, partition, offset);
+        return String.format("ProduceMetadata{topic='%s', partition=%d, offset=%d, timestamp=%d, keySize=%d, valueSize=%d}",
+            topic, partition, offset, timestamp, keySize, valueSize);
     }
 }
 

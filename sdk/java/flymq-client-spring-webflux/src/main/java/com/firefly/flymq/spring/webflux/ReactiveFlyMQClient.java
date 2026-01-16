@@ -12,6 +12,7 @@ package com.firefly.flymq.spring.webflux;
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.config.ClientConfig;
 import com.firefly.flymq.exception.FlyMQException;
+import com.firefly.flymq.protocol.BinaryProtocol;
 import com.firefly.flymq.protocol.Records.*;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -125,94 +126,94 @@ public class ReactiveFlyMQClient implements AutoCloseable {
     // ========================================================================
     // Produce Operations
     // ========================================================================
-    
+
     /**
      * Produce a message to a topic.
-     * 
+     *
      * @param topic topic name
      * @param data message data
-     * @return Mono with the offset where message was written
+     * @return Mono with RecordMetadata containing topic, partition, offset, timestamp
      */
-    public Mono<Long> produce(String topic, byte[] data) {
+    public Mono<BinaryProtocol.RecordMetadata> produce(String topic, byte[] data) {
         return Mono.fromCallable(() -> delegate.produce(topic, data))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a string message.
-     * 
+     *
      * @param topic topic name
      * @param message message string
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produce(String topic, String message) {
+    public Mono<BinaryProtocol.RecordMetadata> produce(String topic, String message) {
         return Mono.fromCallable(() -> delegate.produce(topic, message))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a message with a key for partition assignment.
      * Messages with the same key will be routed to the same partition.
-     * 
+     *
      * @param topic topic name
      * @param key message key for partitioning
      * @param data message data
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produceWithKey(String topic, byte[] key, byte[] data) {
+    public Mono<BinaryProtocol.RecordMetadata> produceWithKey(String topic, byte[] key, byte[] data) {
         return Mono.fromCallable(() -> delegate.produceWithKey(topic, key, data))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a string message with a key for partition assignment.
      * Messages with the same key will be routed to the same partition.
-     * 
+     *
      * @param topic topic name
      * @param key message key for partitioning
      * @param message message string
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produceWithKey(String topic, String key, String message) {
+    public Mono<BinaryProtocol.RecordMetadata> produceWithKey(String topic, String key, String message) {
         return Mono.fromCallable(() -> delegate.produceWithKey(topic, key, message))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a delayed message.
-     * 
+     *
      * @param topic topic name
      * @param data message data
      * @param delayMs delay in milliseconds
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produceDelayed(String topic, byte[] data, long delayMs) {
+    public Mono<BinaryProtocol.RecordMetadata> produceDelayed(String topic, byte[] data, long delayMs) {
         return Mono.fromCallable(() -> delegate.produceDelayed(topic, data, delayMs))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a message with TTL.
-     * 
+     *
      * @param topic topic name
      * @param data message data
      * @param ttlMs time-to-live in milliseconds
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produceWithTTL(String topic, byte[] data, long ttlMs) {
+    public Mono<BinaryProtocol.RecordMetadata> produceWithTTL(String topic, byte[] data, long ttlMs) {
         return Mono.fromCallable(() -> delegate.produceWithTTL(topic, data, ttlMs))
             .subscribeOn(Schedulers.boundedElastic());
     }
-    
+
     /**
      * Produce a message with schema validation.
-     * 
+     *
      * @param topic topic name
      * @param data message data
      * @param schemaName schema to validate against
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produceWithSchema(String topic, byte[] data, String schemaName) {
+    public Mono<BinaryProtocol.RecordMetadata> produceWithSchema(String topic, byte[] data, String schemaName) {
         return Mono.fromCallable(() -> delegate.produceWithSchema(topic, data, schemaName))
             .subscribeOn(Schedulers.boundedElastic());
     }

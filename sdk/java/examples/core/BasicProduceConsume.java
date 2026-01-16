@@ -1,18 +1,25 @@
 /*
- * BasicProduceConsume.java - FlyMQ Basic Producer and Consumer Example
+ * BasicProduceConsume.java - FlyMQ High-Level API Example
+ *
+ * Demonstrates:
+ * - FlyMQClient.connect() for one-liner connection
+ * - HighLevelProducer with batching and CompletableFuture callbacks
+ * - Consumer with auto-commit
  */
 
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.exception.FlyMQException;
-import com.firefly.flymq.protocol.Records.ConsumedMessage;
+import java.time.Duration;
 
 public class BasicProduceConsume {
 
     public static void main(String[] args) {
-        System.out.println("FlyMQ Basic Example");
-        System.out.println("==================");
+        System.out.println("FlyMQ High-Level API Example");
+        System.out.println("============================");
 
-        try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+        // Use connect() for one-liner connection
+        try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
             // Create topic
             String topic = "hello-world";
             System.out.println("Creating topic: " + topic);
@@ -22,19 +29,43 @@ public class BasicProduceConsume {
                 System.out.println("Topic may exist: " + e.getMessage());
             }
 
-            // Produce
-            String msg = "Hello, FlyMQ!";
-            System.out.println("Producing: " + msg);
-            long offset = client.produce(topic, msg.getBytes());
-            System.out.println("Offset: " + offset);
+            // === High-Level Producer ===
+            System.out.println("\n=== Using High-Level Producer ===");
+            try (var producer = client.producer()) {
+                String msg = "Hello, FlyMQ!";
 
-            // Consume
-            System.out.println("Consuming from offset: " + offset);
-            ConsumedMessage consumed = client.consumeWithKey(topic, offset);
-            System.out.println("Received: " + consumed.dataAsString());
+                // Send with CompletableFuture callback
+                producer.send(topic, msg.getBytes(), "user-123")
+                    .thenAccept(metadata -> {
+                        System.out.println("✓ Sent to " + metadata.topic() +
+                            " @ offset " + metadata.offset());
+                    })
+                    .exceptionally(e -> {
+                        System.err.println("✗ Send failed: " + e.getMessage());
+                        return null;
+                    });
+
+                producer.flush();  // Ensure message is sent
+            }
+
+            // === Consumer ===
+            System.out.println("\n=== Using Consumer ===");
+            try (var consumer = client.consumer(topic, "demo-group")) {
+                consumer.subscribe();
+
+                // Poll for messages
+                var messages = consumer.poll(Duration.ofSeconds(5));
+                for (var msg : messages) {
+                    System.out.println("Received: Key=" + msg.keyAsString() +
+                        ", Value=" + new String(msg.value()));
+                }
+            }
+
+            System.out.println("\n✓ Successfully produced and consumed!");
 
         } catch (FlyMQException e) {
             System.err.println("Error: " + e.getMessage());
+            System.err.println("Hint: " + e.getHint());  // Actionable suggestion
             e.printStackTrace();
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());

@@ -85,60 +85,144 @@ public final class BinaryProtocol {
 
     /**
      * Encodes a produce request.
-     * Format: [2B topic_len][topic][4B data_len][data]
+     * Format: [2B topic_len][topic][4B key_len][key][4B value_len][value][4B partition]
+     *
+     * Note: This uses the full binary format expected by the server.
+     * For messages without a key, an empty key (length 0) is sent.
+     * Partition -1 means auto-partition selection.
      */
     public static byte[] encodeProduceRequest(String topic, byte[] data) {
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + data.length)
-                .order(ByteOrder.BIG_ENDIAN);
-        buf.putShort((short) topicBytes.length);
-        buf.put(topicBytes);
-        buf.putInt(data.length);
-        buf.put(data);
-        return buf.array();
+        return encodeProduceWithKeyAndPartitionRequest(topic, new byte[0], data, -1);
     }
 
     /**
      * Encodes a produce request with key.
-     * Format: [2B topic_len][topic][4B key_len][key][4B data_len][data]
+     * Format: [2B topic_len][topic][4B key_len][key][4B value_len][value][4B partition]
+     *
+     * Messages with the same key are routed to the same partition.
      */
     public static byte[] encodeProduceWithKeyRequest(String topic, byte[] key, byte[] data) {
+        return encodeProduceWithKeyAndPartitionRequest(topic, key, data, -1);
+    }
+
+    /**
+     * Encodes a produce request with partition.
+     * Format: [2B topic_len][topic][4B key_len][key][4B value_len][value][4B partition]
+     *
+     * Explicitly routes the message to the specified partition.
+     */
+    public static byte[] encodeProduceWithPartitionRequest(String topic, int partition, byte[] data) {
+        return encodeProduceWithKeyAndPartitionRequest(topic, new byte[0], data, partition);
+    }
+
+    /**
+     * Encodes a produce request with both key and partition.
+     * Format: [2B topic_len][topic][4B key_len][key][4B value_len][value][4B partition]
+     *
+     * This is the canonical encoding method that matches the server's expected format.
+     */
+    public static byte[] encodeProduceWithKeyAndPartitionRequest(String topic, byte[] key, byte[] data, int partition) {
         byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
         byte[] keyBytes = key != null ? key : new byte[0];
-        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + keyBytes.length + 4 + data.length)
+        byte[] dataBytes = data != null ? data : new byte[0];
+
+        // Format: [2B topic_len][topic][4B key_len][key][4B value_len][value][4B partition]
+        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + keyBytes.length + 4 + dataBytes.length + 4)
                 .order(ByteOrder.BIG_ENDIAN);
         buf.putShort((short) topicBytes.length);
         buf.put(topicBytes);
         buf.putInt(keyBytes.length);
         buf.put(keyBytes);
-        buf.putInt(data.length);
-        buf.put(data);
-        return buf.array();
-    }
-
-    /**
-     * Encodes a produce request with partition.
-     * Format: [2B topic_len][topic][4B partition][4B data_len][data]
-     */
-    public static byte[] encodeProduceWithPartitionRequest(String topic, int partition, byte[] data) {
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + 4 + data.length)
-                .order(ByteOrder.BIG_ENDIAN);
-        buf.putShort((short) topicBytes.length);
-        buf.put(topicBytes);
+        buf.putInt(dataBytes.length);
+        buf.put(dataBytes);
         buf.putInt(partition);
-        buf.putInt(data.length);
-        buf.put(data);
         return buf.array();
     }
 
     /**
-     * Decodes a produce response.
-     * Format: [8B offset]
+     * RecordMetadata represents complete metadata for a produced record.
+     * Similar to Kafka's RecordMetadata, this contains all information about
+     * where and when the message was stored.
+     *
+     * @param topic Topic name
+     * @param partition Partition the record was sent to
+     * @param offset Offset of the record in the partition
+     * @param timestamp Timestamp in milliseconds (Unix epoch)
+     * @param keySize Size of the key in bytes (-1 if no key)
+     * @param valueSize Size of the value in bytes
      */
-    public static long decodeProduceResponse(byte[] payload) {
+    public record RecordMetadata(
+        String topic,
+        int partition,
+        long offset,
+        long timestamp,
+        int keySize,
+        int valueSize
+    ) {
+        /**
+         * Returns true if the record has a key.
+         */
+        public boolean hasKey() {
+            return keySize >= 0;
+        }
+
+        /**
+         * Returns the timestamp as an Instant.
+         */
+        public java.time.Instant timestampAsInstant() {
+            return java.time.Instant.ofEpochMilli(timestamp);
+        }
+    }
+
+    /**
+     * Decodes RecordMetadata from binary format.
+     * Format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
+     *
+     * @param payload the response payload
+     * @return RecordMetadata with complete metadata
+     */
+    public static RecordMetadata decodeRecordMetadata(byte[] payload) {
+        if (payload.length < 2) {
+            throw new IllegalArgumentException("Buffer too small: " + payload.length + " < 2");
+        }
+
         ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
-        return buf.getLong();
+
+        // Topic
+        int topicLen = buf.getShort() & 0xFFFF;
+        if (payload.length < 2 + topicLen + 28) { // 4+8+8+4+4 = 28
+            throw new IllegalArgumentException("Buffer too small for RecordMetadata");
+        }
+        byte[] topicBytes = new byte[topicLen];
+        buf.get(topicBytes);
+        String topic = new String(topicBytes, StandardCharsets.UTF_8);
+
+        // Partition
+        int partition = buf.getInt();
+
+        // Offset
+        long offset = buf.getLong();
+
+        // Timestamp
+        long timestamp = buf.getLong();
+
+        // Key size
+        int keySize = buf.getInt();
+
+        // Value size
+        int valueSize = buf.getInt();
+
+        return new RecordMetadata(topic, partition, offset, timestamp, keySize, valueSize);
+    }
+
+    /**
+     * Decodes a produce response (legacy, returns only offset).
+     * @deprecated Use {@link #decodeRecordMetadata(byte[])} for complete metadata
+     */
+    @Deprecated
+    public static long decodeProduceResponse(byte[] payload) {
+        RecordMetadata meta = decodeRecordMetadata(payload);
+        return meta.offset();
     }
 
     // =========================================================================
@@ -162,17 +246,27 @@ public final class BinaryProtocol {
 
     /**
      * Decodes a consume response.
-     * Format: [4B key_len][key][4B data_len][data][8B offset][8B timestamp]
+     * Format: [4B key_len][key][4B value_len][value]
+     *
+     * This matches the server's BinaryConsumeResponse format.
+     * Note: offset and timestamp are not included in the binary response.
      */
     public static ConsumeResult decodeConsumeResponse(byte[] payload) {
         ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
         byte[] key = decodeBytes(buf);
         byte[] data = decodeBytes(buf);
-        long offset = buf.getLong();
-        long timestamp = buf.getLong();
-        return new ConsumeResult(key, data, offset, timestamp);
+        // Server does not send offset and timestamp in binary consume response
+        return new ConsumeResult(key, data, -1, -1);
     }
 
+    /**
+     * Result of a consume operation.
+     *
+     * @param key The message key (may be empty)
+     * @param data The message value/data
+     * @param offset The message offset (-1 if not available in binary response)
+     * @param timestamp The message timestamp (-1 if not available in binary response)
+     */
     public record ConsumeResult(byte[] key, byte[] data, long offset, long timestamp) {}
 
     // =========================================================================
@@ -703,22 +797,13 @@ public final class BinaryProtocol {
     // =========================================================================
 
     /**
-     * Encodes a subscribe request.
-     * Format: [2B topic_len][topic][2B group_len][group][1B mode_len][mode]
+     * Encodes a subscribe request for partition 0.
+     * Format: [2B topic_len][topic][2B group_len][group][4B partition][1B mode_len][mode]
+     *
+     * This is a convenience method that subscribes to partition 0.
      */
     public static byte[] encodeSubscribeRequest(String topic, String groupId, String mode) {
-        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
-        byte[] groupBytes = groupId.getBytes(StandardCharsets.UTF_8);
-        byte[] modeBytes = mode.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 2 + groupBytes.length + 1 + modeBytes.length)
-                .order(ByteOrder.BIG_ENDIAN);
-        buf.putShort((short) topicBytes.length);
-        buf.put(topicBytes);
-        buf.putShort((short) groupBytes.length);
-        buf.put(groupBytes);
-        buf.put((byte) modeBytes.length);
-        buf.put(modeBytes);
-        return buf.array();
+        return encodeSubscribeRequest(topic, groupId, 0, mode);
     }
 
     /**
@@ -909,9 +994,36 @@ public final class BinaryProtocol {
 
     /**
      * Encodes a fetch request (batch consume).
-     * Format: [2B topic_len][topic][2B group_len][group][4B max_messages][4B timeout_ms]
+     * Format: [2B topic_len][topic][4B partition][8B offset][4B max_messages]
+     *
+     * This matches the server's expected BinaryFetchRequest format.
+     *
+     * @param topic The topic to fetch from
+     * @param partition The partition to fetch from
+     * @param offset The starting offset
+     * @param maxMessages Maximum number of messages to fetch
+     * @return Encoded fetch request bytes
      */
-    public static byte[] encodeFetchRequest(String topic, String groupId, int maxMessages, int timeoutMs) {
+    public static byte[] encodeFetchRequest(String topic, int partition, long offset, int maxMessages) {
+        byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + 8 + 4)
+                .order(ByteOrder.BIG_ENDIAN);
+        buf.putShort((short) topicBytes.length);
+        buf.put(topicBytes);
+        buf.putInt(partition);
+        buf.putLong(offset);
+        buf.putInt(maxMessages);
+        return buf.array();
+    }
+
+    /**
+     * Legacy fetch request encoding for consumer group-based consumption.
+     * This is kept for backward compatibility but should be migrated to the new format.
+     *
+     * @deprecated Use {@link #encodeFetchRequest(String, int, long, int)} instead
+     */
+    @Deprecated
+    public static byte[] encodeFetchRequestWithGroup(String topic, String groupId, int maxMessages, int timeoutMs) {
         byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
         byte[] groupBytes = groupId.getBytes(StandardCharsets.UTF_8);
         ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 2 + groupBytes.length + 4 + 4)
@@ -927,23 +1039,61 @@ public final class BinaryProtocol {
 
     /**
      * Decodes a fetch response (batch consume).
-     * Format: [4B count][messages...]
+     * Format: [4B count][8B nextOffset][messages...]
+     * Each message: [8B offset][4B keyLen][key][4B valueLen][value]
+     *
+     * This matches the server's EncodeBinaryFetchResponse format.
      */
     public static List<FetchedMessage> decodeFetchResponse(byte[] payload) {
         ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
         int count = buf.getInt();
+        long nextOffset = buf.getLong(); // Read but not returned in this method
+
         List<FetchedMessage> messages = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
+            long offset = buf.getLong();
             byte[] key = decodeBytes(buf);
             byte[] data = decodeBytes(buf);
-            long offset = buf.getLong();
-            long timestamp = buf.getLong();
-            int partition = buf.getInt();
-            messages.add(new FetchedMessage(key, data, offset, timestamp, partition));
+            // Server doesn't send timestamp or partition in fetch response
+            messages.add(new FetchedMessage(key, data, offset, -1, 0));
         }
         return messages;
     }
 
+    /**
+     * Decodes a fetch response and returns both messages and next offset.
+     * Format: [4B count][8B nextOffset][messages...]
+     * Each message: [8B offset][4B keyLen][key][4B valueLen][value]
+     */
+    public static FetchResponseWithOffset decodeFetchResponseWithOffset(byte[] payload) {
+        ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+        int count = buf.getInt();
+        long nextOffset = buf.getLong();
+
+        List<FetchedMessage> messages = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            long offset = buf.getLong();
+            byte[] key = decodeBytes(buf);
+            byte[] data = decodeBytes(buf);
+            messages.add(new FetchedMessage(key, data, offset, -1, 0));
+        }
+        return new FetchResponseWithOffset(messages, nextOffset);
+    }
+
+    /**
+     * Result of a fetch operation including messages and next offset.
+     */
+    public record FetchResponseWithOffset(List<FetchedMessage> messages, long nextOffset) {}
+
+    /**
+     * A single fetched message.
+     *
+     * @param key The message key (may be empty)
+     * @param data The message value/data
+     * @param offset The message offset
+     * @param timestamp The message timestamp (-1 if not available)
+     * @param partition The partition (0 if not available in response)
+     */
     public record FetchedMessage(byte[] key, byte[] data, long offset, long timestamp, int partition) {}
 
     // =========================================================================

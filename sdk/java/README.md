@@ -1,6 +1,6 @@
 # FlyMQ Java Client SDK
 
-A high-performance Java client library for FlyMQ message queue with Spring Boot support.
+A high-performance Java client library for FlyMQ message queue with Kafka-like APIs and Spring Boot support.
 
 **Website:** [https://getfirefly.io](https://getfirefly.io)
 
@@ -11,6 +11,10 @@ A high-performance Java client library for FlyMQ message queue with Spring Boot 
 
 ## Features
 
+- **Kafka-Like APIs** - Familiar `producer()` and `consumer()` patterns
+- **High-Level Producer** - Batching, callbacks, automatic retries with `CompletableFuture`
+- **High-Level Consumer** - Auto-commit, poll-based consumption, seek operations
+- **Static `connect()` Method** - Simple one-liner connection
 - **Full Protocol Support** - Implements the complete FlyMQ binary protocol
 - **AES-256-GCM Encryption** - Data-in-motion and data-at-rest encryption
 - **Automatic Failover** - Connects to multiple bootstrap servers with automatic failover
@@ -21,6 +25,7 @@ A high-performance Java client library for FlyMQ message queue with Spring Boot 
 - **Dead Letter Queues** - Failed message handling
 - **Delayed Messages** - Scheduled message delivery
 - **Message TTL** - Time-based message expiration
+- **Helpful Error Messages** - Exceptions include hints for quick debugging
 - **Spring Boot MVC Integration** - Auto-configuration for traditional applications
 - **Spring Boot WebFlux Integration** - Reactive auto-configuration for non-blocking applications
 - **Thread-Safe** - Safe for concurrent use
@@ -76,21 +81,35 @@ mvn clean install
 
 ## Quick Start
 
-### Basic Usage
+### The Simplest Way: `connect()`
 
 ```java
 import com.firefly.flymq.FlyMQClient;
 
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+// One-liner connection
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    client.produce("my-topic", "Hello, FlyMQ!".getBytes());
+    byte[] data = client.consume("my-topic", 0);
+    System.out.println("Received: " + new String(data));
+}
+```
+
+### Basic Usage
+
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.protocol.BinaryProtocol.RecordMetadata;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
     // Create a topic
     client.createTopic("my-topic", 3);
-    
-    // Produce a message
-    long offset = client.produce("my-topic", "Hello, FlyMQ!".getBytes());
-    System.out.println("Message written at offset: " + offset);
-    
+
+    // Produce a message - returns RecordMetadata (Kafka-like)
+    RecordMetadata meta = client.produce("my-topic", "Hello, FlyMQ!".getBytes());
+    System.out.println("Produced to " + meta.topic() + "[" + meta.partition() + "] @ offset " + meta.offset());
+
     // Consume the message
-    byte[] data = client.consume("my-topic", offset);
+    byte[] data = client.consume("my-topic", meta.offset());
     System.out.println("Received: " + new String(data));
 }
 ```
@@ -200,7 +219,7 @@ ClientConfig config = ClientConfig.builder()
     .build();
 ```
 
-## Consumer Groups
+## Consumer Groups (Low-Level)
 
 ```java
 import com.firefly.flymq.protocol.Records.SubscribeMode;
@@ -216,6 +235,129 @@ for (var message : result.messages()) {
 
 // Commit offset
 client.commitOffset("my-topic", "my-group", 0, result.nextOffset());
+```
+
+## High-Level Producer (Kafka-like)
+
+The `HighLevelProducer` provides batching, callbacks, and automatic retries for high-throughput scenarios.
+
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.producer.HighLevelProducer;
+import com.firefly.flymq.producer.ProducerConfig;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // Create producer with batching
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(100)
+        .lingerMs(10)
+        .maxRetries(3)
+        .build();
+
+    try (HighLevelProducer producer = client.producer(config)) {
+        // Send with callback
+        producer.send("events", "{\"event\": \"click\"}".getBytes(), "user-123".getBytes())
+            .whenComplete((metadata, error) -> {
+                if (error != null) {
+                    System.err.println("Failed: " + error.getMessage());
+                } else {
+                    System.out.println("Sent to " + metadata.topic() +
+                        "[" + metadata.partition() + "] @ " + metadata.offset());
+                }
+            });
+
+        // Or wait for result
+        var metadata = producer.send("events", "data".getBytes()).get();
+        System.out.println("Offset: " + metadata.offset());
+
+        producer.flush();
+    }
+}
+```
+
+### High-Throughput Pattern
+
+```java
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(1000)
+        .lingerMs(50)
+        .build();
+
+    try (HighLevelProducer producer = client.producer(config)) {
+        // Send 100k messages efficiently
+        for (int i = 0; i < 100000; i++) {
+            producer.send("events", ("event-" + i).getBytes());
+        }
+        producer.flush();
+        System.out.println("All messages sent!");
+    }
+}
+```
+
+## High-Level Consumer (Kafka-like)
+
+The `Consumer` provides a Kafka-like API with auto-commit and poll-based consumption.
+
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.consumer.Consumer;
+import com.firefly.flymq.protocol.Records.ConsumedMessage;
+import java.time.Duration;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // Create consumer
+    try (Consumer consumer = client.consumer("my-topic", "my-group")) {
+        consumer.subscribe();
+
+        while (true) {
+            List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
+            for (ConsumedMessage msg : messages) {
+                System.out.println("Key: " + msg.keyAsString());
+                System.out.println("Value: " + msg.dataAsString());
+                System.out.println("Offset: " + msg.offset());
+            }
+            // Auto-commit enabled by default
+        }
+    }
+}
+```
+
+### Consumer Configuration
+
+```java
+import com.firefly.flymq.consumer.ConsumerConfig;
+
+ConsumerConfig config = ConsumerConfig.builder()
+    .maxPollRecords(100)
+    .enableAutoCommit(true)
+    .autoCommitIntervalMs(5000)
+    .build();
+
+try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {
+    consumer.subscribe();
+    // ...
+}
+```
+
+### Seek Operations
+
+```java
+try (Consumer consumer = client.consumer("my-topic", "my-group")) {
+    consumer.subscribe();
+
+    // Seek to specific offset
+    consumer.seek(100);
+
+    // Seek to beginning/end
+    consumer.seekToBeginning();
+    consumer.seekToEnd();
+
+    // Get current position
+    long position = consumer.position();
+}
 ```
 
 ## Transactions
@@ -422,6 +564,79 @@ public class ReactiveMessageService {
                    .onErrorResume(e -> txn.rollback().then(Mono.error(e)))
             );
     }
+}
+```
+
+## Error Handling
+
+FlyMQ Java SDK provides clear error messages with helpful hints to speed up debugging.
+
+### Exception Types
+
+```java
+import com.firefly.flymq.exception.FlyMQException;
+import com.firefly.flymq.exception.ProtocolException;
+
+try {
+    client.produce("my-topic", data);
+} catch (FlyMQException e) {
+    System.err.println("Error: " + e.getMessage());
+    System.err.println("Hint: " + e.getHint());  // Helpful suggestion!
+    System.err.println("Full: " + e.getFullMessage());
+}
+```
+
+### Errors with Hints
+
+All exceptions include helpful hints:
+
+```java
+try {
+    client.produce("nonexistent-topic", data);
+} catch (FlyMQException e) {
+    System.err.println(e.getHint());
+    // Output: Create the topic first with client.createTopic("nonexistent-topic", partitions)
+    //         or use the CLI: flymq-cli topic create nonexistent-topic
+}
+```
+
+### Factory Methods for Common Errors
+
+```java
+// Create exceptions with helpful hints
+throw FlyMQException.connectionFailed("localhost:9092", cause);
+// Hint: Check that the FlyMQ server is running and accessible...
+
+throw FlyMQException.topicNotFound("my-topic");
+// Hint: Create the topic first with client.createTopic("my-topic", partitions)...
+
+throw FlyMQException.authenticationFailed("alice");
+// Hint: Check that the username and password are correct...
+
+throw FlyMQException.timeout("produce");
+// Hint: The server may be overloaded or unreachable...
+```
+
+### Graceful Error Recovery
+
+```java
+public long produceWithRetry(FlyMQClient client, String topic, byte[] data, int maxRetries)
+        throws FlyMQException {
+    int backoffMs = 100;
+    for (int attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+            return client.produce(topic, data);
+        } catch (FlyMQException e) {
+            if (attempt < maxRetries - 1) {
+                System.err.println("Retry " + (attempt + 1) + ": " + e.getMessage());
+                try { Thread.sleep(backoffMs); } catch (InterruptedException ie) { break; }
+                backoffMs *= 2;
+            } else {
+                throw e;
+            }
+        }
+    }
+    throw new FlyMQException("Max retries exceeded");
 }
 ```
 

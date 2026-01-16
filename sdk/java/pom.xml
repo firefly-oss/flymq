@@ -15,7 +15,7 @@
 
     <groupId>com.firefly.flymq</groupId>
     <artifactId>flymq-client-parent</artifactId>
-    <version>1.26.7</version>
+    <version>1.26.8</version>
     <packaging>pom</packaging>
 
     <name>FlyMQ Client SDK</name>

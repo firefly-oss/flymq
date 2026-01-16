@@ -9,6 +9,7 @@
  */
 package com.firefly.flymq.spring.webflux;
 
+import com.firefly.flymq.protocol.BinaryProtocol;
 import com.firefly.flymq.transaction.Transaction;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -66,12 +67,12 @@ public class ReactiveTransaction {
     
     /**
      * Produce a message within the transaction.
-     * 
+     *
      * @param topic topic name
      * @param data message data
-     * @return Mono with the offset
+     * @return Mono with RecordMetadata
      */
-    public Mono<Long> produce(String topic, byte[] data) {
+    public Mono<BinaryProtocol.RecordMetadata> produce(String topic, byte[] data) {
         return Mono.fromCallable(() -> delegate.produce(topic, data))
             .subscribeOn(Schedulers.boundedElastic());
     }
