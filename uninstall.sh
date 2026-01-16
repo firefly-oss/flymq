@@ -67,7 +67,7 @@ print_error() { echo -e "${RED}${ICON_ERROR}${RESET} ${RED}$1${RESET}" >&2; }
 print_warning() { echo -e "${YELLOW}${ICON_WARNING}${RESET} $1"; }
 print_info() { echo -e "${CYAN}${ICON_INFO}${RESET} $1"; }
 print_step() { echo -e "\n${CYAN}${BOLD}==>${RESET} ${BOLD}$1${RESET}"; }
-print_section() { echo -e "\n  ${BOLD}${CYAN}━━━ $1 ━━━${RESET}\n"; }
+print_section() { echo -e "\n  ${BOLD}$1${RESET}\n"; }
 
 # =============================================================================
 # Banner - Clean Uninstall Experience
@@ -501,25 +501,30 @@ remove_config_directory() {
 
 print_completion() {
     echo ""
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
+    echo ""
     if [[ "$DRY_RUN" == true ]]; then
-        print_info "Dry run complete - no changes were made"
+        echo -e "  ${CYAN}${BOLD}DRY RUN COMPLETE${RESET}"
+        echo ""
+        print_info "No changes were made"
     else
-        print_success "FlyMQ has been uninstalled"
+        echo -e "  ${GREEN}${BOLD}✓ UNINSTALL COMPLETE${RESET}"
+        echo ""
+        print_success "FlyMQ has been removed from your system"
     fi
-    echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 
     if [[ "$REMOVE_DATA" != true ]] && [[ -n "$DATA_DIR" ]] && [[ -d "$DATA_DIR" ]]; then
-        print_info "Data directory preserved: $DATA_DIR"
-        echo -e "  ${DIM}To remove manually: rm -rf $DATA_DIR${RESET}"
+        print_info "Data preserved: ${CYAN}$DATA_DIR${RESET}"
+        echo -e "    ${DIM}rm -rf $DATA_DIR${RESET}"
     fi
 
     if [[ "$REMOVE_CONFIG" != true ]] && [[ -n "$CONFIG_DIR" ]] && [[ -d "$CONFIG_DIR" ]]; then
-        print_info "Configuration preserved: $CONFIG_DIR"
-        echo -e "  ${DIM}To remove manually: rm -rf $CONFIG_DIR${RESET}"
+        print_info "Config preserved: ${CYAN}$CONFIG_DIR${RESET}"
+        echo -e "    ${DIM}rm -rf $CONFIG_DIR${RESET}"
     fi
 
+    echo ""
+    echo -e "  ${DIM}Thank you for using FlyMQ!${RESET}"
     echo ""
 }
 
@@ -612,16 +617,17 @@ main() {
         interactive_uninstall
 
         echo ""
-        echo -e "  ${BOLD}${RED}━━━ Confirmation ━━━${RESET}"
+        echo -e "  ${BOLD}Confirm Removal${RESET}"
         echo ""
         echo -e "  ${YELLOW}The following will be removed:${RESET}"
         local binary_suffix=""
         [[ "$OS" == "windows" ]] && binary_suffix=".exe"
-        echo -e "  ${ICON_ARROW} Binaries: $PREFIX/bin/flymq$binary_suffix, $PREFIX/bin/flymq-cli$binary_suffix"
-        [[ -n "$SYSTEMD_SERVICE" ]] && echo -e "  ${ICON_ARROW} Systemd service: $SYSTEMD_SERVICE"
-        [[ -n "$LAUNCHD_PLIST" ]] && echo -e "  ${ICON_ARROW} Launch Agent: com.firefly.flymq"
-        [[ "$REMOVE_DATA" == true ]] && echo -e "  ${ICON_ARROW} Data directory: $DATA_DIR"
-        [[ "$REMOVE_CONFIG" == true ]] && echo -e "  ${ICON_ARROW} Config directory: $CONFIG_DIR"
+        echo -e "    ${ICON_ARROW} $PREFIX/bin/flymq$binary_suffix"
+        echo -e "    ${ICON_ARROW} $PREFIX/bin/flymq-cli$binary_suffix"
+        [[ -n "$SYSTEMD_SERVICE" ]] && echo -e "    ${ICON_ARROW} Systemd: $SYSTEMD_SERVICE"
+        [[ -n "$LAUNCHD_PLIST" ]] && echo -e "    ${ICON_ARROW} LaunchAgent: com.firefly.flymq"
+        [[ "$REMOVE_DATA" == true ]] && echo -e "    ${ICON_ARROW} Data: $DATA_DIR"
+        [[ "$REMOVE_CONFIG" == true ]] && echo -e "    ${ICON_ARROW} Config: $CONFIG_DIR"
         echo ""
 
         if ! prompt_yes_no "Proceed with uninstallation" "n"; then
@@ -631,20 +637,15 @@ main() {
     fi
 
     echo ""
-    print_step "Starting uninstallation process"
+    print_step "Uninstalling FlyMQ"
+    echo ""
 
-    # Perform uninstallation
-    print_info "Stopping processes..."
+    # Perform uninstallation (functions print their own status)
     stop_running_processes
-    print_info "Stopping services..."
     stop_services
-    print_info "Removing binaries..."
     remove_binaries
-    print_info "Removing system services..."
     remove_system_services
-    print_info "Removing data directory..."
     remove_data_directory
-    print_info "Removing config directory..."
     remove_config_directory
 
     print_completion

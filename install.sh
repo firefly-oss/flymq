@@ -161,7 +161,7 @@ print_warning() { echo -e "${YELLOW}${ICON_WARNING}${RESET} $1"; }
 print_info() { echo -e "${CYAN}${ICON_INFO}${RESET} $1"; }
 print_step() { echo -e "\n${CYAN}${BOLD}==>${RESET} ${BOLD}$1${RESET}"; }
 print_substep() { echo -e "  ${CYAN}${ICON_ARROW}${RESET} $1"; }
-print_section() { echo -e "\n  ${BOLD}${CYAN}━━━ $1 ━━━${RESET}\n"; }
+print_section() { echo -e "\n  ${BOLD}$1${RESET}\n"; }
 
 # Spinner for long-running tasks
 show_spinner() {
@@ -206,10 +206,8 @@ print_banner() {
     echo -e "  ${DIM}High-Performance Message Queue for Modern Applications${RESET}"
     echo ""
     echo -e "  ${CYAN}✓${RESET} Sub-millisecond latency     ${CYAN}✓${RESET} Zero external dependencies"
-    echo -e "  ${CYAN}✓${RESET} Kafka-compatible API        ${CYAN}✓${RESET} Built-in encryption & auth"
-    echo -e "  ${CYAN}✓${RESET} Single binary deployment    ${CYAN}✓${RESET} Production-ready defaults"
-    echo ""
-    echo -e "  ${DIM}Copyright (c) 2026 Firefly Software Solutions Inc.${RESET}"
+    echo -e "  ${CYAN}✓${RESET} Single binary deployment    ${CYAN}✓${RESET} Built-in encryption & auth"
+    echo -e "  ${CYAN}✓${RESET} Consumer groups & offsets   ${CYAN}✓${RESET} Production-ready defaults"
     echo ""
 }
 
