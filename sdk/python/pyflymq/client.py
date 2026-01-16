@@ -253,28 +253,48 @@ class FlyMQClient:
         raise NoAvailableServerError(self._servers)
 
     def _connect_to_server(self, server: str) -> None:
-        """Connect to a specific server."""
+        """Connect to a specific server, trying all available addresses."""
         host, port_str = server.rsplit(":", 1)
         port = int(port_str)
 
         timeout = self._config.connect_timeout_ms / 1000.0
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-
+        # Get all addresses for the host, preferring IPv6
         try:
-            sock.connect((host, port))
+            addrs = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise ConnectionError(f"Failed to resolve {host}: {e}", host, port) from e
 
-            if self._ssl_context:
-                sock = self._ssl_context.wrap_socket(sock, server_hostname=host)
+        # Sort to prefer IPv6 (AF_INET6 = 30 on macOS, 10 on Linux; AF_INET = 2)
+        # We want IPv6 first, so sort by family descending
+        addrs.sort(key=lambda x: x[0], reverse=True)
 
-            self._sock = sock
-        except socket.timeout as e:
-            sock.close()
-            raise ConnectionTimeoutError(f"Connection to {server} timed out", host, port) from e
-        except OSError as e:
-            sock.close()
-            raise ConnectionError(f"Failed to connect to {server}: {e}", host, port) from e
+        last_error: Exception | None = None
+        for family, socktype, proto, canonname, sockaddr in addrs:
+            sock = None
+            try:
+                sock = socket.socket(family, socktype, proto)
+                sock.settimeout(timeout)
+                sock.connect(sockaddr)
+
+                if self._ssl_context:
+                    sock = self._ssl_context.wrap_socket(sock, server_hostname=host)
+
+                self._sock = sock
+                return  # Success!
+            except socket.timeout as e:
+                last_error = ConnectionTimeoutError(f"Connection to {server} timed out", host, port)
+                if sock:
+                    sock.close()
+            except OSError as e:
+                last_error = ConnectionError(f"Failed to connect to {server}: {e}", host, port)
+                if sock:
+                    sock.close()
+
+        # All addresses failed
+        if last_error:
+            raise last_error
+        raise ConnectionError(f"No addresses found for {server}", host, port)
 
     def _ensure_connected(self) -> None:
         """Ensure we have an active connection."""

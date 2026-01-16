@@ -133,10 +133,34 @@ class Header:
             raise ValueError(f"Invalid header size: {len(data)}, expected {HEADER_SIZE}")
 
         magic, version, op, flags, length = struct.unpack(">BBBBI", data)
+
+        # Check magic byte first to give a better error message
+        if magic != MAGIC_BYTE:
+            # Check if this looks like HTTP response
+            if data[:4] == b"HTTP":
+                raise ValueError(
+                    "Received HTTP response instead of FlyMQ protocol. "
+                    "Check that you're connecting to the correct port and that "
+                    "no other service is using the same port."
+                )
+            raise ValueError(
+                f"Invalid magic byte: expected 0x{MAGIC_BYTE:02X}, got 0x{magic:02X}. "
+                "This may indicate a port conflict with another service."
+            )
+
+        # Try to parse OpCode, with fallback for unknown codes
+        try:
+            op_code = OpCode(op)
+        except ValueError:
+            raise ValueError(
+                f"Unknown operation code: 0x{op:02X}. "
+                "This may indicate a protocol version mismatch."
+            )
+
         return cls(
             magic=magic,
             version=version,
-            op=OpCode(op),
+            op=op_code,
             flags=flags,
             length=length,
         )
