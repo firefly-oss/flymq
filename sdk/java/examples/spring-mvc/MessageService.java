@@ -27,9 +27,9 @@ public class MessageService {
      */
     public long sendMessage(String topic, String message) throws Exception {
         log.info("Sending message to {}: {}", topic, message);
-        long offset = client.produce(topic, message.getBytes());
-        log.info("Message sent at offset {}", offset);
-        return offset;
+        var meta = client.produce(topic, message.getBytes());
+        log.info("Message sent at offset {}", meta.offset());
+        return meta.offset();
     }
 
     /**
@@ -37,9 +37,9 @@ public class MessageService {
      */
     public long sendMessageWithKey(String topic, String key, String message) throws Exception {
         log.info("Sending keyed message to {}: key={}, msg={}", topic, key, message);
-        long offset = client.produceWithKey(topic, key, message.getBytes());
-        log.info("Message sent at offset {}", offset);
-        return offset;
+        var meta = client.produceWithKey(topic, key, message.getBytes());
+        log.info("Message sent at offset {}", meta.offset());
+        return meta.offset();
     }
 
     /**

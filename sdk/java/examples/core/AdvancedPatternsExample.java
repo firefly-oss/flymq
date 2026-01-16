@@ -129,29 +129,29 @@ public class AdvancedPatternsExample {
         System.out.println("\n3. TTL and Delayed Messages");
         System.out.println("----------------------------");
 
-        try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+        try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
             createTopicSafe(client, "scheduled-topic");
 
             // Message with TTL (expires in 30 seconds)
             try {
-                long offset = client.produceWithTTL(
+                var meta = client.produceWithTTL(
                     "scheduled-topic",
                     "Expires in 30s".getBytes(),
                     30000
                 );
-                System.out.println("✓ TTL message at offset: " + offset);
+                System.out.println("✓ TTL message at offset: " + meta.offset());
             } catch (Exception e) {
                 System.out.println("  TTL: " + e.getMessage());
             }
 
             // Delayed message (visible after 5 seconds)
             try {
-                long offset = client.produceDelayed(
+                var meta = client.produceDelayed(
                     "scheduled-topic",
                     "Delayed 5s".getBytes(),
                     5000
                 );
-                System.out.println("✓ Delayed message at offset: " + offset);
+                System.out.println("✓ Delayed message at offset: " + meta.offset());
             } catch (Exception e) {
                 System.out.println("  Delayed: " + e.getMessage());
             }

@@ -2,43 +2,46 @@
 
 A high-performance Java client library for FlyMQ message queue with Kafka-like APIs and Spring Boot support.
 
-**Website:** [https://getfirefly.io](https://getfirefly.io)
+**Website:** [https://flymq.com](https://flymq.com)
 
-## Requirements
+---
 
-- Java 21+
-- Maven 3.8+
+## Table of Contents
+
+1. [Installation](#installation)
+2. [Quick Start](#quick-start) - Get running in 30 seconds
+3. [Key Concepts](#key-concepts) - Understanding the fundamentals
+4. [High-Level APIs](#high-level-apis) - Recommended for most applications
+   - [Producer](#high-level-producer)
+   - [Consumer](#high-level-consumer)
+5. [Low-Level APIs](#low-level-apis) - For advanced control
+   - [Direct Produce/Consume](#direct-produceconsume)
+   - [Manual Offset Management](#manual-offset-management)
+6. [Advanced Features](#advanced-features)
+   - [Transactions](#transactions)
+   - [Schema Validation](#schema-validation)
+   - [Dead Letter Queues](#dead-letter-queues)
+   - [Delayed Messages](#delayed-messages)
+7. [Spring Boot Integration](#spring-boot-integration)
+8. [Configuration Reference](#configuration-reference)
+9. [Error Handling](#error-handling)
+10. [Development](#development)
+
+---
 
 ## Features
 
-- **Kafka-Like APIs** - Familiar `producer()` and `consumer()` patterns
-- **High-Level Producer** - Batching, callbacks, automatic retries with `CompletableFuture`
-- **High-Level Consumer** - Auto-commit, poll-based consumption, seek operations
-- **Static `connect()` Method** - Simple one-liner connection
-- **Full Protocol Support** - Implements the complete FlyMQ binary protocol
-- **AES-256-GCM Encryption** - Data-in-motion and data-at-rest encryption
-- **Automatic Failover** - Connects to multiple bootstrap servers with automatic failover
-- **TLS/SSL Support** - Secure connections with certificate verification
-- **Consumer Groups** - Coordinated consumption with offset management
-- **Transactions** - Exactly-once semantics with atomic operations
-- **Schema Validation** - JSON, Avro, and Protobuf schema support
-- **Dead Letter Queues** - Failed message handling
-- **Delayed Messages** - Scheduled message delivery
-- **Message TTL** - Time-based message expiration
-- **Helpful Error Messages** - Exceptions include hints for quick debugging
-- **Spring Boot MVC Integration** - Auto-configuration for traditional applications
-- **Spring Boot WebFlux Integration** - Reactive auto-configuration for non-blocking applications
-- **Thread-Safe** - Safe for concurrent use
+| Category | Features |
+|----------|----------|
+| **Core** | Kafka-like APIs, High-level Producer/Consumer, Full protocol support |
+| **Reliability** | Automatic retries, Failover, Consumer groups with offset tracking |
+| **Security** | TLS/mTLS, AES-256-GCM encryption, Authentication |
+| **Advanced** | Transactions, Schema validation, Dead letter queues, Delayed messages, TTL |
+| **Spring Boot** | MVC auto-configuration, WebFlux reactive support |
 
-## Modules
+**Requirements:** Java 21+, Maven 3.8+
 
-This SDK is organized as a multi-module Maven project:
-
-| Module | Description |
-|--------|-------------|
-| `flymq-client-core` | Core client library with protocol, crypto, and base client |
-| `flymq-client-spring` | Spring Boot MVC auto-configuration |
-| `flymq-client-spring-webflux` | Spring Boot WebFlux reactive auto-configuration |
+---
 
 ## Installation
 
@@ -79,272 +82,170 @@ cd sdk/java
 mvn clean install
 ```
 
+---
+
 ## Quick Start
 
-### The Simplest Way: `connect()`
+Get up and running in 30 seconds:
 
 ```java
 import com.firefly.flymq.FlyMQClient;
 
-// One-liner connection
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // Produce a message
     client.produce("my-topic", "Hello, FlyMQ!".getBytes());
-    byte[] data = client.consume("my-topic", 0);
-    System.out.println("Received: " + new String(data));
-}
-```
 
-### Basic Usage
-
-```java
-import com.firefly.flymq.FlyMQClient;
-import com.firefly.flymq.protocol.BinaryProtocol.RecordMetadata;
-
-try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-    // Create a topic
-    client.createTopic("my-topic", 3);
-
-    // Produce a message - returns RecordMetadata (Kafka-like)
-    RecordMetadata meta = client.produce("my-topic", "Hello, FlyMQ!".getBytes());
-    System.out.println("Produced to " + meta.topic() + "[" + meta.partition() + "] @ offset " + meta.offset());
-
-    // Consume the message
-    byte[] data = client.consume("my-topic", meta.offset());
-    System.out.println("Received: " + new String(data));
-}
-```
-
-### Key-Based Messaging (Kafka-style)
-
-Messages with the same key are guaranteed to go to the same partition,
-ensuring ordering for related messages.
-
-```java
-import com.firefly.flymq.FlyMQClient;
-import com.firefly.flymq.protocol.Records.ConsumedMessage;
-
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    // Produce messages with keys
-    client.produceWithKey("orders", "user-123", "{\"id\": 1}");
-    client.produceWithKey("orders", "user-123", "{\"id\": 2}");  // Same partition
-    client.produceWithKey("orders", "user-456", "{\"id\": 3}");  // May differ
-
-    // Consume and access key
-    ConsumedMessage msg = client.consumeWithKey("orders", 0);
-    System.out.println("Key: " + msg.keyAsString());   // "user-123"
-    System.out.println("Value: " + msg.dataAsString()); // '{"id": 1}'
-
-    // Fetch multiple messages with keys
-    var result = client.fetch("orders", 0, 0, 10);
-    for (var m : result.messages()) {
-        System.out.printf("Offset %d: key=%s value=%s%n", 
-            m.offset(), m.keyAsString(), m.dataAsString());
+    // Consume messages with a consumer group (tracks your position automatically)
+    try (var consumer = client.consumer("my-topic", "my-app")) {
+        consumer.subscribe();
+        var messages = consumer.poll(Duration.ofSeconds(5));
+        for (var msg : messages) {
+            System.out.println("Received: " + msg.dataAsString());
+        }
     }
 }
 ```
 
-### Cluster Connection (HA)
+That's it! The consumer group `"my-app"` tracks your position. If you restart, you'll continue from where you left off.
+
+---
+
+## Key Concepts
+
+Before diving into the APIs, understand these core concepts:
+
+### Topics and Partitions
+
+A **topic** is a named stream of messages. Topics are divided into **partitions** for parallelism.
+
+```
+Topic: "orders"
+├── Partition 0: [msg0] [msg1] [msg2] ...
+├── Partition 1: [msg0] [msg1] ...
+└── Partition 2: [msg0] [msg1] [msg2] [msg3] ...
+```
+
+### Message Keys
+
+A **key** determines which partition a message goes to. Same key = same partition = guaranteed order.
 
 ```java
-// Connect to multiple servers for high availability
-FlyMQClient client = new FlyMQClient("node1:9092,node2:9092,node3:9092");
-
-// Automatic failover if a server becomes unavailable
-long offset = client.produce("my-topic", "Hello!".getBytes());
+// All orders for user-123 go to the same partition (ordered)
+client.produceWithKey("orders", "user-123", "{\"id\": 1}");
+client.produceWithKey("orders", "user-123", "{\"id\": 2}");  // Same partition!
 ```
 
-### Custom Configuration
+### Consumer Groups
 
-```java
-import com.firefly.flymq.config.ClientConfig;
+A **consumer group** tracks your position in the topic. Key benefits:
 
-ClientConfig config = ClientConfig.builder()
-    .bootstrapServers("localhost:9092,localhost:9192")
-    .connectTimeoutMs(5000)
-    .requestTimeoutMs(30000)
-    .maxRetries(5)
-    .tlsEnabled(true)
-    .tlsCaFile("/path/to/ca.crt")
-    .build();
-
-FlyMQClient client = new FlyMQClient(config);
-```
-
-## TLS/SSL Configuration
-
-### Basic TLS (Server Verification)
-
-```java
-ClientConfig config = ClientConfig.builder()
-    .bootstrapServers("localhost:9093")
-    .tlsEnabled(true)
-    .tlsCaFile("/path/to/ca.crt")  // CA certificate for server verification
-    .build();
-
-try (FlyMQClient client = new FlyMQClient(config)) {
-    // Secure connection established
-    client.produce("my-topic", "Hello, TLS!".getBytes());
-}
-```
-
-### Mutual TLS (mTLS - Client Certificate Authentication)
-
-```java
-ClientConfig config = ClientConfig.builder()
-    .bootstrapServers("localhost:9093")
-    .tlsEnabled(true)
-    .tlsCaFile("/path/to/ca.crt")           // CA certificate
-    .tlsCertFile("/path/to/client.crt")     // Client certificate
-    .tlsKeyFile("/path/to/client-pkcs8.key") // Client private key (PKCS#8 format)
-    .build();
-
-try (FlyMQClient client = new FlyMQClient(config)) {
-    // mTLS connection with client authentication
-    client.produce("secure-topic", "Hello, mTLS!".getBytes());
-}
-```
-
-> **Important:** Private keys must be in PKCS#8 format. Convert from traditional format:
-> ```bash
-> openssl pkcs8 -topk8 -nocrypt -in client.key -out client-pkcs8.key
-> ```
-
-### Skip Certificate Verification (Testing Only)
-
-```java
-ClientConfig config = ClientConfig.builder()
-    .bootstrapServers("localhost:9093")
-    .tlsEnabled(true)
-    .tlsInsecureSkipVerify(true)  // WARNING: Only for testing!
-    .build();
-```
-
-## Understanding Consumer Groups
-
-A **consumer group** is a named group of consumers that share message processing:
-
-- **Offset Tracking**: FlyMQ remembers where each group left off
-- **Resume on Restart**: If your app crashes, it resumes from the last committed offset
-- **Load Balancing**: Multiple consumers in the same group share partitions
-- **Independent Groups**: Different groups each receive ALL messages
+- **Resume on restart**: If your app crashes, it continues from where it left off
+- **Independent groups**: Multiple apps can each receive ALL messages
+- **Load balancing**: Multiple consumers in the same group share partitions
 
 ```
-// Two apps consuming the same topic independently:
-App A (group="analytics")  ──► Receives ALL messages
-App B (group="billing")    ──► Also receives ALL messages
-
-// Two instances of the same app sharing work:
-Instance 1 (group="processor") ──► Partition 0
-Instance 2 (group="processor") ──► Partition 1
+Group "analytics" ──► Receives ALL messages (offset: 100)
+Group "billing"   ──► Receives ALL messages (offset: 50, processing slower)
 ```
 
-### Low-Level Consumer Group API
+### High-Level vs Low-Level APIs
 
-For fine-grained control over offset management:
+| API Level | When to Use | Features |
+|-----------|-------------|----------|
+| **High-Level** | Most applications | Auto-commit, batching, simple iteration |
+| **Low-Level** | Advanced control | Manual offsets, direct partition access |
 
-```java
-import com.firefly.flymq.protocol.Records.SubscribeMode;
+**Recommendation:** Start with High-Level APIs. They handle the complexity for you.
 
-// Subscribe with a consumer group
-// SubscribeMode.COMMIT: Resume from last committed offset (recommended)
-// SubscribeMode.EARLIEST: Start from beginning
-// SubscribeMode.LATEST: Start from new messages only
-long startOffset = client.subscribe("my-topic", "my-group", 0, SubscribeMode.COMMIT);
+---
 
-// Fetch messages in batches
-var result = client.fetch("my-topic", 0, startOffset, 100);
-for (var message : result.messages()) {
-    System.out.println("Received: " + message.dataAsString());
-}
+## High-Level APIs
 
-// Commit offset after successful processing
-client.commitOffset("my-topic", "my-group", 0, result.nextOffset());
-```
+These APIs are recommended for most applications. They handle offset tracking, batching, and error recovery automatically.
 
-## High-Level Producer (Kafka-like)
+### High-Level Producer
 
-The `HighLevelProducer` provides batching, callbacks, and automatic retries for high-throughput scenarios.
+The high-level producer provides batching, callbacks, and automatic retries.
+
+#### Basic Usage
 
 ```java
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.producer.HighLevelProducer;
-import com.firefly.flymq.producer.ProducerConfig;
 
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (HighLevelProducer producer = client.producer()) {
+        // Send messages (batched automatically)
+        producer.send("events", "{\"type\": \"click\"}".getBytes());
+        producer.send("events", "{\"type\": \"view\"}".getBytes());
 
-    // Create producer with batching
-    ProducerConfig config = ProducerConfig.builder()
-        .batchSize(100)
-        .lingerMs(10)
-        .maxRetries(3)
-        .build();
+        // With a key (ensures ordering for same key)
+        producer.send("orders", "{\"id\": 1}".getBytes(), "user-123".getBytes());
 
-    try (HighLevelProducer producer = client.producer(config)) {
-        // Send with callback
-        producer.send("events", "{\"event\": \"click\"}".getBytes(), "user-123".getBytes())
-            .whenComplete((metadata, error) -> {
-                if (error != null) {
-                    System.err.println("Failed: " + error.getMessage());
-                } else {
-                    System.out.println("Sent to " + metadata.topic() +
-                        "[" + metadata.partition() + "] @ " + metadata.offset());
-                }
-            });
-
-        // Or wait for result
-        var metadata = producer.send("events", "data".getBytes()).get();
-        System.out.println("Offset: " + metadata.offset());
-
-        producer.flush();
+        producer.flush();  // Ensure all sent
     }
 }
 ```
 
-### High-Throughput Pattern
+#### With Callbacks
 
 ```java
-try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-    ProducerConfig config = ProducerConfig.builder()
-        .batchSize(1000)
-        .lingerMs(50)
-        .build();
-
-    try (HighLevelProducer producer = client.producer(config)) {
-        // Send 100k messages efficiently
-        for (int i = 0; i < 100000; i++) {
-            producer.send("events", ("event-" + i).getBytes());
+producer.send("events", data, key)
+    .whenComplete((metadata, error) -> {
+        if (error != null) {
+            System.err.println("Failed: " + error.getMessage());
+        } else {
+            System.out.println("Sent to " + metadata.topic() +
+                "[" + metadata.partition() + "] @ offset " + metadata.offset());
         }
-        producer.flush();
-        System.out.println("All messages sent!");
+    });
+
+// Or wait synchronously
+var metadata = producer.send("events", data).get();
+```
+
+#### Producer Configuration
+
+```java
+import com.firefly.flymq.producer.ProducerConfig;
+
+ProducerConfig config = ProducerConfig.builder()
+    .batchSize(1000)        // Max messages per batch
+    .lingerMs(50)           // Wait time for batching
+    .maxRetries(3)          // Retry attempts
+    .retryBackoffMs(100)    // Backoff between retries
+    .build();
+
+try (HighLevelProducer producer = client.producer(config)) {
+    // High-throughput pattern
+    for (int i = 0; i < 100000; i++) {
+        producer.send("events", ("event-" + i).getBytes());
     }
+    producer.flush();
 }
 ```
 
-## High-Level Consumer (Kafka-like)
+### High-Level Consumer
 
-The `Consumer` provides a Kafka-like API with auto-commit and poll-based consumption.
+The high-level consumer provides automatic offset tracking and simple iteration.
 
-### Basic Consumer
+#### Basic Usage
 
 ```java
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.consumer.Consumer;
-import com.firefly.flymq.protocol.Records.ConsumedMessage;
 import java.time.Duration;
 
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-
-    // Create consumer with a group ID
-    // The group ID tracks your position - use a unique name per application
-    try (Consumer consumer = client.consumer("my-topic", "my-group")) {
+    // Create consumer with a group ID (tracks your position automatically)
+    try (Consumer consumer = client.consumer("my-topic", "my-app")) {
         consumer.subscribe();  // Resumes from last committed offset
 
         while (true) {
-            List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
-            for (ConsumedMessage msg : messages) {
+            var messages = consumer.poll(Duration.ofSeconds(1));
+            for (var msg : messages) {
                 System.out.println("Key: " + msg.keyAsString());
                 System.out.println("Value: " + msg.dataAsString());
-                System.out.println("Offset: " + msg.offset());
             }
             // Offset is committed automatically every 5 seconds
         }
@@ -352,7 +253,7 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 }
 ```
 
-### Starting Position
+#### Starting Position
 
 When a consumer group first connects (no committed offset):
 
@@ -371,11 +272,13 @@ consumer.subscribe(SubscribeMode.COMMIT);
 
 After the first run, the consumer always resumes from its committed offset.
 
-### Manual Commit (Exactly-Once Processing)
+#### Manual Commit (Exactly-Once Processing)
 
 For critical workloads, disable auto-commit and commit after successful processing:
 
 ```java
+import com.firefly.flymq.consumer.ConsumerConfig;
+
 ConsumerConfig config = ConsumerConfig.builder()
     .enableAutoCommit(false)  // Disable auto-commit
     .build();
@@ -384,8 +287,8 @@ try (Consumer consumer = client.consumer("orders", "payment-processor", 0, confi
     consumer.subscribe();
 
     while (true) {
-        List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
-        for (ConsumedMessage msg : messages) {
+        var messages = consumer.poll(Duration.ofSeconds(1));
+        for (var msg : messages) {
             try {
                 processPayment(msg);
                 consumer.commitSync();  // Only commit after successful processing
@@ -398,24 +301,7 @@ try (Consumer consumer = client.consumer("orders", "payment-processor", 0, confi
 }
 ```
 
-### Consumer Configuration
-
-```java
-import com.firefly.flymq.consumer.ConsumerConfig;
-
-ConsumerConfig config = ConsumerConfig.builder()
-    .maxPollRecords(100)           // Max messages per poll
-    .enableAutoCommit(true)        // Auto-commit offsets (default: true)
-    .autoCommitIntervalMs(5000)    // Commit interval (default: 5000ms)
-    .build();
-
-try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {
-    consumer.subscribe();
-    // ...
-}
-```
-
-### Seek Operations
+#### Seek Operations
 
 ```java
 try (Consumer consumer = client.consumer("my-topic", "my-group")) {
@@ -433,15 +319,117 @@ try (Consumer consumer = client.consumer("my-topic", "my-group")) {
 }
 ```
 
-## Transactions
+---
+
+## Low-Level APIs
+
+Use low-level APIs when you need fine-grained control over partitions and offsets.
+
+### Direct Produce/Consume
+
+The low-level API gives you direct access to partitions and offsets:
+
+```java
+import com.firefly.flymq.FlyMQClient;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // Create a topic with specific partition count
+    client.createTopic("my-topic", 3);
+
+    // Produce to a specific partition - returns RecordMetadata
+    var meta = client.produceToPartition("my-topic", 1, "Hello!".getBytes());
+    System.out.println("Produced at offset " + meta.offset());
+
+    // Consume from a specific partition and offset
+    byte[] data = client.consume("my-topic", meta.offset());
+    System.out.println("Message: " + new String(data));
+
+    // Fetch multiple messages
+    var result = client.fetch("my-topic", 0, 0, 100);
+    for (var msg : result.messages()) {
+        System.out.println("Offset " + msg.offset() + ": " + msg.dataAsString());
+    }
+}
+```
+
+### Manual Offset Management
+
+For complete control over offset tracking:
+
+```java
+import com.firefly.flymq.protocol.Records.SubscribeMode;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // Subscribe to a topic with a consumer group
+    // Returns the starting offset (committed or based on reset policy)
+    long offset = client.subscribe("my-topic", "my-group", 0, SubscribeMode.COMMIT);
+
+    // Fetch messages starting from the offset
+    var result = client.fetch("my-topic", 0, offset, 10);
+
+    for (var msg : result.messages()) {
+        // Process the message
+        process(msg);
+
+        // Commit the offset after processing
+        // The offset to commit is the NEXT message to read
+        client.commitOffset("my-topic", "my-group", 0, msg.offset() + 1);
+    }
+}
+```
+
+### Cluster Connection (High Availability)
+
+```java
+// Connect to multiple servers for automatic failover
+FlyMQClient client = new FlyMQClient("node1:9092,node2:9092,node3:9092");
+
+// If node1 fails, automatically connects to node2 or node3
+var meta = client.produce("my-topic", "Hello!".getBytes());
+System.out.println("Produced at offset " + meta.offset());
+```
+
+### TLS Configuration
+
+```java
+import com.firefly.flymq.config.ClientConfig;
+
+// Basic TLS (server verification)
+ClientConfig config = ClientConfig.builder()
+    .bootstrapServers("localhost:9093")
+    .tlsEnabled(true)
+    .tlsCaFile("/path/to/ca.crt")
+    .build();
+
+// Mutual TLS (client certificate authentication)
+ClientConfig mtlsConfig = ClientConfig.builder()
+    .bootstrapServers("localhost:9093")
+    .tlsEnabled(true)
+    .tlsCaFile("/path/to/ca.crt")
+    .tlsCertFile("/path/to/client.crt")
+    .tlsKeyFile("/path/to/client-pkcs8.key")  // PKCS#8 format required
+    .build();
+
+> **Note:** Private keys must be in PKCS#8 format. Convert with:
+> ```bash
+> openssl pkcs8 -topk8 -nocrypt -in client.key -out client-pkcs8.key
+> ```
+
+---
+
+## Advanced Features
+
+### Transactions
+
+Transactions ensure atomic writes across multiple topics:
 
 ```java
 import com.firefly.flymq.transaction.Transaction;
 
 // Using try-with-resources (auto-rollback on exception)
 try (Transaction txn = client.beginTransaction()) {
-    txn.produce("topic1", "message1".getBytes());
-    txn.produce("topic2", "message2".getBytes());
+    txn.produce("orders", "{\"id\": 1}".getBytes());
+    txn.produce("inventory", "{\"sku\": \"ABC\", \"delta\": -1}".getBytes());
     txn.commit();
 }
 
@@ -457,7 +445,9 @@ try {
 }
 ```
 
-## Schema Validation
+### Schema Validation
+
+Validate messages against JSON, Avro, or Protobuf schemas:
 
 ```java
 // Register a JSON schema
@@ -477,18 +467,21 @@ client.registerSchema("user-schema", "json", schema);
 String message = """
     {"name": "Alice", "age": 30}
     """;
-long offset = client.produceWithSchema("users", message.getBytes(), "user-schema");
+var meta = client.produceWithSchema("users", message.getBytes(), "user-schema");
+System.out.println("Produced at offset " + meta.offset());
 ```
 
-## Dead Letter Queue
+### Dead Letter Queues
+
+Handle failed messages with dead letter queues:
 
 ```java
 // Fetch messages from DLQ
 var dlqMessages = client.fetchDLQ("my-topic", 10);
 for (var msg : dlqMessages) {
     System.out.println("Failed message: " + msg.get("id") + ", error: " + msg.get("error"));
-    
-    // Replay the message
+
+    // Replay the message back to the original topic
     client.replayDLQ("my-topic", (String) msg.get("id"));
 }
 
@@ -496,19 +489,27 @@ for (var msg : dlqMessages) {
 client.purgeDLQ("my-topic");
 ```
 
-## Delayed Messages and TTL
+### Delayed Messages
+
+Schedule messages for future delivery:
 
 ```java
 // Delayed delivery (5 second delay)
 client.produceDelayed("my-topic", "Delayed message".getBytes(), 5000);
+```
 
-// Message with TTL (expires in 60 seconds)
+### Message TTL
+
+Set expiration time for messages:
+
+```java
+// Message expires in 60 seconds
 client.produceWithTTL("my-topic", "Expiring message".getBytes(), 60000);
 ```
 
-## Encryption (AES-256-GCM)
+### Encryption (AES-256-GCM)
 
-The SDK supports AES-256-GCM encryption for both data-in-motion and data-at-rest, compatible with FlyMQ server.
+The SDK supports AES-256-GCM encryption:
 
 ```java
 import com.firefly.flymq.crypto.Encryptor;
@@ -516,21 +517,21 @@ import com.firefly.flymq.crypto.Encryptor;
 // Generate a new encryption key
 String key = Encryptor.generateKey(); // 64-char hex string
 
-// Create encryptor
+// Create encryptor for manual encryption
 Encryptor encryptor = Encryptor.fromHexKey(key);
-
-// Encrypt/decrypt data
 byte[] encrypted = encryptor.encrypt("Hello, FlyMQ!".getBytes());
 byte[] decrypted = encryptor.decrypt(encrypted);
 
-// Enable encryption in client config
+// Or configure client-level encryption
 ClientConfig config = ClientConfig.builder()
     .bootstrapServers("localhost:9092")
     .encryptionKey(key)
     .build();
 ```
 
-## Spring Boot MVC Integration
+---
+
+## Spring Boot Integration
 
 ### application.properties
 
@@ -598,7 +599,7 @@ flymq.tls-insecure-skip-verify=true
 flymq.encryption-key=your-64-character-hex-encryption-key-here
 ```
 
-## Spring Boot WebFlux (Reactive)
+### WebFlux (Reactive)
 
 For reactive applications, use `flymq-client-spring-webflux`:
 
@@ -609,53 +610,79 @@ import reactor.core.publisher.Mono;
 
 @Service
 public class ReactiveMessageService {
-    
+
     private final ReactiveFlyMQClient client;
-    
+
     public ReactiveMessageService(ReactiveFlyMQClient client) {
         this.client = client;
     }
-    
+
     // Produce messages reactively
     public Mono<Long> sendMessage(String topic, String message) {
         return client.produce(topic, message);
     }
-    
+
     // Consume messages as a stream
     public Flux<String> consumeMessages(String topic, String groupId) {
         return client.consumeStream(topic, groupId, 0)
             .map(msg -> msg.dataAsString());
     }
-    
-    // Reactive transactions
-    public Mono<Void> sendAtomicMessages(String topic1, String topic2) {
-        return client.beginTransaction()
-            .flatMap(txn -> 
-                txn.produce(topic1, "msg1".getBytes())
-                   .then(txn.produce(topic2, "msg2".getBytes()))
-                   .then(txn.commit())
-                   .onErrorResume(e -> txn.rollback().then(Mono.error(e)))
-            );
-    }
 }
 ```
 
+---
+
+## Configuration Reference
+
+### ClientConfig
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `bootstrapServers` | String | localhost:9092 | Comma-separated server addresses |
+| `connectTimeoutMs` | int | 10000 | Connection timeout |
+| `requestTimeoutMs` | int | 30000 | Request timeout |
+| `maxRetries` | int | 3 | Max retry attempts |
+| `retryDelayMs` | int | 1000 | Delay between retries |
+| `tlsEnabled` | boolean | false | Enable TLS |
+| `tlsCaFile` | String | null | CA certificate path |
+| `tlsCertFile` | String | null | Client certificate path |
+| `tlsKeyFile` | String | null | Client key path |
+| `tlsInsecureSkipVerify` | boolean | false | Skip cert verification |
+| `clientId` | String | flymq-java-client | Client identifier |
+
+### ProducerConfig
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `batchSize` | int | 100 | Max messages per batch |
+| `lingerMs` | int | 0 | Time to wait for batching |
+| `maxRetries` | int | 3 | Max retries |
+| `retryBackoffMs` | int | 100 | Backoff between retries |
+
+### ConsumerConfig
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxPollRecords` | int | 500 | Max records per poll |
+| `enableAutoCommit` | boolean | true | Auto-commit offsets |
+| `autoCommitIntervalMs` | int | 5000 | Auto-commit interval |
+
+---
+
 ## Error Handling
 
-FlyMQ Java SDK provides clear error messages with helpful hints to speed up debugging.
+FlyMQ Java SDK provides clear error messages with helpful hints.
 
 ### Exception Types
 
 ```java
 import com.firefly.flymq.exception.FlyMQException;
-import com.firefly.flymq.exception.ProtocolException;
 
 try {
     client.produce("my-topic", data);
 } catch (FlyMQException e) {
     System.err.println("Error: " + e.getMessage());
     System.err.println("Hint: " + e.getHint());  // Helpful suggestion!
-    System.err.println("Full: " + e.getFullMessage());
 }
 ```
 
@@ -669,28 +696,10 @@ try {
 } catch (FlyMQException e) {
     System.err.println(e.getHint());
     // Output: Create the topic first with client.createTopic("nonexistent-topic", partitions)
-    //         or use the CLI: flymq-cli topic create nonexistent-topic
 }
 ```
 
-### Factory Methods for Common Errors
-
-```java
-// Create exceptions with helpful hints
-throw FlyMQException.connectionFailed("localhost:9092", cause);
-// Hint: Check that the FlyMQ server is running and accessible...
-
-throw FlyMQException.topicNotFound("my-topic");
-// Hint: Create the topic first with client.createTopic("my-topic", partitions)...
-
-throw FlyMQException.authenticationFailed("alice");
-// Hint: Check that the username and password are correct...
-
-throw FlyMQException.timeout("produce");
-// Hint: The server may be overloaded or unreachable...
-```
-
-### Graceful Error Recovery
+### Retry Pattern
 
 ```java
 public long produceWithRetry(FlyMQClient client, String topic, byte[] data, int maxRetries)
@@ -713,23 +722,7 @@ public long produceWithRetry(FlyMQClient client, String topic, byte[] data, int 
 }
 ```
 
-## Configuration Options
-
-### ClientConfig
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `bootstrapServers` | String | localhost:9092 | Comma-separated server addresses |
-| `connectTimeoutMs` | int | 10000 | Connection timeout |
-| `requestTimeoutMs` | int | 30000 | Request timeout |
-| `maxRetries` | int | 3 | Max retry attempts |
-| `retryDelayMs` | int | 1000 | Delay between retries |
-| `tlsEnabled` | boolean | false | Enable TLS |
-| `tlsCaFile` | String | null | CA certificate path |
-| `tlsCertFile` | String | null | Client certificate path |
-| `tlsKeyFile` | String | null | Client key path |
-| `tlsInsecureSkipVerify` | boolean | false | Skip cert verification |
-| `clientId` | String | flymq-java-client | Client identifier |
+---
 
 ## Development
 
@@ -753,27 +746,7 @@ mvn clean package
 mvn clean package -Prelease
 ```
 
-## Records (DTOs)
-
-The SDK uses Java Records for immutable DTOs:
-
-```java
-// ProduceResult - result of produce operation
-record ProduceResult(String topic, long offset, int partition, Instant timestamp) {}
-
-// ConsumedMessage - a consumed message with key support
-record ConsumedMessage(String topic, int partition, long offset, 
-                       byte[] key, byte[] data, 
-                       Instant timestamp, Map<String, String> headers) {
-    // Convenience methods
-    String keyAsString() { return key != null ? new String(key, UTF_8) : null; }
-    String dataAsString() { return new String(data, UTF_8); }
-    boolean hasKey() { return key != null && key.length > 0; }
-}
-
-// FetchResult - result of fetch operation
-record FetchResult(List<ConsumedMessage> messages, long nextOffset) {}
-```
+---
 
 ## License
 

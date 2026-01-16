@@ -46,8 +46,8 @@ public class HelloFlyMQ {
         // One-liner connection
         try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
             // Produce and consume
-            long offset = client.produce("hello", "Hello, FlyMQ!".getBytes());
-            byte[] data = client.consume("hello", offset);
+            var meta = client.produce("hello", "Hello, FlyMQ!".getBytes());
+            byte[] data = client.consume("hello", meta.offset());
             System.out.println("Received: " + new String(data));
         }
     }
@@ -67,12 +67,12 @@ public class HelloFlyMQ {
             // Create topic
             client.createTopic("hello", 1);
 
-            // Produce message
-            long offset = client.produce("hello", "Hello, FlyMQ!".getBytes());
-            System.out.println("Produced at offset: " + offset);
+            // Produce message - returns RecordMetadata (Kafka-like)
+            var meta = client.produce("hello", "Hello, FlyMQ!".getBytes());
+            System.out.println("Produced to " + meta.topic() + " at offset " + meta.offset());
 
             // Consume message
-            ConsumedMessage msg = client.consumeWithKey("hello", offset);
+            ConsumedMessage msg = client.consumeWithKey("hello", meta.offset());
             System.out.println("Received: " + msg.dataAsString());
         }
     }
@@ -98,12 +98,13 @@ Set<String> topics = client.listTopics();
 Send messages:
 
 ```java
-// Simple produce
-long offset = client.produce("my-topic", "Hello".getBytes());
+// Simple produce - returns RecordMetadata
+var meta = client.produce("my-topic", "Hello".getBytes());
+System.out.println("Offset: " + meta.offset());
 
 // Produce with key (Kafka-style partitioning)
 // Same key = same partition (ordering guarantee)
-long offset = client.produceWithKey("my-topic", "user-123", data.getBytes());
+var meta2 = client.produceWithKey("my-topic", "user-123", data.getBytes());
 ```
 
 ### Consuming Messages

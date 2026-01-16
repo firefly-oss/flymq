@@ -51,10 +51,10 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>Example usage:
  * <pre>{@code
- * try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
+ * try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
  *     client.createTopic("my-topic", 3);
- *     long offset = client.produce("my-topic", "Hello!".getBytes());
- *     byte[] data = client.consume("my-topic", offset);
+ *     var meta = client.produce("my-topic", "Hello!".getBytes());
+ *     byte[] data = client.consume("my-topic", meta.offset());
  * }
  * }</pre>
  */

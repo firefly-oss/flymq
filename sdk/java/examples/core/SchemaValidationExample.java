@@ -94,12 +94,12 @@ public class SchemaValidationExample {
             """;
 
         try {
-            long offset = client.produceWithSchema(
+            var meta = client.produceWithSchema(
                 "users",
                 validUser.getBytes(),
                 "user-schema"
             );
-            System.out.println("✓ Valid message produced at offset: " + offset);
+            System.out.println("✓ Valid message produced at offset: " + meta.offset());
         } catch (FlyMQException e) {
             System.out.println("  Production failed: " + e.getMessage());
         }

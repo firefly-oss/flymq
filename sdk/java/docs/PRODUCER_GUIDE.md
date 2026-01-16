@@ -8,8 +8,9 @@ Best practices for producing messages with FlyMQ Java client.
 import com.firefly.flymq.FlyMQClient;
 
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-    long offset = client.produce("my-topic", "Hello".getBytes());
-    System.out.println("Produced at offset: " + offset);
+    // produce() returns RecordMetadata (Kafka-like)
+    var meta = client.produce("my-topic", "Hello".getBytes());
+    System.out.println("Produced to " + meta.topic() + " at offset " + meta.offset());
 }
 ```
 
@@ -92,9 +93,9 @@ if (future.isDone()) {
 
 ```java
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-    // Simple produce
-    long offset = client.produce("my-topic", "Hello".getBytes());
-    System.out.println("Produced at offset: " + offset);
+    // Simple produce - returns RecordMetadata
+    var meta = client.produce("my-topic", "Hello".getBytes());
+    System.out.println("Produced to " + meta.topic() + " at offset " + meta.offset());
 }
 ```
 

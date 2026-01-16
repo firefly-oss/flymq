@@ -51,8 +51,8 @@ public class KeyBasedMessaging {
             long[] offsets = new long[keys.length];
             for (int i = 0; i < keys.length; i++) {
                 String json = mapper.writeValueAsString(orders[i]);
-                long offset = client.produceWithKey(topic, keys[i], json.getBytes());
-                offsets[i] = offset;
+                var meta = client.produceWithKey(topic, keys[i], json.getBytes());
+                offsets[i] = meta.offset();
                 System.out.println("  Key: " + keys[i] + ", Order: " + orders[i].orderId);
             }
 
