@@ -102,23 +102,39 @@ The complete documentation hierarchy is organized as follows:
 
 ```
 flymq/
-├── START_HERE.md (this file - navigation and introduction)
 ├── README.md (project overview and feature summary)
-├── SDK_DOCUMENTATION_GUIDE.md (comprehensive reference)
-├── SDK_COMPLETION_SUMMARY.txt (project status and deliverables)
+├── INSTALL.md (installation instructions)
+├── docs/ (server documentation)
+│   ├── getting-started.md
+│   ├── architecture.md
+│   ├── sdk_development.md
+│   └── ... (other server docs)
 │
 └── sdk/
+    ├── START_HERE.md (this file - SDK navigation)
+    ├── SDK_DOCUMENTATION_GUIDE.md (comprehensive SDK reference)
     ├── python/
+    │   ├── README.md (Python SDK overview)
     │   ├── docs/
-    │   │   ├── GETTING_STARTED.md (installation, architecture, quick start)
-    │   │   └── SECURITY.md (authentication, encryption, TLS configuration)
-    │   └── examples/ (10 working examples, progressively complex)
+    │   │   ├── GETTING_STARTED.md (installation, quick start)
+    │   │   └── SECURITY.md (authentication, encryption, TLS)
+    │   └── examples/ (10 working examples)
+    │       ├── 01_basic_produce_consume.py
+    │       ├── 02_key_based_messaging.py
+    │       └── ... (8 more examples)
     │
     └── java/
+        ├── README.md (Java SDK overview) 
         ├── docs/
-        │   ├── GETTING_STARTED.md (Maven config, Spring Boot, quick start)
-        │   └── PRODUCER_GUIDE.md (patterns, transactions, best practices)
-        └── examples/ (4 core + Spring examples)
+        │   ├── GETTING_STARTED.md (Maven, Spring Boot setup)
+        │   └── PRODUCER_GUIDE.md (patterns, best practices)
+        └── examples/ (4 examples)
+            ├── core/
+            │   ├── BasicProduceConsume.java
+            │   ├── KeyBasedMessaging.java
+            │   └── ConsumerGroupExample.java
+            └── spring-mvc/
+                └── MessageService.java
 ```
 
 ## Feature Overview
@@ -235,7 +251,7 @@ This documentation project has achieved the following deliverables:
 - 2,500+ lines of technical documentation
 - 100% alignment with actual SDK implementations
 
-All documentation is production-ready and suitable for enterprise adoption. See [SDK_COMPLETION_SUMMARY.txt](SDK_COMPLETION_SUMMARY.txt) for comprehensive project statistics and verification details.
+All documentation is production-ready and suitable for enterprise adoption.
 
 ## Next Steps
 

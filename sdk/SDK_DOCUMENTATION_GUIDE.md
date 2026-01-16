@@ -666,39 +666,46 @@ Resolution steps:
 
 ```
 flymq/
-├── START_HERE.md                           (navigation and introduction)
 ├── README.md                               (project overview)
-├── SDK_DOCUMENTATION_GUIDE.md              (this file - comprehensive reference)
-├── SDK_COMPLETION_SUMMARY.txt              (project status)
+├── INSTALL.md                              (installation instructions)
+├── docs/                                   (server documentation)
+│   ├── getting-started.md
+│   ├── architecture.md
+│   ├── sdk_development.md
+│   └── ... (other server docs)
 │
-├── sdk/
-│   ├── python/
-│   │   ├── docs/
-│   │   │   ├── GETTING_STARTED.md          (installation, architecture, setup)
-│   │   │   └── SECURITY.md                 (auth, encryption, TLS configuration)
-│   │   └── examples/
-│   │       ├── 01_basic_produce_consume.py
-│   │       ├── 02_key_based_messaging.py
-│   │       ├── 03_consumer_groups.py
-│   │       ├── 04_transactions.py
-│   │       ├── 05_encryption.py
-│   │       ├── 06_reactive_streams.py
-│   │       ├── 07_schema_validation.py
-│   │       ├── 08_error_handling.py
-│   │       ├── 09_tls_authentication.py
-│   │       └── 10_advanced_patterns.py
-│   │
-│   └── java/
-│       ├── docs/
-│       │   ├── GETTING_STARTED.md          (Maven, Spring Boot setup)
-│       │   └── PRODUCER_GUIDE.md           (patterns, transactions)
-│       └── examples/
-│           ├── core/
-│           │   ├── BasicProduceConsume.java
-│           │   ├── KeyBasedMessaging.java
-│           │   └── ConsumerGroupExample.java
-│           └── spring-mvc/
-│               └── MessageService.java
+└── sdk/
+    ├── START_HERE.md                       (SDK navigation guide)
+    ├── SDK_DOCUMENTATION_GUIDE.md          (this file - comprehensive SDK reference)
+    ├── python/
+    │   ├── README.md                       (Python SDK overview)
+    │   ├── docs/
+    │   │   ├── GETTING_STARTED.md          (installation, architecture, setup)
+    │   │   └── SECURITY.md                 (auth, encryption, TLS configuration)
+    │   └── examples/
+    │       ├── 01_basic_produce_consume.py
+    │       ├── 02_key_based_messaging.py
+    │       ├── 03_consumer_groups.py
+    │       ├── 04_transactions.py
+    │       ├── 05_encryption.py
+    │       ├── 06_reactive_streams.py
+    │       ├── 07_schema_validation.py
+    │       ├── 08_error_handling.py
+    │       ├── 09_tls_authentication.py
+    │       └── 10_advanced_patterns.py
+    │
+    └── java/
+        ├── README.md                       (Java SDK overview)
+        ├── docs/
+        │   ├── GETTING_STARTED.md          (Maven, Spring Boot setup)
+        │   └── PRODUCER_GUIDE.md           (patterns, transactions)
+        └── examples/
+            ├── core/
+            │   ├── BasicProduceConsume.java
+            │   ├── KeyBasedMessaging.java
+            │   └── ConsumerGroupExample.java
+            └── spring-mvc/
+                └── MessageService.java
 ```
 
 ---
