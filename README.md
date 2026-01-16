@@ -767,16 +767,33 @@ Install from the SDK directory:
 pip install ./sdk/python
 ```
 
+**Quick Start (Kafka-like API):**
+
+```python path=null start=null
+from pyflymq import connect
+
+# One-liner connection
+client = connect("localhost:9092")
+
+# High-level producer with batching
+with client.producer(batch_size=100) as producer:
+    producer.send("events", b'{"event": "click"}', key="user-123")
+    producer.flush()
+
+# High-level consumer with auto-commit
+with client.consumer("events", "my-group") as consumer:
+    for msg in consumer:
+        print(f"Key: {msg.key}, Value: {msg.decode()}")
+
+client.close()
+```
+
 **Basic Usage:**
 
 ```python path=null start=null
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
-# Create client
-client = FlyMQClient("localhost:9092")
-
-# Authenticate (if auth is enabled)
-client.authenticate("admin", "password")
+client = connect("localhost:9092")
 
 # Produce message
 offset = client.produce("my-topic", b"Hello, World!")
@@ -788,21 +805,16 @@ offset = client.produce("orders", b'{"id": 1}', key="user-123")
 msg = client.consume("my-topic", offset)
 print(f"Key: {msg.decode_key()}, Value: {msg.decode()}")
 
-# Fetch multiple messages with keys
-result = client.fetch("orders", partition=0, offset=0, max_messages=100)
-for m in result.messages:
-    print(f"Offset {m.offset}: key={m.decode_key()} value={m.decode()}")
-
 client.close()
 ```
 
 **With Authentication and Encryption:**
 
 ```python path=null start=null
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
-client = FlyMQClient(
-    "localhost", 9092,
+client = connect(
+    "localhost:9092",
     username="admin",
     password="password",
     encryption_key="your-64-char-hex-key"  # AES-256-GCM
@@ -864,6 +876,53 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
+**Quick Start (Kafka-like API):**
+
+```java path=null start=null
+import com.firefly.flymq.FlyMQClient;
+
+// One-liner connection
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // High-level producer with batching
+    try (var producer = client.producer()) {
+        producer.send("events", "{\"event\": \"click\"}".getBytes(), "user-123".getBytes())
+            .whenComplete((metadata, error) -> {
+                if (error == null) {
+                    System.out.println("Sent @ offset " + metadata.offset());
+                }
+            });
+        producer.flush();
+    }
+
+    // High-level consumer with auto-commit
+    try (var consumer = client.consumer("events", "my-group")) {
+        consumer.subscribe();
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
+        }
+    }
+}
+```
+
+**Basic Usage:**
+
+```java path=null start=null
+import com.firefly.flymq.FlyMQClient;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // Produce message
+    long offset = client.produce("my-topic", "Hello, World!".getBytes());
+
+    // Produce with key (Kafka-style partitioning)
+    client.produceWithKey("orders", "user-123", "{\"id\": 1}");
+
+    // Consume with key
+    var msg = client.consumeWithKey("orders", 0);
+    System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
+}
+```
+
 **Spring Boot Configuration:**
 
 ```yaml path=null start=null
@@ -874,35 +933,6 @@ flymq:
   username: admin              # Optional authentication
   password: password
   encryption-key: your-64-char-hex-key  # Optional AES-256-GCM encryption
-```
-
-**Basic Usage:**
-
-```java path=null start=null
-import com.firefly.flymq.FlyMQClient;
-import com.firefly.flymq.protocol.Records.ConsumedMessage;
-
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    // Authenticate (if auth is enabled)
-    client.authenticate("admin", "password");
-
-    // Produce message
-    long offset = client.produce("my-topic", "Hello, World!".getBytes());
-
-    // Produce with key (Kafka-style partitioning)
-    client.produceWithKey("orders", "user-123", "{\"id\": 1}");
-
-    // Consume with key
-    ConsumedMessage msg = client.consumeWithKey("orders", 0);
-    System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
-
-    // Fetch multiple messages with keys
-    var result = client.fetch("orders", 0, 0, 100);
-    for (var m : result.messages()) {
-        System.out.printf("Offset %d: key=%s value=%s%n",
-            m.offset(), m.keyAsString(), m.dataAsString());
-    }
-}
 ```
 
 **Spring Boot Integration:**

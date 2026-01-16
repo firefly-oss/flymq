@@ -22,7 +22,7 @@ All documentation is aligned with actual SDK implementations and has been tested
 
 ### Python SDK (PyFlyMQ)
 
-The PyFlyMQ SDK provides native Python bindings to the FlyMQ message broker, supporting both synchronous and asynchronous message processing patterns. The implementation is built on the FlyMQ binary protocol specification and provides comprehensive type hints using Pydantic models.
+The PyFlyMQ SDK provides native Python bindings to the FlyMQ message broker with **Kafka-like APIs** for familiar developer experience. The implementation is built on the FlyMQ binary protocol specification and provides comprehensive type hints using Pydantic models.
 
 **Installation**:
 ```bash
@@ -31,17 +31,43 @@ pip install pyflymq
 pip install ./sdk/python
 ```
 
+**Quick Start**:
+```python
+from pyflymq import connect
+
+# One-liner connection
+client = connect("localhost:9092")
+
+# High-level producer with batching
+with client.producer(batch_size=100) as producer:
+    producer.send("events", b'{"event": "click"}', key="user-123")
+    producer.flush()
+
+# High-level consumer with auto-commit
+with client.consumer("events", "my-group") as consumer:
+    for msg in consumer:
+        print(f"Key: {msg.key}, Value: {msg.decode()}")
+
+client.close()
+```
+
 **System Requirements**:
 - Python 3.7 or later
 - 64-bit operating system (Linux, macOS, Windows)
 - TCP/IP network connectivity to FlyMQ broker
 
 **Primary Documentation**:
-- [Getting Started Guide](sdk/python/docs/GETTING_STARTED.md) - Installation, architecture overview, quick start guide
-- [Security Configuration Guide](sdk/python/docs/SECURITY.md) - Authentication, encryption, TLS/mTLS configuration
-- [Examples Directory](sdk/python/examples/) - 10 comprehensive working examples covering all major features
+- [Getting Started Guide](python/docs/GETTING_STARTED.md) - Installation, architecture overview, quick start guide
+- [Producer Patterns](python/docs/PRODUCER_PATTERNS.md) - HighLevelProducer, batching, callbacks
+- [Consumer Patterns](python/docs/CONSUMER_PATTERNS.md) - HighLevelConsumer, poll-based consumption
+- [Security Configuration Guide](python/docs/SECURITY.md) - Authentication, encryption, TLS/mTLS configuration
+- [Examples Directory](python/examples/) - 10 comprehensive working examples covering all major features
 
 **Key Features**:
+- **`connect()` function** - One-liner connection for quick setup
+- **`HighLevelProducer`** - Batching, callbacks, automatic retries
+- **`HighLevelConsumer`** - Auto-commit, poll-based consumption, seek operations
+- **Error hints** - All exceptions include actionable suggestions
 - Full binary protocol support with efficient serialization
 - AES-256-GCM message encryption for data confidentiality
 - Pydantic validated models with runtime type checking
@@ -49,7 +75,6 @@ pip install ./sdk/python
 - Consumer group management with persistent offset tracking
 - ACID transactions with automatic rollback on error
 - TLS and mTLS mutual authentication
-- Comprehensive error handling and retry mechanisms
 
 **Available Examples**:
 
@@ -68,7 +93,35 @@ pip install ./sdk/python
 
 ### Java SDK
 
-The FlyMQ Java SDK provides type-safe, high-performance bindings for JVM-based applications. The implementation features thread-safe operations, automatic failover mechanisms, and seamless Spring Boot integration through auto-configuration.
+The FlyMQ Java SDK provides type-safe, high-performance bindings for JVM-based applications with **Kafka-like APIs** for familiar developer experience. The implementation features thread-safe operations, automatic failover mechanisms, and seamless Spring Boot integration through auto-configuration.
+
+**Quick Start**:
+```java
+import com.firefly.flymq.FlyMQClient;
+
+// One-liner connection
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // High-level producer with batching
+    try (var producer = client.producer()) {
+        producer.send("events", "{\"event\": \"click\"}".getBytes(), "user-123".getBytes())
+            .whenComplete((metadata, error) -> {
+                if (error == null) {
+                    System.out.println("Sent @ offset " + metadata.offset());
+                }
+            });
+        producer.flush();
+    }
+
+    // High-level consumer with auto-commit
+    try (var consumer = client.consumer("events", "my-group")) {
+        consumer.subscribe();
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
+        }
+    }
+}
+```
 
 **Dependency Configuration** (Maven):
 ```xml
@@ -100,11 +153,16 @@ The FlyMQ Java SDK provides type-safe, high-performance bindings for JVM-based a
 - 64-bit JVM with sufficient heap memory (minimum 512MB recommended)
 
 **Primary Documentation**:
-- [Getting Started Guide](sdk/java/docs/GETTING_STARTED.md) - Maven/Gradle configuration, setup procedures, initial examples
-- [Producer Design Guide](sdk/java/docs/PRODUCER_GUIDE.md) - Production patterns, transaction handling, and optimization
-- [Examples Directory](sdk/java/examples/) - Core Java and Spring Boot integration examples
+- [Getting Started Guide](java/docs/GETTING_STARTED.md) - Maven/Gradle configuration, setup procedures, initial examples
+- [Producer Design Guide](java/docs/PRODUCER_GUIDE.md) - HighLevelProducer, batching, callbacks
+- [Consumer Guide](java/docs/CONSUMER_GUIDE.md) - Consumer, poll-based consumption, seek operations
+- [Examples Directory](java/examples/) - Core Java and Spring Boot integration examples
 
 **Key Features**:
+- **`connect()` static method** - One-liner connection for quick setup
+- **`HighLevelProducer`** - Batching, CompletableFuture callbacks, automatic retries
+- **`Consumer`** - Auto-commit, poll-based consumption, seek operations
+- **Error hints** - All exceptions include `getHint()` with actionable suggestions
 - Full binary protocol support with efficient serialization
 - Automatic failover and high availability with connection pooling
 - Thread-safe concurrent operations for multi-threaded environments
@@ -112,14 +170,15 @@ The FlyMQ Java SDK provides type-safe, high-performance bindings for JVM-based a
 - Consumer groups with offset management and rebalancing
 - ACID transactions across multiple topics
 - Spring Boot auto-configuration with lifecycle hooks
-- Comprehensive metrics and monitoring integration
 
 **Available Examples**:
 
 Core Examples (standalone Java without framework dependencies):
-- **BasicProduceConsume.java** - Foundational producer-consumer pattern demonstrating core operations
-- **KeyBasedMessaging.java** - Key-based partitioning with JSON payload serialization
-- **ConsumerGroupExample.java** - Consumer group semantics with offset management and concurrent consumption
+- **BasicProduceConsume.java** - Foundational producer-consumer pattern with `connect()` and high-level APIs
+- **KeyBasedMessaging.java** - Key-based partitioning with HighLevelProducer
+- **ConsumerGroupExample.java** - Consumer group semantics with HighLevelConsumer
+- **TransactionExample.java** - Atomic multi-topic transactions
+- **ErrorHandlingExample.java** - Exception handling with hints
 
 Spring Boot Examples (integrated with Spring lifecycle):
 - **MessageService.java** - Service injection pattern demonstrating Spring component lifecycle integration
@@ -128,63 +187,76 @@ Spring Boot Examples (integrated with Spring lifecycle):
 
 ## Common Messaging Patterns
 
-This section presents common messaging patterns implemented in both Python and Java, with detailed explanations of use cases and trade-offs.
+This section presents common messaging patterns implemented in both Python and Java using the **high-level Kafka-like APIs**.
 
-### Pattern 1: Basic Producer/Consumer
+### Pattern 1: Basic Producer/Consumer (High-Level)
 
-**Purpose**: Fundamental message production and consumption, suitable for simple point-to-point communication or learning FlyMQ basics.
+**Purpose**: Fundamental message production and consumption using the recommended high-level APIs.
 
 **Use Cases**:
-- Simple message queuing without ordering requirements
-- Testing and development environments
-- Learning FlyMQ fundamentals
-- Fire-and-forget messaging
+- Production workloads with batching and callbacks
+- Simple message queuing with automatic retries
+- Learning FlyMQ with familiar Kafka-like patterns
 
 **Python Implementation**:
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
-# Create a client instance for communicating with FlyMQ broker
-client = FlyMQClient("localhost:9092")
+# One-liner connection
+client = connect("localhost:9092")
 
-# Produce a message and receive offset confirmation
-message_bytes = b"Hello, FlyMQ!"
-offset = client.produce("my-topic", message_bytes)
-print(f"Message published at offset: {offset}")
+# High-level producer with batching
+with client.producer(batch_size=100) as producer:
+    producer.send("my-topic", b"Hello, FlyMQ!", key="user-123",
+                  on_success=lambda m: print(f"Sent @ offset {m.offset}"))
+    producer.flush()
 
-# Consume the message using its offset
-consumed_message = client.consume("my-topic", offset)
-print(f"Received: {consumed_message.decode()}")
+# High-level consumer with auto-commit
+with client.consumer("my-topic", "my-group") as consumer:
+    for msg in consumer:
+        print(f"Key: {msg.key}, Value: {msg.decode()}")
+        break  # Process one message for demo
+
+client.close()
 ```
 
 **Java Implementation**:
 ```java
 import com.firefly.flymq.FlyMQClient;
-import com.firefly.flymq.ConsumedMessage;
 
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    // Produce message and capture offset for later retrieval
-    byte[] messageBytes = "Hello, FlyMQ!".getBytes(StandardCharsets.UTF_8);
-    long offset = client.produce("my-topic", messageBytes);
-    System.out.println("Message published at offset: " + offset);
-    
-    // Consume using explicit offset
-    ConsumedMessage msg = client.consumeWithKey("my-topic", offset);
-    System.out.println("Received: " + msg.dataAsString());
+// One-liner connection
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // High-level producer with batching
+    try (var producer = client.producer()) {
+        producer.send("my-topic", "Hello, FlyMQ!".getBytes(), "user-123".getBytes())
+            .whenComplete((m, e) -> {
+                if (e == null) System.out.println("Sent @ offset " + m.offset());
+            });
+        producer.flush();
+    }
+
+    // High-level consumer with auto-commit
+    try (var consumer = client.consumer("my-topic", "my-group")) {
+        consumer.subscribe();
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
+        }
+    }
 }
 ```
 
-**Trade-offs**:
-- Simple and straightforward implementation
-- No message ordering guarantees (unless using key-based partitioning)
-- Requires manual offset management
-- Not suitable for distributed consumer groups
+**Benefits**:
+- Familiar Kafka-like API patterns
+- Automatic batching for better throughput
+- Callbacks for async result handling
+- Auto-commit for simpler offset management
 
 ---
 
-### Pattern 2: Consumer Groups
+### Pattern 2: Consumer Groups (High-Level)
 
-**Purpose**: Distributed message consumption across multiple consumers with automatic offset tracking and rebalancing.
+**Purpose**: Distributed message consumption using the high-level consumer API with automatic offset tracking.
 
 **Use Cases**:
 - Scalable message processing with multiple workers
@@ -194,62 +266,118 @@ try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
 
 **Python Implementation**:
 ```python
-from pyflymq import Consumer
+from pyflymq import connect
 
-# Create consumer group for coordinated consumption
-consumer = Consumer(
-    client,
-    topic="events-topic",
-    group_id="event-processors",
-    auto_commit=False  # Manual offset management
-)
+client = connect("localhost:9092")
 
-# Iterate through messages in consumer group
-for message in consumer:
-    # Process message with error handling
-    try:
+# High-level consumer with auto-commit (default)
+with client.consumer("events-topic", "event-processors") as consumer:
+    for message in consumer:
+        try:
+            process_event(message.decode())
+            # Auto-commit handles offset management
+        except Exception as e:
+            print(f"Processing failed: {e}")
+
+# Or with manual commit for at-least-once semantics
+with client.consumer("events-topic", "event-processors", auto_commit=False) as consumer:
+    for message in consumer:
         process_event(message.decode())
-        # Commit offset only after successful processing
-        consumer.commit()
-    except Exception as e:
-        print(f"Processing failed: {e}")
-        # Leave offset uncommitted for retry
+        consumer.commit()  # Manual commit after processing
 ```
 
 **Java Implementation**:
 ```java
-import com.firefly.flymq.Consumer;
-import com.firefly.flymq.ConsumedMessage;
+import com.firefly.flymq.FlyMQClient;
 import java.time.Duration;
-import java.util.List;
 
-Consumer consumer = new Consumer(client, "events-topic", "event-processors");
-consumer.subscribe();
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 
-// Poll for messages with configurable timeout
-while (running) {
-    List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
-    for (ConsumedMessage msg : messages) {
-        try {
-            processEvent(msg);
-            consumer.commitSync();  // Synchronous offset commit
-        } catch (Exception e) {
-            logger.error("Processing failed", e);
-            // Offset not committed; message will be reprocessed
+    // High-level consumer with auto-commit (default)
+    try (var consumer = client.consumer("events-topic", "event-processors")) {
+        consumer.subscribe();
+
+        while (running) {
+            var messages = consumer.poll(Duration.ofSeconds(1));
+            for (var msg : messages) {
+                try {
+                    processEvent(msg);
+                    // Auto-commit handles offset management
+                } catch (Exception e) {
+                    logger.error("Processing failed", e);
+                }
+            }
         }
     }
 }
 ```
 
-**Trade-offs**:
+**Benefits**:
 - Automatic load balancing across consumers
-- Offset persistence enables crash recovery
-- Rebalancing can cause brief processing delays
-- Requires careful management of processing vs. commit timing
+- Auto-commit simplifies offset management
+- Poll-based consumption for batch processing
+- Seek operations for replay scenarios
 
 ---
 
-### Pattern 3: Transactions
+### Pattern 3: High-Throughput Producer
+
+**Purpose**: Maximize message throughput using the HighLevelProducer with batching and async callbacks.
+
+**Use Cases**:
+- High-volume event streaming
+- Log aggregation pipelines
+- Real-time analytics ingestion
+- IoT sensor data collection
+
+**Python Implementation**:
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Configure for high throughput
+with client.producer(batch_size=1000, linger_ms=50) as producer:
+    # Send 100k messages efficiently
+    for i in range(100000):
+        producer.send("events", f"event-{i}".encode())
+
+    producer.flush()  # Ensure all sent
+    print("All messages sent!")
+```
+
+**Java Implementation**:
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.producer.ProducerConfig;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    ProducerConfig config = ProducerConfig.builder()
+        .batchSize(1000)
+        .lingerMs(50)
+        .build();
+
+    try (var producer = client.producer(config)) {
+        // Send 100k messages efficiently
+        for (int i = 0; i < 100000; i++) {
+            producer.send("events", ("event-" + i).getBytes());
+        }
+        producer.flush();
+        System.out.println("All messages sent!");
+    }
+}
+```
+
+**Benefits**:
+- Batching reduces network round-trips
+- Linger time allows batch to fill
+- Fire-and-forget for maximum speed
+- Flush ensures delivery before exit
+
+---
+
+### Pattern 4: Transactions
 
 **Purpose**: Atomic multi-topic operations ensuring all-or-nothing semantics across multiple message topics.
 
@@ -261,9 +389,12 @@ while (running) {
 
 **Python Implementation**:
 ```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
 # Begin transaction context for atomic multi-topic operations
 with client.transaction() as txn:
-    # All operations within transaction
     txn.produce("orders-topic", order_data)
     txn.produce("audit-topic", audit_log)
     # Automatically commits on context exit if no exceptions
@@ -272,16 +403,15 @@ with client.transaction() as txn:
 
 **Java Implementation**:
 ```java
-try (Transaction txn = client.beginTransaction()) {
-    // Produce messages in transaction scope
-    txn.produce("orders-topic", orderData.getBytes());
-    txn.produce("audit-topic", auditLog.getBytes());
-    // Explicit commit required
-    txn.commit();
-    // If commit fails or exception occurs, automatic rollback
-} catch (Exception e) {
-    // Transaction automatically rolled back in catch or finally
-    logger.error("Transaction failed", e);
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    try (Transaction txn = client.beginTransaction()) {
+        txn.produce("orders-topic", orderData.getBytes());
+        txn.produce("audit-topic", auditLog.getBytes());
+        txn.commit();
+    } catch (Exception e) {
+        // Transaction automatically rolled back
+        logger.error("Transaction failed", e);
+    }
 }
 ```
 
@@ -293,7 +423,7 @@ try (Transaction txn = client.beginTransaction()) {
 
 ---
 
-### Pattern 4: Encryption
+### Pattern 5: Encryption
 
 **Purpose**: End-to-end encryption of message content using AES-256-GCM, providing data confidentiality at rest and in transit.
 
@@ -305,13 +435,13 @@ try (Transaction txn = client.beginTransaction()) {
 
 **Python Implementation**:
 ```python
-from pyflymq import FlyMQClient, generate_key
+from pyflymq import connect, generate_key
 
 # Generate cryptographically secure encryption key
 encryption_key = generate_key()
 
-# Initialize client with encryption enabled
-secure_client = FlyMQClient(
+# Connect with encryption enabled
+client = connect(
     "localhost:9092",
     encryption_key=encryption_key,
     username="encrypted-user",
@@ -319,15 +449,17 @@ secure_client = FlyMQClient(
 )
 
 # Messages are automatically encrypted on production
-sensitive_data = b"{"credit_card": "1234-5678-9012-3456"}"
-offset = secure_client.produce("payment-topic", sensitive_data)
+sensitive_data = b'{"credit_card": "1234-5678-9012-3456"}'
+offset = client.produce("payment-topic", sensitive_data)
 
 # Messages are automatically decrypted on consumption
-decrypted_message = secure_client.consume("payment-topic", offset)
+decrypted_message = client.consume("payment-topic", offset)
+client.close()
 ```
 
 **Java Implementation**:
 ```java
+import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.ClientConfig;
 
 // Build configuration with encryption
@@ -338,11 +470,11 @@ ClientConfig config = ClientConfig.builder()
     .password("secret")
     .build();
 
-FlyMQClient client = new FlyMQClient(config);
-
-// Messages automatically encrypted/decrypted
-byte[] sensitiveData = "{\"credit_card\": \"1234-5678-9012-3456\"}".getBytes();
-client.produce("payment-topic", sensitiveData);
+try (FlyMQClient client = new FlyMQClient(config)) {
+    // Messages automatically encrypted/decrypted
+    byte[] sensitiveData = "{\"credit_card\": \"1234-5678-9012-3456\"}".getBytes();
+    client.produce("payment-topic", sensitiveData);
+}
 ```
 
 **Trade-offs**:
@@ -359,23 +491,51 @@ This section provides detailed configuration options for both Python and Java SD
 
 ### Python Configuration
 
-**Basic Connection**:
+**Basic Connection (Recommended)**:
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
-client = FlyMQClient(
-    bootstrap_servers="localhost:9092",  # Broker address
-    username="alice",                     # Authentication
-    password="secret",
-    connection_timeout_ms=5000,          # Connection timeout
-    request_timeout_ms=30000,            # Request timeout
+# Simple connection
+client = connect("localhost:9092")
+
+# With authentication
+client = connect(
+    "localhost:9092",
+    username="alice",
+    password="secret"
 )
+```
+
+**Producer Configuration**:
+```python
+# Configure high-level producer
+with client.producer(
+    batch_size=100,        # Max messages per batch
+    linger_ms=10,          # Wait time for batching (ms)
+    max_retries=3,         # Retry attempts on failure
+    retry_backoff_ms=100   # Backoff between retries
+) as producer:
+    producer.send("topic", b"data")
+```
+
+**Consumer Configuration**:
+```python
+# Configure high-level consumer
+with client.consumer(
+    topics="my-topic",
+    group_id="my-group",
+    auto_commit=True,              # Enable auto-commit
+    auto_commit_interval_ms=5000,  # Commit every 5 seconds
+    max_poll_records=500           # Max records per poll
+) as consumer:
+    for msg in consumer:
+        process(msg)
 ```
 
 **Security Configuration**:
 ```python
-client = FlyMQClient(
-    bootstrap_servers="broker.example.com:9092",
+client = connect(
+    "broker.example.com:9092",
     # TLS/SSL configuration
     tls_enabled=True,
     tls_ca_file="/path/to/ca.pem",              # CA certificate
@@ -391,17 +551,47 @@ client = FlyMQClient(
 
 ### Java Configuration
 
-**Basic Connection**:
+**Basic Connection (Recommended)**:
 ```java
+// Simple connection
+FlyMQClient client = FlyMQClient.connect("localhost:9092");
+
+// With authentication
 ClientConfig config = ClientConfig.builder()
     .bootstrapServers("localhost:9092")
     .username("alice")
     .password("secret")
-    .connectionTimeoutMs(5000)
-    .requestTimeoutMs(30000)
     .build();
 
 FlyMQClient client = new FlyMQClient(config);
+```
+
+**Producer Configuration**:
+```java
+ProducerConfig config = ProducerConfig.builder()
+    .batchSize(100)        // Max messages per batch
+    .lingerMs(10)          // Wait time for batching
+    .maxRetries(3)         // Retry attempts
+    .retryBackoffMs(100)   // Backoff between retries
+    .build();
+
+try (var producer = client.producer(config)) {
+    producer.send("topic", data);
+}
+```
+
+**Consumer Configuration**:
+```java
+ConsumerConfig config = ConsumerConfig.builder()
+    .maxPollRecords(500)           // Max records per poll
+    .enableAutoCommit(true)        // Enable auto-commit
+    .autoCommitIntervalMs(5000)    // Commit every 5 seconds
+    .build();
+
+try (var consumer = client.consumer("topic", "group", 0, config)) {
+    consumer.subscribe();
+    // ...
+}
 ```
 
 **Spring Boot Configuration** (application.properties):
@@ -434,11 +624,70 @@ flymq.auto-commit-interval-ms=5000
 
 ---
 
+## RecordMetadata
+
+All produce operations return `RecordMetadata`, similar to Kafka's RecordMetadata.
+This provides complete information about where and when the message was stored.
+
+### RecordMetadata Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `topic` | string | Topic name the message was produced to |
+| `partition` | int32 | Partition the message was assigned to |
+| `offset` | uint64 | Offset of the message in the partition |
+| `timestamp` | int64 | Server timestamp when message was stored (ms) |
+| `key_size` | int32 | Size of key in bytes (-1 if no key) |
+| `value_size` | int32 | Size of value in bytes |
+
+### Python Example
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Get full RecordMetadata
+meta = client.produce_with_metadata("events", b"data", key="user-123")
+
+print(f"Topic: {meta.topic}")
+print(f"Partition: {meta.partition}")
+print(f"Offset: {meta.offset}")
+print(f"Timestamp: {meta.timestamp_datetime}")  # datetime object
+print(f"Key size: {meta.key_size}")
+print(f"Value size: {meta.value_size}")
+
+client.close()
+```
+
+### Java Example
+
+```java
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.protocol.BinaryProtocol.RecordMetadata;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+
+    // Get full RecordMetadata
+    RecordMetadata meta = client.produceWithMetadata("events", data);
+
+    System.out.println("Topic: " + meta.topic());
+    System.out.println("Partition: " + meta.partition());
+    System.out.println("Offset: " + meta.offset());
+    System.out.println("Timestamp: " + meta.timestampAsInstant());
+    System.out.println("Has key: " + meta.hasKey());
+    System.out.println("Value size: " + meta.valueSize());
+}
+```
+
+---
+
 ## Feature Comparison Matrix
 
 | Feature | Python | Java |
 |---------|--------|------|
 | Basic Producer/Consumer | Yes | Yes |
+| RecordMetadata | Yes | Yes |
 | Consumer Groups | Yes | Yes |
 | Key-Based Partitioning | Yes | Yes |
 | Transactions | Yes | Yes |

@@ -2,49 +2,105 @@
 
 ## Introduction
 
-This documentation provides comprehensive guidance for integrating FlyMQ into your applications using the Python (PyFlyMQ) or Java SDK. FlyMQ is a high-performance distributed message broker built for modern cloud-native architectures, offering features including binary protocol support, message encryption, consumer groups, transactions, and reactive stream processing.
+This documentation provides comprehensive guidance for integrating FlyMQ into your applications using the Python (PyFlyMQ) or Java SDK. FlyMQ is a high-performance distributed message broker built for modern cloud-native architectures, offering **Kafka-like APIs** that feel familiar to developers.
 
-The SDK documentation is organized to serve developers at all proficiency levels, from initial integration through advanced production deployment. Each section includes working code examples, architectural context, and best practices informed by operational experience.
+**Key Features:**
+- **`connect()`** - One-liner connection for quick setup
+- **`HighLevelProducer`** - Batching, callbacks, automatic retries
+- **`HighLevelConsumer`** - Auto-commit, poll-based consumption, seek operations
+- **Error hints** - All exceptions include actionable suggestions
+
+## Quick Start
+
+### Python (30 seconds)
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# High-level producer
+with client.producer() as producer:
+    producer.send("events", b'{"event": "click"}', key="user-123")
+    producer.flush()
+
+# High-level consumer
+with client.consumer("events", "my-group") as consumer:
+    for msg in consumer:
+        print(f"Key: {msg.key}, Value: {msg.decode()}")
+
+client.close()
+```
+
+### Java (30 seconds)
+
+```java
+import com.firefly.flymq.FlyMQClient;
+
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // High-level producer
+    try (var producer = client.producer()) {
+        producer.send("events", "{\"event\": \"click\"}".getBytes());
+        producer.flush();
+    }
+
+    // High-level consumer
+    try (var consumer = client.consumer("events", "my-group")) {
+        consumer.subscribe();
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Key: " + msg.keyAsString());
+        }
+    }
+}
+```
 
 ## Documentation Navigation
 
-This guide serves as the primary entry point for all FlyMQ SDK documentation. All resources are organized below with clear guidance on selecting the appropriate learning path for your development context.
+This guide serves as the primary entry point for all FlyMQ SDK documentation.
 
 ## For Python Developers
 
 The following sequence is recommended for Python developers new to FlyMQ:
 
-1. **Getting Started Guide** (primary reference): [sdk/python/docs/GETTING_STARTED.md](sdk/python/docs/GETTING_STARTED.md)
+1. **Getting Started Guide** (primary reference): [python/docs/GETTING_STARTED.md](python/docs/GETTING_STARTED.md)
    - Installation and environment setup for PyFlyMQ
-   - Core architectural concepts and client design
-   - Basic producer-consumer implementation
+   - `connect()` function and high-level APIs
+   - `HighLevelProducer` and `HighLevelConsumer` usage
    - Connection configuration and management
 
 2. **Execute Your First Example**:
    ```bash
    python sdk/python/examples/01_basic_produce_consume.py
    ```
-   This example demonstrates fundamental message production and consumption operations.
+   This example demonstrates the high-level APIs with `connect()`, `producer()`, and `consumer()`.
 
-3. **Security Implementation Guide**: [sdk/python/docs/SECURITY.md](sdk/python/docs/SECURITY.md)
+3. **Producer Patterns**: [python/docs/PRODUCER_PATTERNS.md](python/docs/PRODUCER_PATTERNS.md)
+   - HighLevelProducer with batching and callbacks
+   - High-throughput patterns
+   - Fire-and-forget vs wait patterns
+
+4. **Consumer Patterns**: [python/docs/CONSUMER_PATTERNS.md](python/docs/CONSUMER_PATTERNS.md)
+   - HighLevelConsumer with auto-commit
+   - Poll-based consumption
+   - Seek operations for replay
+
+5. **Security Implementation Guide**: [python/docs/SECURITY.md](python/docs/SECURITY.md)
    - Authentication mechanisms and credential management
    - Message encryption using AES-256-GCM algorithms
    - TLS and mTLS configuration and certificates
-   - Security best practices for production environments
-   - Key rotation and credential lifecycle management
 
-4. **Review Complete Examples**: [sdk/python/examples/](sdk/python/examples/)
-   
+6. **Review Complete Examples**: [python/examples/](python/examples/)
+
    All 10 examples with purpose and progression:
-   
-   - **01_basic_produce_consume.py**: Foundational producer-consumer pattern
+
+   - **01_basic_produce_consume.py**: High-level producer-consumer with `connect()`
    - **02_key_based_messaging.py**: Key-based partitioning (Kafka-style semantics)
-   - **03_consumer_groups.py**: Consumer group management with offset tracking
+   - **03_consumer_groups.py**: HighLevelConsumer with auto-commit
    - **04_transactions.py**: Atomic multi-topic transaction operations
    - **05_encryption.py**: Message-level encryption implementation
    - **06_reactive_streams.py**: Reactive processing patterns using RxPY
    - **07_schema_validation.py**: Schema registry integration and validation
-   - **08_error_handling.py**: Comprehensive error handling and retry strategies
+   - **08_error_handling.py**: Exception handling with hints
    - **09_tls_authentication.py**: TLS configuration and certificate validation
    - **10_advanced_patterns.py**: Batch processing, connection pooling, dead letter queues
 
@@ -52,32 +108,38 @@ The following sequence is recommended for Python developers new to FlyMQ:
 
 The following sequence is recommended for Java developers new to FlyMQ:
 
-1. **Getting Started Guide** (primary reference): [sdk/java/docs/GETTING_STARTED.md](sdk/java/docs/GETTING_STARTED.md)
+1. **Getting Started Guide** (primary reference): [java/docs/GETTING_STARTED.md](java/docs/GETTING_STARTED.md)
    - Maven and Gradle dependency configuration
-   - Java SDK architecture and client design
+   - `connect()` static method and high-level APIs
+   - `HighLevelProducer` and `Consumer` usage
    - Spring Boot integration and auto-configuration
-   - Initial setup, connection management, and threading models
 
 2. **Execute Your First Example**:
    - Navigate to `sdk/java/examples/core/`
    - Compile and run `BasicProduceConsume.java`
-   - This example demonstrates core client operations and basic message flow
+   - This example demonstrates `connect()`, `producer()`, and `consumer()` APIs
 
-3. **Producer Design Patterns**: [sdk/java/docs/PRODUCER_GUIDE.md](sdk/java/docs/PRODUCER_GUIDE.md)
-   - Message production patterns and best practices
-   - Transaction semantics, isolation levels, and implementation
-   - Error handling strategies and failure recovery
-   - Performance optimization and throughput tuning
+3. **Producer Design Patterns**: [java/docs/PRODUCER_GUIDE.md](java/docs/PRODUCER_GUIDE.md)
+   - HighLevelProducer with batching and CompletableFuture callbacks
+   - High-throughput patterns
+   - Transaction semantics and implementation
 
-4. **Review Complete Examples**: [sdk/java/examples/](sdk/java/examples/)
-   
+4. **Consumer Patterns**: [java/docs/CONSUMER_GUIDE.md](java/docs/CONSUMER_GUIDE.md)
+   - Consumer with auto-commit
+   - Poll-based consumption
+   - Seek operations for replay
+
+5. **Review Complete Examples**: [java/examples/](java/examples/)
+
    All examples organized by type:
-   
+
    **Core Examples** (standalone Java, no framework dependencies):
-   - **BasicProduceConsume.java**: Foundational producer-consumer pattern
-   - **KeyBasedMessaging.java**: Key-based partitioning with JSON payloads
-   - **ConsumerGroupExample.java**: Consumer group semantics and offset management
-   
+   - **BasicProduceConsume.java**: High-level producer-consumer with `connect()`
+   - **KeyBasedMessaging.java**: Key-based partitioning with HighLevelProducer
+   - **ConsumerGroupExample.java**: Consumer with auto-commit
+   - **TransactionExample.java**: Atomic multi-topic transactions
+   - **ErrorHandlingExample.java**: Exception handling with hints
+
    **Spring Boot Examples** (for integrated application deployment):
    - **MessageService.java**: Service injection pattern and Spring lifecycle integration
 
@@ -88,9 +150,9 @@ The following reference documents provide cross-cutting content useful for all d
 **Comprehensive Reference Guide**: [SDK_DOCUMENTATION_GUIDE.md](SDK_DOCUMENTATION_GUIDE.md)
 
 This master reference document provides:
+- High-level API patterns (connect, producer, consumer)
 - Common messaging patterns compared side-by-side in Python and Java
-- Use cases and trade-offs for each pattern
-- Complete configuration reference with all available options
+- Producer and consumer configuration options
 - Feature comparison matrices across SDKs
 - Troubleshooting guide with root cause analysis
 - Production deployment best practices
@@ -98,13 +160,12 @@ This master reference document provides:
 **Architecture Deep Dive**: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 This technical document provides:
+- High-Level APIs section with Kafka-like patterns
 - Complete FlyMQ system architecture overview
+- Error handling with hints
 - Binary protocol specification and design
 - Client-server communication flow
-- Partitioning and consumer group internals
-- Transaction model and isolation levels
 - Performance characteristics and optimization
-- Production deployment considerations
 
 ## Documentation Structure
 
@@ -149,11 +210,25 @@ flymq/
 
 ## Feature Overview
 
-FlyMQ SDKs provide comprehensive support for distributed messaging patterns:
+FlyMQ SDKs provide **Kafka-like APIs** for distributed messaging:
+
+### High-Level APIs (Recommended)
+
+| Feature | Python | Java |
+|---------|--------|------|
+| One-liner connection | `connect("host:port")` | `FlyMQClient.connect("host:port")` |
+| High-level producer | `client.producer()` | `client.producer()` |
+| High-level consumer | `client.consumer()` | `client.consumer()` |
+| Batching | ✅ Automatic | ✅ Automatic |
+| Callbacks | ✅ `on_success`, `on_error` | ✅ `CompletableFuture` |
+| Auto-commit | ✅ Configurable | ✅ Configurable |
+| Error hints | ✅ `e.hint` | ✅ `e.getHint()` |
 
 ### Fundamental Capabilities
 
-- Message production and consumption with binary protocol
+- **`connect()`** - One-liner connection for quick setup
+- **`HighLevelProducer`** - Batching, callbacks, automatic retries
+- **`HighLevelConsumer`** - Auto-commit, poll-based consumption, seek operations
 - Key-based message partitioning (Kafka-compatible semantics)
 - Consumer group management with offset tracking and persistence
 - Topic management and message retention policies
@@ -171,6 +246,7 @@ FlyMQ SDKs provide comprehensive support for distributed messaging patterns:
 
 ### Production-Ready Features
 
+- **Error hints** - All exceptions include actionable suggestions
 - Connection pooling and resource management
 - Automatic failover and high availability
 - Comprehensive error handling and retry policies
