@@ -2,7 +2,7 @@
 
 This document outlines the planned features and improvements for FlyMQ.
 
-## Current Status (v1.26.7)
+## Current Status (v1.26.8)
 
 The following features are implemented and available:
 
@@ -20,6 +20,7 @@ The following features are implemented and available:
 - ✅ Subscribe functionality (earliest/latest/commit modes)
 - ✅ Batch fetch for efficient message consumption
 - ✅ Key-based message partitioning (Kafka-style)
+- ✅ **Kafka-style RecordMetadata** - All produce operations return complete metadata
 
 ### Authentication & Security
 - ✅ Username/password authentication with bcrypt hashing
@@ -63,6 +64,10 @@ The following features are implemented and available:
 - ✅ Go client with full feature support
 - ✅ Python SDK (`pyflymq`) with authentication, consumer groups, and encryption
 - ✅ Java SDK with Spring Boot and WebFlux integration
+- ✅ **High-Level APIs** - Kafka-like `producer()` and `consumer()` patterns
+- ✅ **RecordMetadata** - Complete metadata returned from all produce operations
+- ✅ **connect() Factory** - One-liner connection in Python and Java
+- ✅ **Enhanced Exceptions** - Errors with hints and actionable suggestions
 
 ### Deployment & Operations
 - ✅ Interactive installer for Linux, macOS, Windows

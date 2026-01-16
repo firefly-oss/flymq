@@ -5,6 +5,58 @@ All notable changes to FlyMQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January 2026, Patch 1).
 
+## [1.26.8] - 2026-01-16
+
+### Added
+
+#### Kafka-Style RecordMetadata API
+- **RecordMetadata on Produce** - All `produce()` methods now return complete `RecordMetadata` (like Kafka)
+  - `topic` - Topic name where message was written
+  - `partition` - Partition number assigned
+  - `offset` - Offset within the partition
+  - `timestamp` - Server-side timestamp (milliseconds since epoch)
+  - `key_size` - Size of the key (-1 if no key)
+  - `value_size` - Size of the value
+- **Simplified API** - Removed duplicate methods (`produceWithMetadata`, `produce_with_metadata`)
+  - Go: `meta, err := client.Produce(topic, data)` returns `*RecordMetadata`
+  - Python: `meta = client.produce(topic, data)` returns `RecordMetadata`
+  - Java: `RecordMetadata meta = client.produce(topic, data)` returns `RecordMetadata`
+
+#### High-Level APIs (Kafka-like)
+- **Python SDK**
+  - `connect()` - One-liner connection function
+  - `HighLevelProducer` - Batching, callbacks, automatic retries
+  - `HighLevelConsumer` - Auto-commit, poll-based consumption, seek operations
+  - `client.producer()` / `client.consumer()` - Factory methods
+- **Java SDK**
+  - `FlyMQClient.connect()` - Static factory method
+  - `HighLevelProducer` - Batching with `CompletableFuture`, callbacks, retries
+  - `ProducerConfig` - Builder pattern for configuration
+  - `ProduceMetadata` - Extended with timestamp, keySize, valueSize
+  - `client.producer()` / `client.consumer()` - Factory methods
+
+#### Enhanced Error Handling
+- **Python SDK** - Exceptions with `hint` property providing actionable suggestions
+  - `TopicNotFoundError`, `AuthenticationError`, `ConnectionError`, `TimeoutError`
+- **Java SDK** - `FlyMQException` with `getHint()` and `getFullMessage()` methods
+  - Factory methods: `FlyMQException.topicNotFound()`, `FlyMQException.authenticationFailed()`
+
+#### CLI Improvements
+- **RecordMetadata Display** - Produce command shows full metadata (topic, partition, offset, timestamp)
+- **Improved Help** - Commands organized by category with clear descriptions
+- **Better Error Messages** - Errors include hints and suggestions
+
+### Changed
+- **Breaking Change**: `produce()` return type changed from `long`/`int`/`uint64` to `RecordMetadata`
+  - Migration: Replace `offset = client.produce(...)` with `meta = client.produce(...); offset = meta.offset`
+- **Protocol Enhancement**: Binary produce response now includes timestamp (int64)
+
+### Fixed
+- **Java Spring WebFlux** - Updated `ReactiveFlyMQClient` and `ReactiveTransaction` for new API
+- **Java Transaction** - `Transaction.produce()` now returns `RecordMetadata`
+
+---
+
 ## [1.26.7] - 2026-01-15
 
 ### Added
