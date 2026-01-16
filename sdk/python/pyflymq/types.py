@@ -28,7 +28,7 @@ class Compatibility(str, Enum):
     FULL = "full"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ProduceResult:
     """Result of a produce operation."""
 
@@ -38,7 +38,7 @@ class ProduceResult:
     timestamp: datetime = field(default_factory=datetime.now)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConsumedMessage:
     """A message consumed from a topic."""
 
@@ -64,7 +64,7 @@ class ConsumedMessage:
         return self.key.decode(encoding) if self.key else None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class FetchResult:
     """Result of a fetch operation."""
 
@@ -72,7 +72,7 @@ class FetchResult:
     next_offset: int
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TopicMetadata:
     """Metadata about a topic."""
 
@@ -82,7 +82,7 @@ class TopicMetadata:
     config: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PartitionInfo:
     """Information about a partition."""
 
@@ -92,7 +92,7 @@ class PartitionInfo:
     in_sync_replicas: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConsumerGroupInfo:
     """Information about a consumer group."""
 
@@ -102,7 +102,7 @@ class ConsumerGroupInfo:
     topics: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class SchemaInfo:
     """Schema metadata."""
 
@@ -115,7 +115,7 @@ class SchemaInfo:
     created_at: datetime | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DLQMessage:
     """A message in the dead letter queue."""
 
@@ -128,7 +128,7 @@ class DLQMessage:
     original_offset: int | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ClusterInfo:
     """Information about the FlyMQ cluster."""
 
@@ -142,7 +142,7 @@ class ClusterInfo:
     nodes: list[NodeInfo] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class NodeInfo:
     """Information about a cluster node."""
 
@@ -157,7 +157,7 @@ class NodeInfo:
     goroutines: int = 0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConsumerGroupOffset:
     """Offset information for a consumer group."""
 
@@ -167,7 +167,7 @@ class ConsumerGroupOffset:
     lag: int = 0
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ConsumerLag:
     """Lag information for a consumer group."""
 
@@ -216,7 +216,7 @@ class ClientConfig:
         return list(self.bootstrap_servers)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class AuthResponse:
     """Response from authentication request."""
 
@@ -227,7 +227,7 @@ class AuthResponse:
     permissions: list[str] = field(default_factory=list)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class WhoAmIResponse:
     """Response from WhoAmI request."""
 

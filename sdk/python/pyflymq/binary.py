@@ -63,23 +63,96 @@ def encode_produce_request(req: BinaryProduceRequest) -> bytes:
 
 
 @dataclass
-class BinaryProduceResponse:
-    """Binary produce response."""
-    offset: int
+class RecordMetadata:
+    """
+    Metadata for a produced record (Kafka-like).
+
+    Similar to Kafka's RecordMetadata, this contains all information about
+    where and when the message was stored.
+
+    Attributes:
+        topic: Topic name
+        partition: Partition the record was sent to
+        offset: Offset of the record in the partition
+        timestamp: Timestamp in milliseconds (Unix epoch)
+        key_size: Size of the key in bytes (-1 if no key)
+        value_size: Size of the value in bytes
+    """
+    topic: str
     partition: int
+    offset: int
+    timestamp: int  # milliseconds since epoch
+    key_size: int   # -1 if no key
+    value_size: int
+
+    @property
+    def timestamp_datetime(self):
+        """Get timestamp as datetime object."""
+        from datetime import datetime
+        return datetime.fromtimestamp(self.timestamp / 1000.0)
 
 
-def decode_produce_response(data: bytes) -> BinaryProduceResponse:
+def decode_record_metadata(data: bytes) -> RecordMetadata:
     """
-    Decode binary produce response.
-    
-    Format: [8B offset][4B partition]
+    Decode RecordMetadata from binary format.
+
+    Format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
     """
-    if len(data) < 12:
-        raise ValueError(f"Buffer too small: {len(data)} < 12")
-    offset = struct.unpack(">Q", data[0:8])[0]
-    partition = struct.unpack(">i", data[8:12])[0]
-    return BinaryProduceResponse(offset=offset, partition=partition)
+    if len(data) < 2:
+        raise ValueError(f"Buffer too small: {len(data)} < 2")
+
+    pos = 0
+
+    # Topic
+    topic_len = struct.unpack(">H", data[pos:pos+2])[0]
+    pos += 2
+
+    if len(data) < pos + topic_len + 28:  # 4+8+8+4+4 = 28
+        raise ValueError(f"Buffer too small for RecordMetadata")
+
+    topic = data[pos:pos+topic_len].decode("utf-8")
+    pos += topic_len
+
+    # Partition
+    partition = struct.unpack(">i", data[pos:pos+4])[0]
+    pos += 4
+
+    # Offset
+    offset = struct.unpack(">Q", data[pos:pos+8])[0]
+    pos += 8
+
+    # Timestamp
+    timestamp = struct.unpack(">q", data[pos:pos+8])[0]
+    pos += 8
+
+    # Key size
+    key_size = struct.unpack(">i", data[pos:pos+4])[0]
+    pos += 4
+
+    # Value size
+    value_size = struct.unpack(">i", data[pos:pos+4])[0]
+
+    return RecordMetadata(
+        topic=topic,
+        partition=partition,
+        offset=offset,
+        timestamp=timestamp,
+        key_size=key_size,
+        value_size=value_size,
+    )
+
+
+# Legacy alias for backward compatibility during transition
+BinaryProduceResponse = RecordMetadata
+
+
+def decode_produce_response(data: bytes) -> RecordMetadata:
+    """
+    Decode produce response (now returns RecordMetadata).
+
+    Format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
+    """
+    return decode_record_metadata(data)
 
 
 # =============================================================================
@@ -1132,45 +1205,41 @@ class BinaryAuthResponse:
     success: bool
     username: str
     roles: list[str]
-    permissions: list[str]
+    error: str
 
 
 def decode_auth_response(data: bytes) -> BinaryAuthResponse:
     """
     Decode auth response.
-    
-    Format: [1B success][2B user_len][user][4B role_count][roles...][4B perm_count][perms...]
+
+    Format: [1B success][2B user_len][user][4B role_count][1B role_len][role]...[2B error_len][error]
     """
     if len(data) < 1:
         raise ValueError("Buffer too small")
     pos = 0
     success = data[pos] == 1
     pos += 1
-    
+
     user_len = struct.unpack(">H", data[pos:pos+2])[0]
     pos += 2
     username = data[pos:pos+user_len].decode("utf-8")
     pos += user_len
-    
+
     role_count = struct.unpack(">I", data[pos:pos+4])[0]
     pos += 4
     roles: list[str] = []
     for _ in range(role_count):
-        role_len = struct.unpack(">H", data[pos:pos+2])[0]
-        pos += 2
+        role_len = data[pos]  # 1 byte for role length
+        pos += 1
         roles.append(data[pos:pos+role_len].decode("utf-8"))
         pos += role_len
-    
-    perm_count = struct.unpack(">I", data[pos:pos+4])[0]
-    pos += 4
-    permissions: list[str] = []
-    for _ in range(perm_count):
-        perm_len = struct.unpack(">H", data[pos:pos+2])[0]
-        pos += 2
-        permissions.append(data[pos:pos+perm_len].decode("utf-8"))
-        pos += perm_len
-    
-    return BinaryAuthResponse(success=success, username=username, roles=roles, permissions=permissions)
+
+    # Error string
+    error_len = struct.unpack(">H", data[pos:pos+2])[0]
+    pos += 2
+    error = data[pos:pos+error_len].decode("utf-8") if error_len > 0 else ""
+
+    return BinaryAuthResponse(success=success, username=username, roles=roles, error=error)
 
 
 @dataclass

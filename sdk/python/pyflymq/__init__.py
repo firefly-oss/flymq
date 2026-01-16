@@ -13,47 +13,82 @@ A high-performance client library for FlyMQ with support for:
 - Dead letter queues
 - Delayed messages and TTL
 
-Quick Start:
-    >>> from pyflymq import FlyMQClient
+Quick Start (Simplest):
+    >>> from pyflymq import connect
     >>>
-    >>> # Connect to FlyMQ
-    >>> client = FlyMQClient("localhost:9092")
-    >>>
-    >>> # Produce a message
+    >>> # Connect and use immediately
+    >>> client = connect("localhost:9092")
     >>> offset = client.produce("my-topic", b"Hello, FlyMQ!")
-    >>>
-    >>> # Consume the message
     >>> data = client.consume("my-topic", offset)
     >>> print(data.decode())
     Hello, FlyMQ!
-    >>>
-    >>> client.close()
 
-Consumer Groups:
-    >>> from pyflymq import FlyMQClient, Consumer
+Context Manager (Recommended for applications):
+    >>> from pyflymq import connect
     >>>
-    >>> client = FlyMQClient("localhost:9092")
-    >>> consumer = Consumer(client, "my-topic", group_id="my-group")
+    >>> with connect("localhost:9092") as client:
+    ...     client.create_topic("my-topic")
+    ...     offset = client.produce("my-topic", b"Hello!")
+    ...     print(f"Produced at offset {offset}")
+    # Connection auto-closes when exiting the block
+
+Consumer Groups (Kafka-like, recommended):
+    >>> from pyflymq import connect
+    >>>
+    >>> client = connect("localhost:9092")
+    >>> # High-level consumer - no need to manage partitions or offsets!
+    >>> consumer = client.consumer("my-topic", "my-group")
     >>>
     >>> for msg in consumer:
-    ...     print(msg.decode())
-    ...     consumer.commit()
+    ...     print(msg.value.decode())
+    ...     # Offsets are auto-committed by default
+    >>> consumer.close()
+
+Consumer Groups (Low-level control):
+    >>> from pyflymq import connect, Consumer
+    >>>
+    >>> client = connect("localhost:9092")
+    >>> consumer = Consumer(client, "my-topic", partition=0, group_id="my-group")
+    >>>
+    >>> for msg in consumer:
+    ...     print(msg.data.decode())
+    ...     consumer.commit()  # Manual commit
 
 Transactions:
     >>> with client.transaction() as txn:
     ...     txn.produce("topic1", b"message1")
     ...     txn.produce("topic2", b"message2")
-    ...     # Auto-commits on success
+    ...     # Auto-commits on success, auto-rollbacks on exception
 
 TLS Connection:
-    >>> client = FlyMQClient(
+    >>> client = connect(
     ...     "localhost:9093",
     ...     tls_enabled=True,
     ...     tls_ca_file="/path/to/ca.crt"
     ... )
+
+Authentication:
+    >>> client = connect(
+    ...     "localhost:9092",
+    ...     username="admin",
+    ...     password="secret"
+    ... )
+
+High Availability (Multiple Servers):
+    >>> client = connect(["server1:9092", "server2:9092", "server3:9092"])
+    >>> # Client automatically fails over if a server goes down
 """
 
-from .client import FlyMQClient, Transaction
+from .client import (
+    FlyMQClient,
+    HighLevelConsumer,
+    HighLevelProducer,
+    ProduceFuture,
+    ProduceMetadata,
+    Transaction,
+    connect,
+)
+from .binary import RecordMetadata
 from .consumer import Consumer, ConsumerGroup
 from .crypto import Encryptor, generate_key, validate_key
 from .exceptions import (
@@ -117,14 +152,20 @@ from .reactive import (
     to_producer,
 )
 
-__version__ = "1.26.7"
+__version__ = "1.26.8"
 __author__ = "Firefly Software Solutions Inc."
 __license__ = "Apache-2.0"
 
 __all__ = [
     # Client
     "FlyMQClient",
+    "HighLevelConsumer",
+    "HighLevelProducer",
+    "ProduceFuture",
+    "ProduceMetadata",
+    "RecordMetadata",  # Kafka-like metadata for produced records
     "Transaction",
+    "connect",
     # Producer
     "Producer",
     "AsyncProducer",

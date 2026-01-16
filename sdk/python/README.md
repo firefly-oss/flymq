@@ -1,11 +1,14 @@
 # PyFlyMQ - Python Client SDK for FlyMQ
 
-A high-performance Python client library for FlyMQ message queue.
+A high-performance Python client library for FlyMQ message queue with Kafka-like APIs.
 
 **Website:** [https://getfirefly.io](https://getfirefly.io)
 
 ## Features
 
+- **Kafka-Like APIs** - Familiar `producer()` and `consumer()` patterns
+- **High-Level Producer** - Batching, callbacks, automatic retries
+- **High-Level Consumer** - Auto-commit, poll-based consumption, seek operations
 - **Full Protocol Support** - Implements the complete FlyMQ binary protocol
 - **AES-256-GCM Encryption** - Data-in-motion and data-at-rest encryption
 - **Pydantic Models** - Validated, serializable data models
@@ -20,6 +23,7 @@ A high-performance Python client library for FlyMQ message queue.
 - **Message TTL** - Time-based message expiration
 - **Async/Await Support** - Full asyncio integration
 - **Thread-Safe** - Safe for concurrent use
+- **Helpful Error Messages** - Exceptions include hints for quick debugging
 
 ## Installation
 
@@ -36,27 +40,38 @@ pip install -e .
 
 ## Quick Start
 
-### Basic Usage
+### The Simplest Way: `connect()`
+
+```python
+from pyflymq import connect
+
+# One-liner connection
+client = connect("localhost:9092")
+
+# Produce and consume
+client.produce("my-topic", b"Hello, FlyMQ!")
+msg = client.consume("my-topic", 0)
+print(msg.decode())
+
+client.close()
+```
+
+### Basic Usage with Context Manager
 
 ```python
 from pyflymq import FlyMQClient
 
-# Connect to FlyMQ
-client = FlyMQClient("localhost:9092")
+with FlyMQClient("localhost:9092") as client:
+    # Create a topic
+    client.create_topic("my-topic", partitions=3)
 
-# Create a topic
-client.create_topic("my-topic", partitions=3)
+    # Produce a message - returns RecordMetadata (Kafka-like)
+    meta = client.produce("my-topic", b"Hello, FlyMQ!")
+    print(f"Produced to {meta.topic}[{meta.partition}] @ offset {meta.offset}")
 
-# Produce a message
-offset = client.produce("my-topic", b"Hello, FlyMQ!")
-print(f"Message written at offset {offset}")
-
-# Consume the message
-msg = client.consume("my-topic", offset)
-print(f"Received: {msg.data.decode()}")
-
-# Close the client
-client.close()
+    # Consume the message
+    msg = client.consume("my-topic", meta.offset)
+    print(f"Received: {msg.decode()}")
 ```
 
 ### Key-Based Messaging (Kafka-style)
@@ -107,7 +122,124 @@ client = FlyMQClient("node1:9092,node2:9092,node3:9092")
 offset = client.produce("my-topic", b"Hello!")
 ```
 
-## Consumer Groups
+## High-Level Producer (Kafka-like)
+
+The `HighLevelProducer` provides batching, callbacks, and automatic retries for high-throughput scenarios.
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Create a high-level producer with batching
+with client.producer(batch_size=100, linger_ms=10) as producer:
+    # Send with callback
+    def on_success(metadata):
+        print(f"Sent to {metadata.topic}[{metadata.partition}] @ {metadata.offset}")
+
+    def on_error(error):
+        print(f"Failed: {error}")
+
+    # Async send with callbacks
+    future = producer.send(
+        topic="events",
+        value=b'{"event": "click"}',
+        key="user-123",
+        on_success=on_success,
+        on_error=on_error
+    )
+
+    # Or wait for result
+    metadata = future.get(timeout_ms=5000)
+    print(f"Offset: {metadata.offset}")
+
+# Producer auto-flushes on exit
+```
+
+### Producer Configuration
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Full configuration
+producer = client.producer(
+    batch_size=1000,        # Max messages per batch
+    linger_ms=50,           # Wait time for batching
+    max_retries=3,          # Retry attempts
+    retry_backoff_ms=100    # Backoff between retries
+)
+
+# High-throughput pattern
+for i in range(10000):
+    producer.send("events", f"event-{i}".encode())
+
+producer.flush()  # Ensure all sent
+producer.close()
+```
+
+## High-Level Consumer (Kafka-like)
+
+The `HighLevelConsumer` provides a familiar Kafka-like API with auto-commit and poll-based consumption.
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Create consumer with Kafka-like API
+with client.consumer("my-topic", "my-group") as consumer:
+    # Iterate over messages
+    for message in consumer:
+        print(f"Received: {message.decode()}")
+        print(f"Key: {message.key}, Offset: {message.offset}")
+        # Auto-commit enabled by default
+```
+
+### Poll-Based Consumption
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+consumer = client.consumer(
+    topics=["topic1", "topic2"],
+    group_id="my-group",
+    auto_commit=True,
+    auto_commit_interval_ms=5000
+)
+
+# Poll for messages
+while True:
+    messages = consumer.poll(timeout_ms=1000, max_records=100)
+    for msg in messages:
+        process(msg)
+
+    # Manual commit if auto_commit=False
+    # consumer.commit()
+```
+
+### Seek Operations
+
+```python
+consumer = client.consumer("my-topic", "my-group")
+
+# Seek to specific offset
+consumer.seek(partition=0, offset=100)
+
+# Seek to beginning/end
+consumer.seek_to_beginning()
+consumer.seek_to_end()
+
+# Get current position
+position = consumer.position(partition=0)
+```
+
+## Consumer Groups (Low-Level)
+
+For more control, use the low-level Consumer API:
 
 ```python
 from pyflymq import FlyMQClient, Consumer
@@ -378,6 +510,73 @@ client = FlyMQClient(
 - **Minimum TLS Version**: The client uses Python's `ssl.create_default_context()` which enforces TLS 1.2+
 - **Certificate Verification**: Enabled by default when `tls_ca_file` is provided
 - **Cipher Suites**: Uses Python's default secure cipher suite selection
+
+## Error Handling
+
+PyFlyMQ provides clear error messages with helpful hints to speed up debugging.
+
+### Exception Types
+
+```python
+from pyflymq.exceptions import (
+    FlyMQError,              # Base exception
+    ConnectionError,         # Connection failures
+    TopicNotFoundError,      # Topic doesn't exist
+    AuthenticationError,     # Auth failures
+    TimeoutError,            # Operation timeout
+    OffsetOutOfRangeError,   # Invalid offset
+    ServerError,             # Server-side errors
+)
+```
+
+### Errors with Hints
+
+All exceptions include helpful hints:
+
+```python
+from pyflymq import connect
+from pyflymq.exceptions import TopicNotFoundError, ConnectionError
+
+try:
+    client = connect("localhost:9092")
+    client.produce("nonexistent-topic", b"data")
+except TopicNotFoundError as e:
+    print(f"Error: {e}")
+    print(f"Hint: {e.hint}")
+    # Hint: Create the topic first with client.create_topic("nonexistent-topic", partitions)
+    #       or use the CLI: flymq-cli topic create nonexistent-topic
+except ConnectionError as e:
+    print(f"Error: {e}")
+    print(f"Hint: {e.hint}")
+    # Hint: Check that the FlyMQ server is running and accessible.
+    #       Start it with: flymq
+```
+
+### Graceful Error Recovery
+
+```python
+from pyflymq import connect
+from pyflymq.exceptions import FlyMQError
+import time
+
+def produce_with_retry(client, topic, data, max_retries=3):
+    """Produce with exponential backoff retry."""
+    backoff = 0.1
+    for attempt in range(max_retries):
+        try:
+            return client.produce(topic, data)
+        except FlyMQError as e:
+            if attempt < max_retries - 1:
+                print(f"Retry {attempt + 1}: {e}")
+                time.sleep(backoff)
+                backoff *= 2
+            else:
+                raise
+
+# Usage
+client = connect("localhost:9092")
+offset = produce_with_retry(client, "my-topic", b"important data")
+```
 
 ## Configuration Options
 

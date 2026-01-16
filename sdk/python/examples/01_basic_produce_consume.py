@@ -2,19 +2,19 @@
 """
 01_basic_produce_consume.py - FlyMQ Basic Producer and Consumer Example
 
-This is the foundational example for understanding FlyMQ's core operations.
+This is the foundational example for understanding FlyMQ's high-level APIs.
 
 What this example demonstrates:
-- Creating and managing a FlyMQ client connection
-- Producing a message to a topic
-- Consuming the message back from the topic
-- Proper resource cleanup
+- Using connect() for one-liner connection
+- Using HighLevelProducer with batching and callbacks
+- Using HighLevelConsumer with auto-commit
+- Proper resource cleanup with context managers
 
 Key Concepts:
-- Topic: A named channel for messages (like a queue or stream)
+- connect(): One-liner connection to FlyMQ
+- producer(): Creates a HighLevelProducer with batching
+- consumer(): Creates a HighLevelConsumer with auto-commit
 - Offset: The position of a message in a topic partition
-- Producer: Sends messages to topics
-- Consumer: Reads messages from topics
 
 Prerequisites:
     - FlyMQ server running on localhost:9092 (default port)
@@ -23,23 +23,26 @@ Prerequisites:
 Expected Output:
     Connecting to FlyMQ at localhost:9092...
     Creating topic 'hello-world'...
-    Producing message: Hello, FlyMQ! This is my first message.
-    Message written at offset 0 in partition 0
-    Consuming message from offset 0...
-    Received: Hello, FlyMQ! This is my first message.
+
+    === Using High-Level Producer ===
+    ✓ Sent to hello-world @ offset 0
+
+    === Using High-Level Consumer ===
+    Received: Key=user-123, Value=Hello, FlyMQ! This is my first message.
+
     ✓ Successfully produced and consumed a message!
 
 Run with:
     python 01_basic_produce_consume.py
 """
 
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
 
 def main():
-    # Connect to FlyMQ
+    # Connect to FlyMQ using one-liner
     print("Connecting to FlyMQ at localhost:9092...")
-    client = FlyMQClient("localhost:9092")
+    client = connect("localhost:9092")
 
     try:
         # Create a topic (optional, auto-created if not exists)
@@ -49,16 +52,29 @@ def main():
         except Exception as e:
             print(f"Topic may already exist: {e}")
 
-        # Produce a message
-        message = b"Hello, FlyMQ! This is my first message."
-        print(f"\nProducing message: {message.decode()}")
-        offset = client.produce("hello-world", message)
-        print(f"Message written at offset {offset} in partition 0")
+        # === High-Level Producer ===
+        print("\n=== Using High-Level Producer ===")
+        with client.producer(batch_size=100) as producer:
+            # Send with callback
+            def on_success(metadata):
+                print(f"✓ Sent to {metadata.topic} @ offset {metadata.offset}")
 
-        # Consume the message back
-        print(f"\nConsuming message from offset {offset}...")
-        consumed_msg = client.consume("hello-world", offset)
-        print(f"Received: {consumed_msg.decode()}")
+            producer.send(
+                topic="hello-world",
+                value=b"Hello, FlyMQ! This is my first message.",
+                key="user-123",
+                on_success=on_success
+            )
+            producer.flush()  # Ensure message is sent
+
+        # === High-Level Consumer ===
+        print("\n=== Using High-Level Consumer ===")
+        with client.consumer("hello-world", "demo-group") as consumer:
+            # Consume one message
+            for msg in consumer:
+                print(f"Received: Key={msg.key}, Value={msg.decode()}")
+                break  # Just consume one message for demo
+
         print("\n✓ Successfully produced and consumed a message!")
 
     finally:

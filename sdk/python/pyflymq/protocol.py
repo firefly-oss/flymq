@@ -105,7 +105,7 @@ class SubscribeMode:
     COMMIT = "commit"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Header:
     """Protocol message header."""
 
@@ -142,7 +142,7 @@ class Header:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Message:
     """Complete protocol message with header and payload."""
 

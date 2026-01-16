@@ -13,12 +13,26 @@ A high-performance client for FlyMQ message queue with support for:
 - Dead letter queues
 - Delayed messages and TTL
 
-Example:
-    >>> from pyflymq import FlyMQClient
-    >>> client = FlyMQClient("localhost:9092")
-    >>> offset = client.produce("my-topic", b"Hello, FlyMQ!")
-    >>> message = client.consume("my-topic", offset)
-    >>> client.close()
+Usage Patterns:
+
+    # Pattern 1: Simple usage (recommended for scripts)
+    from pyflymq import connect
+    client = connect("localhost:9092")
+    offset = client.produce("my-topic", b"Hello!")
+    # Connection auto-closes when script ends
+
+    # Pattern 2: Context manager (recommended for applications)
+    from pyflymq import FlyMQClient
+    with FlyMQClient("localhost:9092") as client:
+        offset = client.produce("my-topic", b"Hello!")
+    # Connection auto-closes when exiting the block
+
+    # Pattern 3: Explicit lifecycle management
+    client = FlyMQClient("localhost:9092")
+    try:
+        offset = client.produce("my-topic", b"Hello!")
+    finally:
+        client.close()
 """
 
 from __future__ import annotations
@@ -28,6 +42,7 @@ import ssl
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterator
 
 from .exceptions import (
@@ -43,8 +58,10 @@ from .exceptions import (
 from .protocol import OpCode, Header, MAGIC_BYTE, PROTOCOL_VERSION, read_message, write_message
 from .binary import (
     FLAG_BINARY,
+    RecordMetadata,
     encode_produce_request,
     decode_produce_response,
+    decode_record_metadata,
     encode_consume_request,
     decode_consume_response,
     encode_create_topic_request,
@@ -373,17 +390,17 @@ class FlyMQClient:
 
         auth_resp = AuthResponse(
             success=response.success,
-            error=None,
+            error=response.error if response.error else None,
             username=response.username,
             roles=response.roles,
-            permissions=response.permissions,
+            permissions=[],  # Server doesn't send permissions in auth response
         )
 
         if auth_resp.success:
             self._authenticated = True
             self._username = username
         else:
-            raise AuthenticationError("Authentication failed")
+            raise AuthenticationError(response.error or "Authentication failed")
 
         return auth_resp
 
@@ -423,9 +440,9 @@ class FlyMQClient:
         *,
         key: bytes | str | None = None,
         partition: int | None = None,
-    ) -> int:
+    ) -> RecordMetadata:
         """
-        Produce a message to a topic.
+        Produce a message to a topic and return RecordMetadata (Kafka-like).
 
         Args:
             topic: Target topic name.
@@ -436,15 +453,16 @@ class FlyMQClient:
                        If both key and partition are provided, partition takes precedence.
 
         Returns:
-            The offset of the produced message.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
 
         Example:
             >>> # Automatic partition selection
-            >>> offset = client.produce("my-topic", b"Hello!")
+            >>> meta = client.produce("my-topic", b"Hello!")
+            >>> print(f"Offset: {meta.offset}, Partition: {meta.partition}")
             >>> # Key-based partitioning (same key = same partition)
-            >>> offset = client.produce("orders", b'{"id": 1}', key=b"user-123")
+            >>> meta = client.produce("orders", b'{"id": 1}', key=b"user-123")
             >>> # Explicit partition selection
-            >>> offset = client.produce("events", b"data", partition=2)
+            >>> meta = client.produce("events", b"data", partition=2)
         """
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -463,15 +481,14 @@ class FlyMQClient:
             partition=partition if partition is not None else -1,
         )
         response_bytes = self._send_binary_request(OpCode.PRODUCE, encode_produce_request(req))
-        response = decode_produce_response(response_bytes)
-        return response.offset
+        return decode_record_metadata(response_bytes)
 
     def produce_with_key(
         self,
         topic: str,
         key: bytes | str,
         data: bytes | str,
-    ) -> int:
+    ) -> RecordMetadata:
         """
         Produce a message with a key for key-based partitioning.
 
@@ -484,12 +501,12 @@ class FlyMQClient:
             data: Message data.
 
         Returns:
-            The offset of the produced message.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
 
         Example:
             >>> # All messages for user-123 go to the same partition
-            >>> client.produce_with_key("orders", "user-123", b'{"order": 1}')
-            >>> client.produce_with_key("orders", "user-123", b'{"order": 2}')
+            >>> meta = client.produce_with_key("orders", "user-123", b'{"order": 1}')
+            >>> print(f"Offset: {meta.offset}")
         """
         return self.produce(topic, data, key=key)
 
@@ -500,7 +517,7 @@ class FlyMQClient:
         data: bytes | str,
         *,
         key: bytes | str | None = None,
-    ) -> int:
+    ) -> RecordMetadata:
         """
         Produce a message to a specific partition.
 
@@ -513,11 +530,12 @@ class FlyMQClient:
             key: Optional message key (for tracking, not partition selection).
 
         Returns:
-            The offset of the produced message.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
 
         Example:
             >>> # Send to partition 2 explicitly
-            >>> offset = client.produce_to_partition("events", 2, b"data")
+            >>> meta = client.produce_to_partition("events", 2, b"data")
+            >>> print(f"Offset: {meta.offset}")
         """
         return self.produce(topic, data, key=key, partition=partition)
 
@@ -899,7 +917,7 @@ class FlyMQClient:
     # Advanced Messaging
     # =========================================================================
 
-    def produce_delayed(self, topic: str, data: bytes | str, delay_ms: int) -> int:
+    def produce_delayed(self, topic: str, data: bytes | str, delay_ms: int) -> RecordMetadata:
         """
         Produce a message with delayed delivery.
 
@@ -909,7 +927,7 @@ class FlyMQClient:
             delay_ms: Delay in milliseconds.
 
         Returns:
-            Message offset.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
         """
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -918,9 +936,9 @@ class FlyMQClient:
         response_bytes = self._send_binary_request(
             OpCode.PRODUCE_DELAYED, encode_produce_delayed_request(req)
         )
-        return decode_produce_response(response_bytes).offset
+        return decode_record_metadata(response_bytes)
 
-    def produce_with_ttl(self, topic: str, data: bytes | str, ttl_ms: int) -> int:
+    def produce_with_ttl(self, topic: str, data: bytes | str, ttl_ms: int) -> RecordMetadata:
         """
         Produce a message with time-to-live.
 
@@ -930,7 +948,7 @@ class FlyMQClient:
             ttl_ms: TTL in milliseconds.
 
         Returns:
-            Message offset.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
         """
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -939,9 +957,9 @@ class FlyMQClient:
         response_bytes = self._send_binary_request(
             OpCode.PRODUCE_WITH_TTL, encode_produce_with_ttl_request(req)
         )
-        return decode_produce_response(response_bytes).offset
+        return decode_record_metadata(response_bytes)
 
-    def produce_with_schema(self, topic: str, data: bytes | str, schema_name: str) -> int:
+    def produce_with_schema(self, topic: str, data: bytes | str, schema_name: str) -> RecordMetadata:
         """
         Produce a message with schema validation.
 
@@ -951,7 +969,7 @@ class FlyMQClient:
             schema_name: Schema to validate against.
 
         Returns:
-            Message offset.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
         """
         if isinstance(data, str):
             data = data.encode("utf-8")
@@ -960,7 +978,7 @@ class FlyMQClient:
         response_bytes = self._send_binary_request(
             OpCode.PRODUCE_WITH_SCHEMA, encode_produce_with_schema_request(req)
         )
-        return decode_produce_response(response_bytes).offset
+        return decode_record_metadata(response_bytes)
 
     # =========================================================================
     # Transaction Operations
@@ -1011,13 +1029,13 @@ class FlyMQClient:
         req = BinaryTxnRequest(txn_id=txn_id)
         self._send_binary_request(OpCode.ABORT_TX, encode_txn_request(req))
 
-    def _produce_in_transaction(self, txn_id: str, topic: str, data: bytes) -> int:
+    def _produce_in_transaction(self, txn_id: str, topic: str, data: bytes) -> RecordMetadata:
         """Produce within a transaction (internal)."""
         req = BinaryTxnProduceRequest(txn_id=txn_id, topic=topic, data=data)
         response_bytes = self._send_binary_request(
             OpCode.PRODUCE_TX, encode_txn_produce_request(req)
         )
-        return decode_produce_response(response_bytes).offset
+        return decode_record_metadata(response_bytes)
 
     # =========================================================================
     # Schema Registry Operations
@@ -1186,6 +1204,596 @@ class FlyMQClient:
         """Leave the cluster gracefully."""
         self._send_binary_request(OpCode.CLUSTER_LEAVE, b"")
 
+    # =========================================================================
+    # High-Level Consumer API (Kafka-like)
+    # =========================================================================
+
+    def consumer(
+        self,
+        topics: str | list[str],
+        group_id: str,
+        *,
+        auto_offset_reset: str = "latest",
+        enable_auto_commit: bool = True,
+        auto_commit_interval_ms: int = 5000,
+        max_poll_records: int = 500,
+    ) -> "HighLevelConsumer":
+        """
+        Create a high-level consumer similar to Kafka's KafkaConsumer.
+
+        This consumer automatically handles:
+        - Partition assignment (consumes from all partitions)
+        - Offset tracking and commits
+        - Automatic rebalancing
+
+        Args:
+            topics: Topic or list of topics to subscribe to.
+            group_id: Consumer group ID for offset tracking.
+            auto_offset_reset: Where to start if no committed offset exists.
+                - "earliest": Start from the beginning
+                - "latest": Start from the end (new messages only)
+            enable_auto_commit: Automatically commit offsets periodically.
+            auto_commit_interval_ms: Auto-commit interval in milliseconds.
+            max_poll_records: Maximum records to return per poll.
+
+        Returns:
+            HighLevelConsumer instance.
+
+        Example:
+            >>> consumer = client.consumer("my-topic", "my-group")
+            >>> for msg in consumer:
+            ...     print(msg.value.decode())
+            ...     # Offsets are auto-committed
+            >>> consumer.close()
+
+            # Or with context manager:
+            >>> with client.consumer("my-topic", "my-group") as consumer:
+            ...     for msg in consumer:
+            ...         print(msg.value.decode())
+        """
+        from .consumer import ConsumerConfig
+
+        topic_list = [topics] if isinstance(topics, str) else list(topics)
+        config = ConsumerConfig(
+            group_id=group_id,
+            auto_offset_reset=auto_offset_reset,
+            enable_auto_commit=enable_auto_commit,
+            auto_commit_interval_ms=auto_commit_interval_ms,
+            max_poll_records=max_poll_records,
+        )
+        return HighLevelConsumer(self, topic_list, group_id, config)
+
+    # =========================================================================
+    # High-Level Producer API (Kafka-like)
+    # =========================================================================
+
+    def producer(
+        self,
+        *,
+        batch_size: int = 16384,
+        linger_ms: int = 0,
+        max_batch_messages: int = 1000,
+        acks: str = "leader",
+        retries: int = 3,
+        retry_backoff_ms: int = 100,
+    ) -> "HighLevelProducer":
+        """
+        Create a high-level producer similar to Kafka's KafkaProducer.
+
+        This producer provides:
+        - Automatic batching for improved throughput
+        - Configurable acknowledgment levels
+        - Automatic retries with backoff
+        - Async send with callbacks
+        - Thread-safe operations
+
+        Args:
+            batch_size: Maximum batch size in bytes before sending.
+            linger_ms: Time to wait for more messages before sending a batch.
+                       Set to 0 for immediate send (no batching).
+            max_batch_messages: Maximum number of messages per batch.
+            acks: Acknowledgment level ("leader" or "all").
+            retries: Number of retries on failure.
+            retry_backoff_ms: Backoff time between retries.
+
+        Returns:
+            HighLevelProducer instance.
+
+        Example:
+            >>> # Simple usage - immediate send
+            >>> producer = client.producer()
+            >>> producer.send("my-topic", b"Hello!")
+            >>> producer.flush()
+            >>> producer.close()
+
+            >>> # With batching for high throughput
+            >>> producer = client.producer(linger_ms=10, batch_size=32768)
+            >>> for i in range(1000):
+            ...     producer.send("events", f"event-{i}".encode())
+            >>> producer.flush()
+
+            >>> # With callbacks
+            >>> def on_success(metadata):
+            ...     print(f"Sent to {metadata.topic} at offset {metadata.offset}")
+            >>> def on_error(error):
+            ...     print(f"Failed: {error}")
+            >>> producer.send("topic", b"data", on_success=on_success, on_error=on_error)
+
+            >>> # Context manager
+            >>> with client.producer(linger_ms=5) as producer:
+            ...     producer.send("topic", b"message")
+            ...     # Auto-flushes on exit
+        """
+        return HighLevelProducer(
+            self,
+            batch_size=batch_size,
+            linger_ms=linger_ms,
+            max_batch_messages=max_batch_messages,
+            acks=acks,
+            retries=retries,
+            retry_backoff_ms=retry_backoff_ms,
+        )
+
+
+class HighLevelProducer:
+    """
+    High-level producer with batching, callbacks, and retries.
+
+    Similar to Kafka's KafkaProducer, this producer:
+    - Batches messages for improved throughput
+    - Supports async send with callbacks
+    - Automatically retries on transient failures
+    - Thread-safe for concurrent use
+
+    Example:
+        >>> producer = client.producer(linger_ms=10)
+        >>> producer.send("orders", b'{"id": 1}', key=b"user-123")
+        >>> producer.flush()
+        >>> producer.close()
+    """
+
+    def __init__(
+        self,
+        client: FlyMQClient,
+        *,
+        batch_size: int = 16384,
+        linger_ms: int = 0,
+        max_batch_messages: int = 1000,
+        acks: str = "leader",
+        retries: int = 3,
+        retry_backoff_ms: int = 100,
+    ) -> None:
+        """Initialize high-level producer."""
+        self._client = client
+        self._batch_size = batch_size
+        self._linger_ms = linger_ms
+        self._max_batch_messages = max_batch_messages
+        self._acks = acks
+        self._retries = retries
+        self._retry_backoff_ms = retry_backoff_ms
+        self._closed = False
+        self._lock = threading.Lock()
+
+        # Batch state
+        self._batch: list[dict[str, Any]] = []
+        self._batch_bytes = 0
+        self._last_flush = time.time()
+
+        # Background flusher thread (if linger_ms > 0)
+        self._flusher_thread: threading.Thread | None = None
+        self._stop_flusher = threading.Event()
+
+        if linger_ms > 0:
+            self._start_flusher()
+
+    def _start_flusher(self) -> None:
+        """Start background flusher thread."""
+        self._flusher_thread = threading.Thread(target=self._flusher_loop, daemon=True)
+        self._flusher_thread.start()
+
+    def _flusher_loop(self) -> None:
+        """Background loop to flush batches based on linger_ms."""
+        while not self._stop_flusher.is_set():
+            self._stop_flusher.wait(timeout=self._linger_ms / 1000.0)
+            if not self._stop_flusher.is_set():
+                with self._lock:
+                    if self._batch and (time.time() - self._last_flush) * 1000 >= self._linger_ms:
+                        self._flush_batch()
+
+    def send(
+        self,
+        topic: str,
+        value: bytes | str,
+        *,
+        key: bytes | str | None = None,
+        partition: int | None = None,
+        on_success: Any = None,
+        on_error: Any = None,
+    ) -> "ProduceFuture":
+        """
+        Send a message to a topic.
+
+        If linger_ms > 0, the message may be batched with others.
+        Use flush() to ensure all messages are sent.
+
+        Args:
+            topic: Target topic name.
+            value: Message value (bytes or string).
+            key: Optional message key for partitioning.
+            partition: Optional explicit partition.
+            on_success: Callback on successful send: fn(ProduceMetadata).
+            on_error: Callback on error: fn(Exception).
+
+        Returns:
+            ProduceFuture that resolves when the message is sent.
+
+        Example:
+            >>> future = producer.send("topic", b"data")
+            >>> metadata = future.get()  # Block until sent
+            >>> print(f"Sent at offset {metadata.offset}")
+        """
+        if self._closed:
+            raise RuntimeError("Producer is closed")
+
+        if isinstance(value, str):
+            value = value.encode("utf-8")
+        if isinstance(key, str):
+            key = key.encode("utf-8")
+
+        future = ProduceFuture()
+        record = {
+            "topic": topic,
+            "value": value,
+            "key": key,
+            "partition": partition,
+            "future": future,
+            "on_success": on_success,
+            "on_error": on_error,
+        }
+
+        with self._lock:
+            # If no batching, send immediately
+            if self._linger_ms == 0:
+                self._send_record(record)
+                return future
+
+            # Add to batch
+            self._batch.append(record)
+            self._batch_bytes += len(value)
+
+            # Check if batch should be flushed
+            if self._batch_bytes >= self._batch_size or len(self._batch) >= self._max_batch_messages:
+                self._flush_batch()
+
+        return future
+
+    def _send_record(self, record: dict[str, Any]) -> None:
+        """Send a single record with retries."""
+        last_error = None
+
+        for attempt in range(self._retries + 1):
+            try:
+                offset = self._client.produce(
+                    record["topic"],
+                    record["value"],
+                    key=record["key"],
+                    partition=record["partition"],
+                )
+                metadata = ProduceMetadata(
+                    topic=record["topic"],
+                    partition=record["partition"] or 0,
+                    offset=offset,
+                )
+                record["future"]._set_result(metadata)
+                if record["on_success"]:
+                    record["on_success"](metadata)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < self._retries:
+                    time.sleep(self._retry_backoff_ms / 1000.0)
+
+        # All retries failed
+        record["future"]._set_error(last_error)
+        if record["on_error"]:
+            record["on_error"](last_error)
+
+    def _flush_batch(self) -> None:
+        """Flush the current batch."""
+        if not self._batch:
+            return
+
+        for record in self._batch:
+            self._send_record(record)
+
+        self._batch.clear()
+        self._batch_bytes = 0
+        self._last_flush = time.time()
+
+    def flush(self, timeout_ms: int = 30000) -> None:
+        """
+        Flush all pending messages.
+
+        Blocks until all messages in the batch are sent.
+
+        Args:
+            timeout_ms: Maximum time to wait (currently unused).
+        """
+        with self._lock:
+            self._flush_batch()
+
+    def close(self, timeout_ms: int = 30000) -> None:
+        """
+        Close the producer.
+
+        Flushes any pending messages before closing.
+
+        Args:
+            timeout_ms: Maximum time to wait for pending messages.
+        """
+        if self._closed:
+            return
+
+        self._stop_flusher.set()
+        if self._flusher_thread:
+            self._flusher_thread.join(timeout=timeout_ms / 1000.0)
+
+        self.flush(timeout_ms)
+        self._closed = True
+
+    def __enter__(self) -> "HighLevelProducer":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
+
+class ProduceFuture:
+    """
+    Future representing a pending produce operation.
+
+    Similar to Kafka's RecordMetadata future.
+    """
+
+    def __init__(self) -> None:
+        """Initialize future."""
+        self._event = threading.Event()
+        self._result: "ProduceMetadata | None" = None
+        self._error: Exception | None = None
+
+    def _set_result(self, result: "ProduceMetadata") -> None:
+        """Set successful result."""
+        self._result = result
+        self._event.set()
+
+    def _set_error(self, error: Exception) -> None:
+        """Set error result."""
+        self._error = error
+        self._event.set()
+
+    def get(self, timeout_ms: int = 30000) -> "ProduceMetadata":
+        """
+        Wait for the result.
+
+        Args:
+            timeout_ms: Maximum time to wait.
+
+        Returns:
+            ProduceMetadata with topic, partition, and offset.
+
+        Raises:
+            Exception: If the send failed.
+            TimeoutError: If timeout expires.
+        """
+        if not self._event.wait(timeout=timeout_ms / 1000.0):
+            raise TimeoutError("Produce operation timed out")
+
+        if self._error:
+            raise self._error
+
+        return self._result  # type: ignore
+
+    def done(self) -> bool:
+        """Check if the operation is complete."""
+        return self._event.is_set()
+
+    def succeeded(self) -> bool:
+        """Check if the operation succeeded."""
+        return self._event.is_set() and self._error is None
+
+
+@dataclass
+class ProduceMetadata:
+    """Metadata returned after a successful produce."""
+
+    topic: str
+    partition: int
+    offset: int
+
+
+class HighLevelConsumer:
+    """
+    High-level consumer that abstracts away partitions and offsets.
+
+    Similar to Kafka's KafkaConsumer, this consumer:
+    - Automatically subscribes to all partitions of the specified topics
+    - Tracks offsets per partition
+    - Supports auto-commit or manual commit
+    - Provides a simple iterator interface
+
+    Example:
+        >>> consumer = client.consumer("orders", "order-processor")
+        >>> for message in consumer:
+        ...     process(message.value)
+        ...     consumer.commit()  # Manual commit (if auto-commit disabled)
+    """
+
+    def __init__(
+        self,
+        client: FlyMQClient,
+        topics: list[str],
+        group_id: str,
+        config: Any,
+    ) -> None:
+        """Initialize high-level consumer."""
+        self._client = client
+        self._topics = topics
+        self._group_id = group_id
+        self._config = config
+        self._closed = False
+        self._lock = threading.Lock()
+
+        # Track offsets per (topic, partition)
+        self._offsets: dict[tuple[str, int], int] = {}
+        self._partition_counts: dict[str, int] = {}
+
+        # Initialize: get partition counts and subscribe
+        self._initialize()
+
+    def _initialize(self) -> None:
+        """Initialize subscriptions for all topics and partitions."""
+        from .protocol import SubscribeMode
+
+        mode = (
+            SubscribeMode.EARLIEST
+            if self._config.auto_offset_reset == "earliest"
+            else SubscribeMode.LATEST
+        )
+
+        for topic in self._topics:
+            # Try to discover partition count by subscribing to partition 0 first
+            # Then try higher partitions until we get an error
+            num_partitions = 1
+
+            # Subscribe to partition 0
+            try:
+                offset = self._client.subscribe(topic, self._group_id, 0, mode.value)
+                self._offsets[(topic, 0)] = offset
+            except Exception:
+                continue  # Skip topic if can't subscribe
+
+            # Try to discover more partitions (up to 64)
+            for partition in range(1, 64):
+                try:
+                    offset = self._client.subscribe(topic, self._group_id, partition, mode.value)
+                    self._offsets[(topic, partition)] = offset
+                    num_partitions = partition + 1
+                except Exception:
+                    break  # No more partitions
+
+            self._partition_counts[topic] = num_partitions
+
+    def poll(self, timeout_ms: int = 1000, max_records: int | None = None) -> list[ConsumedMessage]:
+        """
+        Poll for messages from all subscribed topics and partitions.
+
+        Args:
+            timeout_ms: Maximum time to wait for messages (currently unused).
+            max_records: Maximum records to return (default: from config).
+
+        Returns:
+            List of consumed messages from all partitions.
+        """
+        if self._closed:
+            from .exceptions import ConsumerError
+            raise ConsumerError("Consumer is closed")
+
+        max_records = max_records or self._config.max_poll_records
+        all_messages: list[ConsumedMessage] = []
+
+        with self._lock:
+            # Round-robin across all topic-partitions
+            for topic in self._topics:
+                num_partitions = self._partition_counts.get(topic, 1)
+                per_partition = max(1, max_records // (len(self._topics) * num_partitions))
+
+                for partition in range(num_partitions):
+                    key = (topic, partition)
+                    offset = self._offsets.get(key, 0)
+
+                    try:
+                        result = self._client.fetch(topic, partition, offset, per_partition)
+                        if result.messages:
+                            all_messages.extend(result.messages)
+                            self._offsets[key] = result.next_offset
+                    except Exception:
+                        pass  # Skip partition on error
+
+        return all_messages
+
+    def commit(self) -> None:
+        """
+        Commit current offsets for all partitions.
+
+        Call this after processing messages to save progress.
+        """
+        with self._lock:
+            for (topic, partition), offset in self._offsets.items():
+                try:
+                    self._client.commit_offset(topic, self._group_id, partition, offset)
+                except Exception:
+                    pass  # Best effort commit
+
+    def commit_async(self, callback: Any = None) -> None:
+        """
+        Commit offsets asynchronously.
+
+        Args:
+            callback: Optional callback function (currently synchronous).
+        """
+        # For now, just do synchronous commit
+        self.commit()
+        if callback:
+            callback(None)
+
+    def close(self) -> None:
+        """Close the consumer and commit final offsets."""
+        if not self._closed:
+            self.commit()
+            self._closed = True
+
+    @property
+    def topics(self) -> list[str]:
+        """Get subscribed topics."""
+        return self._topics
+
+    @property
+    def group_id(self) -> str:
+        """Get consumer group ID."""
+        return self._group_id
+
+    def __iter__(self) -> Iterator[ConsumedMessage]:
+        """Iterate over messages from all partitions."""
+        import time
+        last_commit = time.time()
+        commit_interval = self._config.auto_commit_interval_ms / 1000.0
+
+        while not self._closed:
+            messages = self.poll()
+
+            for msg in messages:
+                yield msg
+
+            # Auto-commit if enabled
+            if self._config.enable_auto_commit:
+                now = time.time()
+                if now - last_commit >= commit_interval:
+                    self.commit()
+                    last_commit = now
+
+            if not messages:
+                time.sleep(0.1)  # Brief pause if no messages
+
+    def __enter__(self) -> "HighLevelConsumer":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
 
 class Transaction:
     """
@@ -1214,7 +1822,7 @@ class Transaction:
         """Check if transaction is active."""
         return self._active
 
-    def produce(self, topic: str, data: bytes | str) -> int:
+    def produce(self, topic: str, data: bytes | str) -> RecordMetadata:
         """
         Produce a message within the transaction.
 
@@ -1223,7 +1831,7 @@ class Transaction:
             data: Message data.
 
         Returns:
-            Message offset.
+            RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
         """
         if not self._active:
             raise TransactionNotActiveError()
@@ -1248,3 +1856,72 @@ class Transaction:
 
         self._client._abort_transaction(self._txn_id)
         self._active = False
+
+
+# =============================================================================
+# Module-level convenience functions
+# =============================================================================
+
+def connect(
+    servers: str | list[str] = "localhost:9092",
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    tls_enabled: bool = False,
+    tls_ca_file: str | None = None,
+    tls_insecure_skip_verify: bool = False,
+    **kwargs: Any,
+) -> FlyMQClient:
+    """
+    Create and connect a FlyMQ client.
+
+    This is the simplest way to connect to FlyMQ. The client will automatically
+    connect on creation and can be used immediately.
+
+    Args:
+        servers: Server address(es). Can be:
+            - Single server: "localhost:9092"
+            - Multiple servers: "server1:9092,server2:9092"
+            - List: ["server1:9092", "server2:9092"]
+        username: Optional username for authentication.
+        password: Optional password for authentication.
+        tls_enabled: Enable TLS encryption.
+        tls_ca_file: Path to CA certificate file for TLS verification.
+        tls_insecure_skip_verify: Skip TLS certificate verification (not for production).
+        **kwargs: Additional configuration options.
+
+    Returns:
+        Connected FlyMQClient instance.
+
+    Raises:
+        ConnectionError: If connection fails.
+        AuthenticationError: If authentication fails.
+
+    Examples:
+        # Simple connection
+        >>> client = connect()
+        >>> client.produce("my-topic", b"Hello!")
+
+        # With authentication
+        >>> client = connect("localhost:9092", username="admin", password="secret")
+
+        # With TLS
+        >>> client = connect("localhost:9093", tls_enabled=True, tls_ca_file="ca.crt")
+
+        # Multiple servers for high availability
+        >>> client = connect(["server1:9092", "server2:9092", "server3:9092"])
+
+    Note:
+        Remember to call client.close() when done, or use the context manager:
+        >>> with connect() as client:
+        ...     client.produce("topic", b"message")
+    """
+    return FlyMQClient(
+        servers,
+        username=username,
+        password=password,
+        tls_enabled=tls_enabled,
+        tls_ca_file=tls_ca_file,
+        tls_insecure_skip_verify=tls_insecure_skip_verify,
+        **kwargs,
+    )

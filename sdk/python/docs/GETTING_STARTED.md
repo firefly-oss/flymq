@@ -20,31 +20,30 @@ pip install -e .
 ## Prerequisites
 
 - FlyMQ server running (default: `localhost:9092`)
-- Python 3.7+
+- Python 3.9+
 
 ## Your First Program
 
 Create a file named `hello_flymq.py`:
 
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect
 
-# Connect to FlyMQ
-client = FlyMQClient("localhost:9092")
+# Connect to FlyMQ (simplest way)
+client = connect("localhost:9092")
 
-try:
-    # Create a topic
-    client.create_topic("hello", partitions=1)
-    
-    # Produce a message
-    offset = client.produce("hello", b"Hello, FlyMQ!")
-    print(f"Message produced at offset {offset}")
-    
-    # Consume the message
-    msg = client.consume("hello", offset)
-    print(f"Received: {msg.decode()}")
-finally:
-    client.close()
+# Create a topic
+client.create_topic("hello", partitions=1)
+
+# Produce a message
+offset = client.produce("hello", b"Hello, FlyMQ!")
+print(f"Message produced at offset {offset}")
+
+# Consume the message
+msg = client.consume("hello", offset)
+print(f"Received: {msg.decode()}")
+
+client.close()
 ```
 
 Run it:
@@ -58,6 +57,19 @@ Output:
 ```
 Message produced at offset 0
 Received: Hello, FlyMQ!
+```
+
+### Using Context Manager (Recommended)
+
+```python
+from pyflymq import FlyMQClient
+
+with FlyMQClient("localhost:9092") as client:
+    client.create_topic("hello", partitions=1)
+    offset = client.produce("hello", b"Hello, FlyMQ!")
+    msg = client.consume("hello", offset)
+    print(f"Received: {msg.decode()}")
+# Connection automatically closed
 ```
 
 ## Key Concepts
@@ -113,6 +125,64 @@ consumer = Consumer(client, "my-topic", group_id="my-group")
 for message in consumer:
     print(message.decode())
     consumer.commit()  # Save position
+```
+
+## High-Level APIs (Kafka-like)
+
+PyFlyMQ provides high-level APIs that feel familiar to Kafka users.
+
+### High-Level Producer
+
+The `HighLevelProducer` provides batching, callbacks, and automatic retries:
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Create producer with batching
+with client.producer(batch_size=100, linger_ms=10) as producer:
+    # Send with callback
+    def on_success(metadata):
+        print(f"Sent to {metadata.topic} @ offset {metadata.offset}")
+
+    future = producer.send(
+        topic="events",
+        value=b'{"event": "click"}',
+        key="user-123",
+        on_success=on_success
+    )
+
+    # Wait for result
+    metadata = future.get(timeout_ms=5000)
+```
+
+### High-Level Consumer
+
+The `HighLevelConsumer` provides auto-commit and poll-based consumption:
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Create consumer
+with client.consumer("my-topic", "my-group") as consumer:
+    for message in consumer:
+        print(f"Key: {message.key}, Value: {message.decode()}")
+        # Auto-commit enabled by default
+```
+
+### Poll-Based Consumption
+
+```python
+consumer = client.consumer("my-topic", "my-group", auto_commit=False)
+
+while True:
+    messages = consumer.poll(timeout_ms=1000, max_records=100)
+    for msg in messages:
+        process(msg)
+    consumer.commit()  # Manual commit
 ```
 
 ## Common Patterns
@@ -174,25 +244,44 @@ for msg in consumer:
 
 ## Error Handling
 
-Always handle errors gracefully:
+PyFlyMQ provides clear error messages with helpful hints:
 
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect
 from pyflymq.exceptions import (
-    ConnectionError, TopicNotFoundError, ServerError
+    FlyMQError,           # Base exception
+    ConnectionError,      # Connection failures
+    TopicNotFoundError,   # Topic doesn't exist
+    AuthenticationError,  # Auth failures
+    ServerError,          # Server-side errors
 )
 
 try:
-    client = FlyMQClient("localhost:9092")
+    client = connect("localhost:9092")
     client.produce("my-topic", b"Data")
-except TopicNotFoundError:
-    print("Topic does not exist")
-except ServerError:
-    print("Server returned an error")
-except ConnectionError:
-    print("Failed to connect")
+except TopicNotFoundError as e:
+    print(f"Error: {e}")
+    print(f"Hint: {e.hint}")  # Helpful suggestion!
+except ConnectionError as e:
+    print(f"Cannot connect: {e}")
+    print(f"Hint: {e.hint}")  # e.g., "Is the server running?"
+except FlyMQError as e:
+    print(f"FlyMQ error: {e}")
 finally:
     client.close()
+```
+
+### Errors Include Hints
+
+All exceptions include a `hint` property with actionable suggestions:
+
+```python
+try:
+    client.produce("nonexistent-topic", b"data")
+except TopicNotFoundError as e:
+    print(e.hint)
+    # Output: Create the topic first with client.create_topic("nonexistent-topic", partitions)
+    #         or use the CLI: flymq-cli topic create nonexistent-topic
 ```
 
 ## Authentication

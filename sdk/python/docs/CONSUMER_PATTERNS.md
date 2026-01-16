@@ -4,6 +4,8 @@ Best practices and patterns for consuming messages with PyFlyMQ.
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+- [High-Level Consumer](#high-level-consumer)
 - [Basic Consumption](#basic-consumption)
 - [Consumer Groups](#consumer-groups)
 - [Offset Management](#offset-management)
@@ -11,7 +13,109 @@ Best practices and patterns for consuming messages with PyFlyMQ.
 - [Error Handling](#error-handling)
 - [Best Practices](#best-practices)
 
-## Basic Consumption
+## Quick Start
+
+The fastest way to consume messages:
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# High-level consumer with Kafka-like API
+with client.consumer("my-topic", "my-group") as consumer:
+    for message in consumer:
+        print(f"Received: {message.decode()}")
+        # Auto-commit enabled by default
+```
+
+## High-Level Consumer
+
+The `HighLevelConsumer` provides a Kafka-like API with auto-commit and poll-based consumption.
+
+### Basic Usage
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+with client.consumer("my-topic", "my-group") as consumer:
+    for message in consumer:
+        print(f"Key: {message.key}")
+        print(f"Value: {message.decode()}")
+        print(f"Offset: {message.offset}")
+```
+
+### Poll-Based Consumption
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+consumer = client.consumer(
+    topics=["topic1", "topic2"],
+    group_id="my-group",
+    auto_commit=False  # Manual commit
+)
+
+while True:
+    messages = consumer.poll(timeout_ms=1000, max_records=100)
+
+    for msg in messages:
+        process(msg)
+
+    consumer.commit()  # Commit after processing batch
+
+consumer.close()
+```
+
+### Consumer Configuration
+
+```python
+consumer = client.consumer(
+    topics="my-topic",
+    group_id="my-group",
+    auto_commit=True,              # Enable auto-commit
+    auto_commit_interval_ms=5000,  # Commit every 5 seconds
+    max_poll_records=500,          # Max records per poll
+    session_timeout_ms=30000       # Session timeout
+)
+```
+
+### Seek Operations
+
+```python
+consumer = client.consumer("my-topic", "my-group")
+
+# Seek to specific offset
+consumer.seek(partition=0, offset=100)
+
+# Seek to beginning of partition
+consumer.seek_to_beginning(partition=0)
+
+# Seek to end (only new messages)
+consumer.seek_to_end(partition=0)
+
+# Get current position
+position = consumer.position(partition=0)
+print(f"Current position: {position}")
+```
+
+### Async Commit
+
+```python
+def on_commit_complete(offsets, error):
+    if error:
+        print(f"Commit failed: {error}")
+    else:
+        print(f"Committed: {offsets}")
+
+consumer.commit_async(callback=on_commit_complete)
+```
+
+## Basic Consumption (Low-Level)
 
 ### Simple Consume
 
@@ -28,11 +132,11 @@ client.close()
 
 ```python
 # Consume message and get its key
-msg = client.consume_with_key("orders", offset=0)
-print(f"Key: {msg.key}, Data: {msg.data.decode()}")
+msg = client.consume("orders", offset=0)
+print(f"Key: {msg.key}, Data: {msg.decode()}")
 ```
 
-## Consumer Groups
+## Consumer Groups (Low-Level)
 
 ### Basic Consumer Group
 
@@ -82,7 +186,7 @@ consumer.subscribe(mode=SubscribeMode.LATEST)
 ### Manual Commit
 
 ```python
-consumer = Consumer(client, "topic", group_id="group")
+consumer = client.consumer("topic", "group", auto_commit=False)
 
 for message in consumer:
     try:
@@ -96,21 +200,26 @@ for message in consumer:
 ### Auto-Commit
 
 ```python
-from pyflymq import ConsumerConfig
-
-config = ConsumerConfig(
+# Auto-commit is enabled by default
+consumer = client.consumer(
+    "topic",
+    "group",
     auto_commit=True,
     auto_commit_interval_ms=5000
 )
 
-consumer = Consumer(client, "topic", group_id="group", config=config)
+for message in consumer:
+    process(message)
+    # Offsets committed automatically every 5 seconds
 ```
 
 ### Seeking
 
 ```python
+consumer = client.consumer("topic", "group")
+
 # Seek to specific offset
-consumer.seek(100)
+consumer.seek(partition=0, offset=100)
 
 # Seek to beginning
 consumer.seek_to_beginning()
@@ -119,7 +228,7 @@ consumer.seek_to_beginning()
 consumer.seek_to_end()
 
 # Get current position
-position = consumer.position()
+position = consumer.position(partition=0)
 ```
 
 ## Batch Processing

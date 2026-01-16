@@ -4,6 +4,8 @@ Best practices and patterns for producing messages with PyFlyMQ.
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+- [High-Level Producer](#high-level-producer)
 - [Basic Production](#basic-production)
 - [Key-Based Routing](#key-based-routing)
 - [Batch Production](#batch-production)
@@ -12,9 +14,100 @@ Best practices and patterns for producing messages with PyFlyMQ.
 - [Error Handling](#error-handling)
 - [Best Practices](#best-practices)
 
+## Quick Start
+
+The fastest way to produce messages:
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+offset = client.produce("my-topic", b"Hello, FlyMQ!")
+print(f"Produced at offset: {offset}")
+client.close()
+```
+
+## High-Level Producer
+
+For production workloads, use the `HighLevelProducer` with batching and callbacks:
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+# Create producer with batching
+with client.producer(batch_size=100, linger_ms=10) as producer:
+    # Send with callbacks
+    def on_success(metadata):
+        print(f"✓ Sent to {metadata.topic}[{metadata.partition}] @ {metadata.offset}")
+
+    def on_error(error):
+        print(f"✗ Failed: {error}")
+
+    # Async send
+    future = producer.send(
+        topic="events",
+        value=b'{"event": "click", "user": "123"}',
+        key="user-123",
+        on_success=on_success,
+        on_error=on_error
+    )
+
+    # Wait for result if needed
+    metadata = future.get(timeout_ms=5000)
+    print(f"Offset: {metadata.offset}")
+```
+
+### Producer Configuration
+
+```python
+producer = client.producer(
+    batch_size=1000,        # Max messages per batch
+    linger_ms=50,           # Wait time for batching (ms)
+    max_retries=3,          # Retry attempts on failure
+    retry_backoff_ms=100    # Backoff between retries
+)
+```
+
+### High-Throughput Pattern
+
+```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
+with client.producer(batch_size=1000, linger_ms=50) as producer:
+    # Send 100k messages efficiently
+    for i in range(100000):
+        producer.send("events", f"event-{i}".encode())
+
+    # Flush ensures all messages are sent
+    producer.flush()
+    print("All messages sent!")
+```
+
+### Fire-and-Forget vs Wait
+
+```python
+# Fire-and-forget (fastest)
+producer.send("topic", b"data")
+
+# Wait for acknowledgment
+future = producer.send("topic", b"data")
+metadata = future.get(timeout_ms=5000)  # Blocks until sent
+
+# Check if sent without blocking
+if future.done():
+    if future.succeeded():
+        print(f"Sent at offset {future.get().offset}")
+    else:
+        print(f"Failed: {future.error}")
+```
+
 ## Basic Production
 
-### Simple Produce
+### Simple Produce (Low-Level)
 
 ```python
 from pyflymq import FlyMQClient
@@ -39,10 +132,15 @@ with FlyMQClient("localhost:9092") as client:
 Messages with the same key go to the same partition:
 
 ```python
+from pyflymq import connect
+
+client = connect("localhost:9092")
+
 # All orders for user-123 go to same partition (ordering guaranteed)
-client.produce_with_key("orders", "user-123", b"Order #1")
-client.produce_with_key("orders", "user-123", b"Order #2")
-client.produce_with_key("orders", "user-123", b"Order #3")
+with client.producer() as producer:
+    producer.send("orders", b"Order #1", key="user-123")
+    producer.send("orders", b"Order #2", key="user-123")  # Same partition
+    producer.send("orders", b"Order #3", key="user-456")  # Different partition
 ```
 
 ## Batch Production
@@ -56,36 +154,18 @@ with client.transaction() as txn:
     # All messages committed atomically
 ```
 
-### High-Throughput Producer
+### High-Throughput with HighLevelProducer
 
 ```python
-from pyflymq import Producer
+from pyflymq import connect
 
-producer = Producer(client, "high-volume-topic")
+client = connect("localhost:9092")
 
-for i in range(10000):
-    producer.send(f"Message {i}".encode())
+with client.producer(batch_size=1000, linger_ms=100) as producer:
+    for i in range(10000):
+        producer.send("high-volume-topic", f"Message {i}".encode())
 
-producer.flush()  # Ensure all messages sent
-producer.close()
-```
-
-### Async Producer
-
-```python
-from pyflymq import AsyncProducer
-import asyncio
-
-async def produce_async():
-    producer = AsyncProducer(client, "async-topic")
-    
-    tasks = [
-        producer.send(f"Message {i}".encode())
-        for i in range(1000)
-    ]
-    
-    await asyncio.gather(*tasks)
-    await producer.close()
+    producer.flush()  # Ensure all messages sent
 ```
 
 ## Transactions
