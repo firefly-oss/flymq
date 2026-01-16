@@ -175,8 +175,8 @@ The benchmark produces both terminal output and a JSON file with detailed result
 
 ## Benchmark Results
 
-> **Latest Run**: January 15, 2026  
-> **Test Environment**: Apple M3 Pro, 12 cores, 36GB RAM, NVMe SSD  
+> **Latest Run**: January 16, 2026
+> **Test Environment**: Apple M3 Pro, 12 cores, 36GB RAM, NVMe SSD
 > **Docker Containers**: Resource-limited to simulate production conditions
 
 ### Standalone Mode (Single Node)
@@ -198,31 +198,31 @@ The benchmark produces both terminal output and a JSON file with detailed result
 
 | Test | FlyMQ | Kafka | FlyMQ Advantage |
 |------|-------|-------|-----------------|
-| Tiny (100B) | 7,674 msgs/s | 2,988 msgs/s | **2.57x faster** |
-| Small (1KB) | 7,430 msgs/s | 4,280 msgs/s | **1.74x faster** |
-| Medium (10KB) | 5,006 msgs/s | 3,056 msgs/s | **1.64x faster** |
-| Large (100KB) | 1,070 msgs/s | 898 msgs/s | **1.19x faster** |
-| 4 workers | 19,870 msgs/s | 10,658 msgs/s | **1.86x faster** |
-| 8 workers | 25,036 msgs/s | 12,911 msgs/s | **1.94x faster** |
-| 16 workers | 29,378 msgs/s | 10,784 msgs/s | **2.72x faster** |
-| Sustained | 23,594 msgs/s | 18,449 msgs/s | **1.28x faster** |
+| Tiny (100B) | 7,175 msgs/s | 2,818 msgs/s | **2.55x faster** |
+| Small (1KB) | 7,114 msgs/s | 2,978 msgs/s | **2.39x faster** |
+| Medium (10KB) | 4,660 msgs/s | 2,928 msgs/s | **1.59x faster** |
+| Large (100KB) | 1,120 msgs/s | 849 msgs/s | **1.32x faster** |
+| 4 workers | 19,023 msgs/s | 10,045 msgs/s | **1.89x faster** |
+| 8 workers | 23,203 msgs/s | 13,745 msgs/s | **1.69x faster** |
+| 16 workers | 28,027 msgs/s | 18,218 msgs/s | **1.54x faster** |
+| Sustained | 22,333 msgs/s | 13,708 msgs/s | **1.63x faster** |
 
-**Summary**: FlyMQ averages **14,882 msgs/s** vs Kafka **8,003 msgs/s** → **1.86x faster throughput** with **1.52x lower latency** (p50: 0.30ms vs 0.46ms)
+**Summary**: FlyMQ averages **14,082 msgs/s** vs Kafka **8,161 msgs/s** → **1.73x faster throughput** with **1.53x lower latency** (p50: 0.31ms vs 0.47ms)
 
 ### Cluster Mode (3 Nodes)
 
 | Test | FlyMQ | Kafka | FlyMQ Advantage |
 |------|-------|-------|-----------------|
-| Tiny (100B) | 7,655 msgs/s | 2,398 msgs/s | **3.19x faster** |
-| Small (1KB) | 7,341 msgs/s | 3,610 msgs/s | **2.03x faster** |
-| Medium (10KB) | 4,718 msgs/s | 3,073 msgs/s | **1.54x faster** |
-| Large (100KB) | 1,093 msgs/s | 873 msgs/s | **1.25x faster** |
-| 4 workers | 19,624 msgs/s | 8,873 msgs/s | **2.21x faster** |
-| 8 workers | 25,372 msgs/s | 6,456 msgs/s | **3.93x faster** |
-| 16 workers | 27,896 msgs/s | 16,647 msgs/s | **1.68x faster** |
-| Sustained | 23,782 msgs/s | 15,981 msgs/s | **1.49x faster** |
+| Tiny (100B) | 6,337 msgs/s | 1,899 msgs/s | **3.34x faster** |
+| Small (1KB) | 6,781 msgs/s | 2,700 msgs/s | **2.51x faster** |
+| Medium (10KB) | 4,426 msgs/s | 2,305 msgs/s | **1.92x faster** |
+| Large (100KB) | 1,062 msgs/s | 734 msgs/s | **1.45x faster** |
+| 4 workers | 13,297 msgs/s | 3,846 msgs/s | **3.46x faster** |
+| 8 workers | 18,119 msgs/s | 9,460 msgs/s | **1.92x faster** |
+| 16 workers | 22,713 msgs/s | 14,952 msgs/s | **1.52x faster** |
+| Sustained | 21,357 msgs/s | 12,105 msgs/s | **1.76x faster** |
 
-**Summary**: FlyMQ averages **14,685 msgs/s** vs Kafka **7,239 msgs/s** → **2.03x faster throughput** with **1.68x lower latency** (p50: 0.30ms vs 0.51ms)
+**Summary**: FlyMQ averages **11,762 msgs/s** vs Kafka **6,000 msgs/s** → **1.96x faster throughput** with **1.86x lower latency** (p50: 0.35ms vs 0.64ms)
 
 ## Cleanup
 

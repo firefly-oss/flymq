@@ -51,11 +51,12 @@ services:
     profiles: ["cluster-2", "all"]
     ports:
       - "19092:9092"
+      - "19093:9093"
     environment:
       FLYMQ_NODE_ID: node1
       FLYMQ_BIND_ADDR: "0.0.0.0:9092"
       FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
-      FLYMQ_ADVERTISE_ADDR: "flymq-2node-1:9092"
+      FLYMQ_ADVERTISE_ADDR: "localhost:19092"
       FLYMQ_ADVERTISE_CLUSTER: "flymq-2node-1:9093"
       FLYMQ_PEERS: "flymq-2node-2:9093"
       FLYMQ_DATA_DIR: /data
@@ -80,11 +81,12 @@ services:
     profiles: ["cluster-2", "all"]
     ports:
       - "19094:9092"
+      - "19095:9093"
     environment:
       FLYMQ_NODE_ID: node2
       FLYMQ_BIND_ADDR: "0.0.0.0:9092"
       FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
-      FLYMQ_ADVERTISE_ADDR: "flymq-2node-2:9092"
+      FLYMQ_ADVERTISE_ADDR: "localhost:19094"
       FLYMQ_ADVERTISE_CLUSTER: "flymq-2node-2:9093"
       FLYMQ_PEERS: "flymq-2node-1:9093"
       FLYMQ_DATA_DIR: /data
@@ -112,11 +114,12 @@ services:
     profiles: ["cluster-3", "all"]
     ports:
       - "19092:9092"
+      - "19093:9093"
     environment:
       FLYMQ_NODE_ID: node1
       FLYMQ_BIND_ADDR: "0.0.0.0:9092"
       FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
-      FLYMQ_ADVERTISE_ADDR: "flymq-3node-1:9092"
+      FLYMQ_ADVERTISE_ADDR: "localhost:19092"
       FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-1:9093"
       FLYMQ_PEERS: "flymq-3node-2:9093,flymq-3node-3:9093"
       FLYMQ_DATA_DIR: /data
@@ -141,11 +144,12 @@ services:
     profiles: ["cluster-3", "all"]
     ports:
       - "19094:9092"
+      - "19097:9093"
     environment:
       FLYMQ_NODE_ID: node2
       FLYMQ_BIND_ADDR: "0.0.0.0:9092"
       FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
-      FLYMQ_ADVERTISE_ADDR: "flymq-3node-2:9092"
+      FLYMQ_ADVERTISE_ADDR: "localhost:19094"
       FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-2:9093"
       FLYMQ_PEERS: "flymq-3node-1:9093,flymq-3node-3:9093"
       FLYMQ_DATA_DIR: /data
@@ -173,11 +177,12 @@ services:
     profiles: ["cluster-3", "all"]
     ports:
       - "19096:9092"
+      - "19099:9093"
     environment:
       FLYMQ_NODE_ID: node3
       FLYMQ_BIND_ADDR: "0.0.0.0:9092"
       FLYMQ_CLUSTER_ADDR: "0.0.0.0:9093"
-      FLYMQ_ADVERTISE_ADDR: "flymq-3node-3:9092"
+      FLYMQ_ADVERTISE_ADDR: "localhost:19096"
       FLYMQ_ADVERTISE_CLUSTER: "flymq-3node-3:9093"
       FLYMQ_PEERS: "flymq-3node-1:9093,flymq-3node-2:9093"
       FLYMQ_DATA_DIR: /data
