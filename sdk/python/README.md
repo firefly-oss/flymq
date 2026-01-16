@@ -2,28 +2,44 @@
 
 A high-performance Python client library for FlyMQ message queue with Kafka-like APIs.
 
-**Website:** [https://getfirefly.io](https://getfirefly.io)
+**Website:** [https://flymq.com](https://flymq.com)
+
+---
+
+## Table of Contents
+
+1. [Installation](#installation)
+2. [Quick Start](#quick-start) - Get running in 30 seconds
+3. [Key Concepts](#key-concepts) - Understanding the fundamentals
+4. [High-Level APIs](#high-level-apis) - Recommended for most applications
+   - [Producer](#high-level-producer)
+   - [Consumer](#high-level-consumer)
+5. [Low-Level APIs](#low-level-apis) - For advanced control
+   - [Direct Produce/Consume](#direct-produceconsume)
+   - [Manual Offset Management](#manual-offset-management)
+6. [Advanced Features](#advanced-features)
+   - [Transactions](#transactions)
+   - [Schema Validation](#schema-validation)
+   - [Dead Letter Queues](#dead-letter-queues)
+   - [Delayed Messages](#delayed-messages)
+   - [Message TTL](#message-ttl)
+7. [Configuration Reference](#configuration-reference)
+8. [Error Handling](#error-handling)
+9. [Development](#development)
+
+---
 
 ## Features
 
-- **Kafka-Like APIs** - Familiar `producer()` and `consumer()` patterns
-- **High-Level Producer** - Batching, callbacks, automatic retries
-- **High-Level Consumer** - Auto-commit, poll-based consumption, seek operations
-- **Full Protocol Support** - Implements the complete FlyMQ binary protocol
-- **AES-256-GCM Encryption** - Data-in-motion and data-at-rest encryption
-- **Pydantic Models** - Validated, serializable data models
-- **Reactive Streams (RxPY)** - Reactive programming patterns with backpressure
-- **Automatic Failover** - Connects to multiple bootstrap servers with automatic failover
-- **TLS/SSL Support** - Secure connections with certificate verification
-- **Consumer Groups** - Coordinated consumption with offset management
-- **Transactions** - Exactly-once semantics with atomic operations
-- **Schema Validation** - JSON, Avro, and Protobuf schema support
-- **Dead Letter Queues** - Failed message handling
-- **Delayed Messages** - Scheduled message delivery
-- **Message TTL** - Time-based message expiration
-- **Async/Await Support** - Full asyncio integration
-- **Thread-Safe** - Safe for concurrent use
-- **Helpful Error Messages** - Exceptions include hints for quick debugging
+| Category | Features |
+|----------|----------|
+| **Core** | Kafka-like APIs, High-level Producer/Consumer, Full protocol support |
+| **Reliability** | Automatic retries, Failover, Consumer groups with offset tracking |
+| **Security** | TLS/mTLS, AES-256-GCM encryption, Authentication |
+| **Advanced** | Transactions, Schema validation, Dead letter queues, Delayed messages, TTL |
+| **Developer Experience** | Async/await, Reactive streams (RxPY), Pydantic models, Helpful error hints |
+
+---
 
 ## Installation
 
@@ -38,179 +54,146 @@ cd sdk/python
 pip install -e .
 ```
 
+**Requirements:** Python 3.10+
+
+---
+
 ## Quick Start
 
-### The Simplest Way: `connect()`
+Get up and running in 30 seconds:
 
 ```python
 from pyflymq import connect
 
-# One-liner connection
+# Connect to FlyMQ
 client = connect("localhost:9092")
 
-# Produce and consume
+# Produce a message
 client.produce("my-topic", b"Hello, FlyMQ!")
-msg = client.consume("my-topic", 0)
-print(msg.decode())
+
+# Consume messages with a consumer group (tracks your position automatically)
+with client.consumer("my-topic", group_id="my-app") as consumer:
+    for message in consumer:
+        print(f"Received: {message.decode()}")
+        break  # Exit after first message for demo
 
 client.close()
 ```
 
-### Basic Usage with Context Manager
+That's it! The consumer group `"my-app"` tracks your position. If you restart, you'll continue from where you left off.
 
-```python
-from pyflymq import FlyMQClient
+---
 
-with FlyMQClient("localhost:9092") as client:
-    # Create a topic
-    client.create_topic("my-topic", partitions=3)
+## Key Concepts
 
-    # Produce a message - returns RecordMetadata (Kafka-like)
-    meta = client.produce("my-topic", b"Hello, FlyMQ!")
-    print(f"Produced to {meta.topic}[{meta.partition}] @ offset {meta.offset}")
+Before diving into the APIs, understand these core concepts:
 
-    # Consume the message
-    msg = client.consume("my-topic", meta.offset)
-    print(f"Received: {msg.decode()}")
+### Topics and Partitions
+
+A **topic** is a named stream of messages. Topics are divided into **partitions** for parallelism.
+
+```
+Topic: "orders"
+├── Partition 0: [msg0] [msg1] [msg2] ...
+├── Partition 1: [msg0] [msg1] ...
+└── Partition 2: [msg0] [msg1] [msg2] [msg3] ...
 ```
 
-### Key-Based Messaging (Kafka-style)
+### Message Keys
 
-Messages with the same key are guaranteed to go to the same partition,
-ensuring ordering for related messages.
-
-```python
-from pyflymq import FlyMQClient
-
-with FlyMQClient("localhost:9092") as client:
-    # Produce messages with keys
-    client.produce("orders", b'{"id": 1}', key="user-123")
-    client.produce("orders", b'{"id": 2}', key="user-123")  # Same partition
-    client.produce("orders", b'{"id": 3}', key="user-456")  # May differ
-
-    # Consume and access key
-    msg = client.consume("orders", 0)
-    print(f"Key: {msg.decode_key()}")  # "user-123"
-    print(f"Value: {msg.decode()}")    # '{"id": 1}'
-
-    # Fetch multiple messages with keys
-    result = client.fetch("orders", partition=0, offset=0, max_messages=10)
-    for m in result.messages:
-        print(f"Offset {m.offset}: key={m.decode_key()} value={m.decode()}")
-```
-
-### Using Context Manager
+A **key** determines which partition a message goes to. Same key = same partition = guaranteed order.
 
 ```python
-from pyflymq import FlyMQClient
-
-with FlyMQClient("localhost:9092") as client:
-    client.produce("my-topic", b"Hello!")
-    topics = client.list_topics()
-    print(f"Topics: {topics}")
+# All orders for user-123 go to the same partition (ordered)
+client.produce("orders", b'{"id": 1}', key="user-123")
+client.produce("orders", b'{"id": 2}', key="user-123")  # Same partition!
 ```
 
-### Cluster Connection (HA)
+### Consumer Groups
 
-```python
-from pyflymq import FlyMQClient
+A **consumer group** tracks your position in the topic. Key benefits:
 
-# Connect to multiple servers for high availability
-client = FlyMQClient("node1:9092,node2:9092,node3:9092")
+- **Resume on restart**: If your app crashes, it continues from where it left off
+- **Independent groups**: Multiple apps can each receive ALL messages
+- **Load balancing**: Multiple consumers in the same group share partitions
 
-# Automatic failover if a server becomes unavailable
-offset = client.produce("my-topic", b"Hello!")
+```
+Group "analytics" ──► Receives ALL messages (offset: 100)
+Group "billing"   ──► Receives ALL messages (offset: 50, processing slower)
 ```
 
-## High-Level Producer (Kafka-like)
+### High-Level vs Low-Level APIs
 
-The `HighLevelProducer` provides batching, callbacks, and automatic retries for high-throughput scenarios.
+| API Level | When to Use | Features |
+|-----------|-------------|----------|
+| **High-Level** | Most applications | Auto-commit, batching, simple iteration |
+| **Low-Level** | Advanced control | Manual offsets, direct partition access |
+
+**Recommendation:** Start with High-Level APIs. They handle the complexity for you.
+
+---
+
+## High-Level APIs
+
+These APIs are recommended for most applications. They handle offset tracking, batching, and error recovery automatically.
+
+### High-Level Producer
+
+The high-level producer provides batching, callbacks, and automatic retries.
+
+#### Basic Usage
 
 ```python
 from pyflymq import connect
 
 client = connect("localhost:9092")
 
-# Create a high-level producer with batching
+# Create a producer with batching
 with client.producer(batch_size=100, linger_ms=10) as producer:
-    # Send with callback
-    def on_success(metadata):
-        print(f"Sent to {metadata.topic}[{metadata.partition}] @ {metadata.offset}")
+    # Send messages (batched automatically)
+    producer.send("events", b'{"type": "click"}')
+    producer.send("events", b'{"type": "view"}')
 
-    def on_error(error):
-        print(f"Failed: {error}")
+    # With a key (ensures ordering for same key)
+    producer.send("orders", b'{"id": 1}', key="user-123")
 
-    # Async send with callbacks
+# Producer auto-flushes on exit
+```
+
+#### With Callbacks
+
+```python
+def on_success(metadata):
+    print(f"Sent to {metadata.topic}[{metadata.partition}] @ offset {metadata.offset}")
+
+def on_error(error):
+    print(f"Failed: {error}")
+
+with client.producer() as producer:
     future = producer.send(
         topic="events",
-        value=b'{"event": "click"}',
+        value=b'{"event": "purchase"}',
         key="user-123",
         on_success=on_success,
         on_error=on_error
     )
 
-    # Or wait for result
+    # Or wait for result synchronously
     metadata = future.get(timeout_ms=5000)
-    print(f"Offset: {metadata.offset}")
-
-# Producer auto-flushes on exit
 ```
 
-### Producer Configuration
+### High-Level Consumer
+
+The high-level consumer provides automatic offset tracking and simple iteration.
+
+#### Basic Usage
 
 ```python
 from pyflymq import connect
 
 client = connect("localhost:9092")
 
-# Full configuration
-producer = client.producer(
-    batch_size=1000,        # Max messages per batch
-    linger_ms=50,           # Wait time for batching
-    max_retries=3,          # Retry attempts
-    retry_backoff_ms=100    # Backoff between retries
-)
-
-# High-throughput pattern
-for i in range(10000):
-    producer.send("events", f"event-{i}".encode())
-
-producer.flush()  # Ensure all sent
-producer.close()
-```
-
-## High-Level Consumer (Kafka-like)
-
-The `HighLevelConsumer` provides a familiar Kafka-like API with auto-commit and poll-based consumption.
-
-### Understanding Consumer Groups
-
-A **consumer group** is a named group of consumers that share message processing:
-
-- **Offset Tracking**: FlyMQ remembers where each group left off
-- **Resume on Restart**: If your app crashes, it resumes from the last committed offset
-- **Load Balancing**: Multiple consumers in the same group share partitions
-- **Independent Groups**: Different groups each receive ALL messages
-
-```
-# Two apps consuming the same topic independently:
-App A (group="analytics")  ──► Receives ALL messages
-App B (group="billing")    ──► Also receives ALL messages
-
-# Two instances of the same app sharing work:
-Instance 1 (group="processor") ──► Partition 0
-Instance 2 (group="processor") ──► Partition 1
-```
-
-### Basic Consumer
-
-```python
-from pyflymq import connect
-
-client = connect("localhost:9092")
-
-# Create consumer with Kafka-like API
-# group_id tracks your position - use a unique name per application
+# Create consumer with a group ID (tracks your position automatically)
 with client.consumer("my-topic", group_id="my-app") as consumer:
     for message in consumer:
         print(f"Received: {message.decode()}")
@@ -218,7 +201,7 @@ with client.consumer("my-topic", group_id="my-app") as consumer:
         # Offset is committed automatically every 5 seconds
 ```
 
-### Starting Position
+#### Starting Position
 
 When a consumer group first connects (no committed offset):
 
@@ -232,7 +215,7 @@ consumer = client.consumer("my-topic", group_id="my-app", auto_offset_reset="lat
 
 After the first run, the consumer always resumes from its committed offset.
 
-### Manual Commit (Exactly-Once Processing)
+#### Manual Commit (Exactly-Once Processing)
 
 For critical workloads, disable auto-commit and commit after successful processing:
 
@@ -252,13 +235,9 @@ for message in consumer:
         log_error(e)
 ```
 
-### Poll-Based Consumption
+#### Poll-Based Consumption
 
 ```python
-from pyflymq import connect
-
-client = connect("localhost:9092")
-
 consumer = client.consumer(
     topics=["topic1", "topic2"],
     group_id="my-group",
@@ -266,17 +245,14 @@ consumer = client.consumer(
     auto_commit_interval_ms=5000
 )
 
-# Poll for messages
+# Poll for messages with timeout
 while True:
     messages = consumer.poll(timeout_ms=1000, max_records=100)
     for msg in messages:
         process(msg)
-
-    # Manual commit if auto_commit=False
-    # consumer.commit()
 ```
 
-### Seek Operations
+#### Seek Operations
 
 ```python
 consumer = client.consumer("my-topic", "my-group")
@@ -292,48 +268,86 @@ consumer.seek_to_end()
 position = consumer.position(partition=0)
 ```
 
-## Low-Level Consumer API
+---
 
-For more control, use the low-level Consumer class:
+## Low-Level APIs
+
+Use low-level APIs when you need fine-grained control over partitions and offsets.
+
+### Direct Produce/Consume
+
+The low-level API gives you direct access to partitions and offsets:
 
 ```python
-from pyflymq import FlyMQClient, Consumer
+from pyflymq import FlyMQClient
 
 client = FlyMQClient("localhost:9092")
 
-# Create a consumer with a group ID
-consumer = Consumer(client, "my-topic", group_id="my-group")
+# Create a topic with specific partition count
+client.create_topic("my-topic", partitions=3)
 
-# Poll for messages
-for message in consumer:
-    print(f"Received: {message.decode()}")
-    consumer.commit()  # Commit offset after processing
+# Produce to a specific partition
+offset = client.produce("my-topic", b"Hello!", partition=1)
+print(f"Produced at offset {offset}")
+
+# Consume from a specific partition and offset
+message = client.consume("my-topic", partition=1, offset=0)
+print(f"Message: {message.decode()}")
+
+# Fetch multiple messages
+result = client.fetch("my-topic", partition=0, offset=0, max_messages=100)
+for msg in result.messages:
+    print(f"Offset {msg.offset}: {msg.decode()}")
+
+client.close()
 ```
 
-### Consumer Group with Handler
+### Manual Offset Management
+
+For complete control over offset tracking:
 
 ```python
-from pyflymq import FlyMQClient, ConsumerGroup, ConsumedMessage
-
-def process_message(msg: ConsumedMessage) -> None:
-    print(f"Processing: {msg.decode()}")
+from pyflymq import FlyMQClient
 
 client = FlyMQClient("localhost:9092")
 
-# Consumer group with automatic offset commits
-group = ConsumerGroup(
-    client,
-    topics=["topic1", "topic2"],
-    group_id="my-group",
-    handler=process_message
-)
+# Subscribe to a topic with a consumer group
+# Returns the starting offset (committed or based on reset policy)
+offset = client.subscribe("my-topic", group_id="my-group", partition=0)
 
-group.start()
-# ... run until shutdown
-group.stop()
+# Fetch messages starting from the offset
+result = client.fetch("my-topic", partition=0, offset=offset, max_messages=10)
+
+for msg in result.messages:
+    # Process the message
+    process(msg)
+
+    # Commit the offset after processing
+    # The offset to commit is the NEXT message to read
+    client.commit_offset("my-topic", "my-group", partition=0, offset=msg.offset + 1)
+
+client.close()
 ```
 
-## Transactions
+### Cluster Connection (High Availability)
+
+```python
+from pyflymq import FlyMQClient
+
+# Connect to multiple servers for automatic failover
+client = FlyMQClient("node1:9092,node2:9092,node3:9092")
+
+# If node1 fails, automatically connects to node2 or node3
+offset = client.produce("my-topic", b"Hello!")
+```
+
+---
+
+## Advanced Features
+
+### Transactions
+
+Transactions ensure atomic writes across multiple topics:
 
 ```python
 from pyflymq import FlyMQClient
@@ -342,8 +356,8 @@ client = FlyMQClient("localhost:9092")
 
 # Using context manager (auto-commit/rollback)
 with client.transaction() as txn:
-    txn.produce("topic1", b"Message 1")
-    txn.produce("topic2", b"Message 2")
+    txn.produce("orders", b'{"id": 1}')
+    txn.produce("inventory", b'{"sku": "ABC", "delta": -1}')
     # Automatically commits on success, rolls back on exception
 
 # Manual transaction control
@@ -357,35 +371,13 @@ except Exception:
     raise
 ```
 
-## Producer with Batching
+### Schema Validation
 
-```python
-from pyflymq import FlyMQClient, Producer, ProducerConfig
-
-client = FlyMQClient("localhost:9092")
-
-# Configure batching
-config = ProducerConfig(
-    batch_size=16384,      # 16KB batch
-    linger_ms=100,         # Wait up to 100ms for more messages
-    max_batch_messages=100
-)
-
-producer = Producer(client, config=config)
-
-# Send messages (may be batched)
-producer.send("my-topic", b"Message 1")
-producer.send("my-topic", b"Message 2")
-
-# Ensure all messages are sent
-producer.flush()
-producer.close()
-```
-
-## Schema Validation
+Validate messages against JSON, Avro, or Protobuf schemas:
 
 ```python
 from pyflymq import FlyMQClient
+import json
 
 client = FlyMQClient("localhost:9092")
 
@@ -403,12 +395,15 @@ schema = '''
 client.register_schema("user-schema", "json", schema)
 
 # Produce with schema validation
-import json
 data = json.dumps({"name": "Alice", "age": 30}).encode()
 offset = client.produce_with_schema("users", data, "user-schema")
+
+# Invalid data will raise SchemaValidationError
 ```
 
-## Dead Letter Queue
+### Dead Letter Queues
+
+Handle failed messages with dead letter queues:
 
 ```python
 from pyflymq import FlyMQClient
@@ -419,15 +414,17 @@ client = FlyMQClient("localhost:9092")
 dlq_messages = client.fetch_dlq("my-topic", max_messages=10)
 for msg in dlq_messages:
     print(f"Failed message: {msg.id}, error: {msg.error}")
-    
-    # Replay the message
+
+    # Replay the message back to the original topic
     client.replay_dlq("my-topic", msg.id)
 
 # Purge all DLQ messages
 client.purge_dlq("my-topic")
 ```
 
-## Delayed Messages and TTL
+### Delayed Messages
+
+Schedule messages for future delivery:
 
 ```python
 from pyflymq import FlyMQClient
@@ -436,31 +433,37 @@ client = FlyMQClient("localhost:9092")
 
 # Delayed delivery (5 second delay)
 client.produce_delayed("my-topic", b"Delayed message", delay_ms=5000)
+```
 
-# Message with TTL (expires in 60 seconds)
+### Message TTL
+
+Set expiration time for messages:
+
+```python
+from pyflymq import FlyMQClient
+
+client = FlyMQClient("localhost:9092")
+
+# Message expires in 60 seconds
 client.produce_with_ttl("my-topic", b"Expiring message", ttl_ms=60000)
 ```
 
-## Encryption (AES-256-GCM)
+### Encryption (AES-256-GCM)
 
-The SDK supports AES-256-GCM encryption for both data-in-motion and data-at-rest.
+The SDK supports AES-256-GCM encryption:
 
 ```python
-from pyflymq import Encryptor, generate_key
+from pyflymq import Encryptor, generate_key, ClientConfig
 
 # Generate a new encryption key
 key = generate_key()  # 64-char hex string
 
-# Create encryptor
+# Create encryptor for manual encryption
 encryptor = Encryptor.from_hex_key(key)
-
-# Encrypt/decrypt data
 encrypted = encryptor.encrypt(b"Hello, FlyMQ!")
 decrypted = encryptor.decrypt(encrypted)
 
-# Use with client config
-from pyflymq import ClientConfig
-
+# Or configure client-level encryption
 config = ClientConfig(
     bootstrap_servers="localhost:9092",
     encryption_enabled=True,
@@ -468,17 +471,39 @@ config = ClientConfig(
 )
 ```
 
-## Reactive Streams (RxPY)
-
-The SDK provides reactive programming patterns using RxPY.
+### TLS Configuration
 
 ```python
-from pyflymq import FlyMQClient, ReactiveConsumer, ReactiveProducer
+from pyflymq import FlyMQClient, ClientConfig
+
+# Basic TLS (server verification)
+client = FlyMQClient(
+    "localhost:9093",
+    tls_enabled=True,
+    tls_ca_file="/path/to/ca.crt"
+)
+
+# Mutual TLS (client certificate authentication)
+config = ClientConfig(
+    bootstrap_servers="localhost:9093",
+    tls_enabled=True,
+    tls_ca_file="/path/to/ca.crt",
+    tls_cert_file="/path/to/client.crt",
+    tls_key_file="/path/to/client.key"
+)
+client = FlyMQClient(config=config)
+```
+
+### Reactive Streams (RxPY)
+
+For reactive programming patterns:
+
+```python
+from pyflymq import FlyMQClient, ReactiveConsumer
 from reactivex import operators as ops
 
 client = FlyMQClient("localhost:9092")
 
-# Reactive consumer
 consumer = ReactiveConsumer(client, "my-topic", "my-group")
 consumer.messages().pipe(
     ops.filter(lambda m: b"important" in m.data),
@@ -487,18 +512,9 @@ consumer.messages().pipe(
 ).subscribe(on_next=process_batch)
 
 consumer.start()
-
-# Reactive producer
-producer = ReactiveProducer(client, "my-topic")
-import reactivex as rx
-
-source = rx.of(b"msg1", b"msg2", b"msg3")
-source.pipe(
-    producer.publish()
-).subscribe(on_next=lambda r: print(f"Published at {r.offset}"))
 ```
 
-### Async Consumer
+### Async/Await Support
 
 ```python
 import asyncio
@@ -514,126 +530,9 @@ async def consume():
 asyncio.run(consume())
 ```
 
-## TLS Configuration
+---
 
-### Basic TLS (Server Verification)
-
-```python
-from pyflymq import FlyMQClient
-
-# Connect with TLS and verify server certificate
-client = FlyMQClient(
-    "localhost:9093",
-    tls_enabled=True,
-    tls_ca_file="/path/to/ca.crt"  # CA certificate for server verification
-)
-
-# Use context manager for automatic cleanup
-with FlyMQClient("localhost:9093", tls_enabled=True, tls_ca_file="/path/to/ca.crt") as client:
-    client.produce("my-topic", b"Hello, TLS!")
-```
-
-### Mutual TLS (mTLS - Client Certificate Authentication)
-
-```python
-from pyflymq import FlyMQClient, ClientConfig
-
-# mTLS with client certificate authentication
-config = ClientConfig(
-    bootstrap_servers="localhost:9093",
-    tls_enabled=True,
-    tls_ca_file="/path/to/ca.crt",       # CA certificate
-    tls_cert_file="/path/to/client.crt", # Client certificate
-    tls_key_file="/path/to/client.key"   # Client private key
-)
-client = FlyMQClient(config=config)
-```
-
-### Skip Certificate Verification (Testing Only)
-
-```python
-# WARNING: Only use for testing - disables all certificate verification
-client = FlyMQClient(
-    "localhost:9093",
-    tls_enabled=True,
-    tls_insecure_skip_verify=True  # Insecure - testing only!
-)
-```
-
-### TLS Security Notes
-
-- **Minimum TLS Version**: The client uses Python's `ssl.create_default_context()` which enforces TLS 1.2+
-- **Certificate Verification**: Enabled by default when `tls_ca_file` is provided
-- **Cipher Suites**: Uses Python's default secure cipher suite selection
-
-## Error Handling
-
-PyFlyMQ provides clear error messages with helpful hints to speed up debugging.
-
-### Exception Types
-
-```python
-from pyflymq.exceptions import (
-    FlyMQError,              # Base exception
-    ConnectionError,         # Connection failures
-    TopicNotFoundError,      # Topic doesn't exist
-    AuthenticationError,     # Auth failures
-    TimeoutError,            # Operation timeout
-    OffsetOutOfRangeError,   # Invalid offset
-    ServerError,             # Server-side errors
-)
-```
-
-### Errors with Hints
-
-All exceptions include helpful hints:
-
-```python
-from pyflymq import connect
-from pyflymq.exceptions import TopicNotFoundError, ConnectionError
-
-try:
-    client = connect("localhost:9092")
-    client.produce("nonexistent-topic", b"data")
-except TopicNotFoundError as e:
-    print(f"Error: {e}")
-    print(f"Hint: {e.hint}")
-    # Hint: Create the topic first with client.create_topic("nonexistent-topic", partitions)
-    #       or use the CLI: flymq-cli topic create nonexistent-topic
-except ConnectionError as e:
-    print(f"Error: {e}")
-    print(f"Hint: {e.hint}")
-    # Hint: Check that the FlyMQ server is running and accessible.
-    #       Start it with: flymq
-```
-
-### Graceful Error Recovery
-
-```python
-from pyflymq import connect
-from pyflymq.exceptions import FlyMQError
-import time
-
-def produce_with_retry(client, topic, data, max_retries=3):
-    """Produce with exponential backoff retry."""
-    backoff = 0.1
-    for attempt in range(max_retries):
-        try:
-            return client.produce(topic, data)
-        except FlyMQError as e:
-            if attempt < max_retries - 1:
-                print(f"Retry {attempt + 1}: {e}")
-                time.sleep(backoff)
-                backoff *= 2
-            else:
-                raise
-
-# Usage
-client = connect("localhost:9092")
-offset = produce_with_retry(client, "my-topic", b"important data")
-```
-
-## Configuration Options
+## Configuration Reference
 
 ### ClientConfig
 
@@ -670,6 +569,70 @@ offset = produce_with_retry(client, "my-topic", b"important data")
 | `auto_commit_interval_ms` | int | 5000 | Auto-commit interval |
 | `max_poll_records` | int | 500 | Max records per poll |
 
+---
+
+## Error Handling
+
+PyFlyMQ provides clear error messages with helpful hints.
+
+### Exception Types
+
+```python
+from pyflymq.exceptions import (
+    FlyMQError,              # Base exception
+    ConnectionError,         # Connection failures
+    TopicNotFoundError,      # Topic doesn't exist
+    AuthenticationError,     # Auth failures
+    TimeoutError,            # Operation timeout
+    OffsetOutOfRangeError,   # Invalid offset
+    ServerError,             # Server-side errors
+)
+```
+
+### Errors with Hints
+
+All exceptions include helpful hints:
+
+```python
+from pyflymq import connect
+from pyflymq.exceptions import TopicNotFoundError
+
+try:
+    client = connect("localhost:9092")
+    client.produce("nonexistent-topic", b"data")
+except TopicNotFoundError as e:
+    print(f"Error: {e}")
+    print(f"Hint: {e.hint}")
+    # Hint: Create the topic first with client.create_topic("nonexistent-topic", partitions)
+```
+
+### Retry Pattern
+
+```python
+from pyflymq import connect
+from pyflymq.exceptions import FlyMQError
+import time
+
+def produce_with_retry(client, topic, data, max_retries=3):
+    """Produce with exponential backoff retry."""
+    backoff = 0.1
+    for attempt in range(max_retries):
+        try:
+            return client.produce(topic, data)
+        except FlyMQError as e:
+            if attempt < max_retries - 1:
+                print(f"Retry {attempt + 1}: {e}")
+                time.sleep(backoff)
+                backoff *= 2
+            else:
+                raise
+
+client = connect("localhost:9092")
+offset = produce_with_retry(client, "my-topic", b"important data")
+```
+
+---
+
 ## Development
 
 ### Running Tests
@@ -699,6 +662,8 @@ mypy pyflymq
 ```bash
 ruff check pyflymq
 ```
+
+---
 
 ## License
 
