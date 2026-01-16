@@ -182,3 +182,127 @@ func TestSegmentRemove(t *testing.T) {
 		t.Error("Index file should be deleted")
 	}
 }
+
+// TestSegmentCrashRecovery tests that a segment correctly recovers after a crash
+// where the index file was left with pre-allocated size.
+func TestSegmentCrashRecovery(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Segment: SegmentConfig{
+			MaxStoreBytes: 4096,
+			MaxIndexBytes: 1024,
+		},
+	}
+
+	// Step 1: Create segment and write some messages
+	seg, err := NewSegment(dir, 0, cfg)
+	if err != nil {
+		t.Fatalf("NewSegment failed: %v", err)
+	}
+
+	testData := [][]byte{
+		[]byte("Message 1"),
+		[]byte("Message 2"),
+		[]byte("Message 3"),
+	}
+
+	for _, data := range testData {
+		if _, err := seg.Append(data); err != nil {
+			t.Fatalf("Append failed: %v", err)
+		}
+	}
+
+	expectedNextOffset := seg.nextOffset
+
+	// Step 2: Simulate crash - sync data but don't close properly
+	seg.index.mmap.Sync(0)
+	// Close store to flush data
+	seg.store.Close()
+	// Don't call seg.Close() - simulates crash
+
+	// Step 3: Reopen segment - should recover correctly
+	seg2, err := NewSegment(dir, 0, cfg)
+	if err != nil {
+		t.Fatalf("NewSegment on recovery failed: %v", err)
+	}
+	defer seg2.Close()
+
+	// Verify nextOffset was recovered
+	if seg2.nextOffset != expectedNextOffset {
+		t.Errorf("Expected nextOffset %d, got %d", expectedNextOffset, seg2.nextOffset)
+	}
+
+	// Verify we can read all messages
+	for i, data := range testData {
+		read, err := seg2.Read(uint64(i))
+		if err != nil {
+			t.Fatalf("Read failed for offset %d: %v", i, err)
+		}
+		if !bytes.Equal(data, read) {
+			t.Errorf("Data mismatch at offset %d: expected %s, got %s", i, data, read)
+		}
+	}
+
+	// Verify we can write new messages
+	newData := []byte("Message 4")
+	off, err := seg2.Append(newData)
+	if err != nil {
+		t.Fatalf("Append after recovery failed: %v", err)
+	}
+	if off != expectedNextOffset {
+		t.Errorf("Expected offset %d, got %d", expectedNextOffset, off)
+	}
+
+	// Verify new message can be read
+	read, err := seg2.Read(off)
+	if err != nil {
+		t.Fatalf("Read new message failed: %v", err)
+	}
+	if !bytes.Equal(newData, read) {
+		t.Errorf("New message mismatch")
+	}
+}
+
+// TestSegmentRecoveryWithBaseOffset tests recovery with non-zero base offset
+func TestSegmentRecoveryWithBaseOffset(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		Segment: SegmentConfig{
+			MaxStoreBytes: 4096,
+			MaxIndexBytes: 1024,
+		},
+	}
+
+	baseOffset := uint64(1000)
+
+	// Create segment with base offset
+	seg, _ := NewSegment(dir, baseOffset, cfg)
+	seg.Append([]byte("Message at 1000"))
+	seg.Append([]byte("Message at 1001"))
+
+	expectedNextOffset := seg.nextOffset
+
+	// Simulate crash
+	seg.index.mmap.Sync(0)
+	seg.store.Close()
+
+	// Recover
+	seg2, err := NewSegment(dir, baseOffset, cfg)
+	if err != nil {
+		t.Fatalf("Recovery failed: %v", err)
+	}
+	defer seg2.Close()
+
+	if seg2.nextOffset != expectedNextOffset {
+		t.Errorf("Expected nextOffset %d, got %d", expectedNextOffset, seg2.nextOffset)
+	}
+
+	// Verify reads work with base offset
+	data, err := seg2.Read(1000)
+	if err != nil {
+		t.Fatalf("Read at base offset failed: %v", err)
+	}
+	if string(data) != "Message at 1000" {
+		t.Errorf("Data mismatch at base offset")
+	}
+}

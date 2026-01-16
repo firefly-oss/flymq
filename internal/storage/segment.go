@@ -183,14 +183,58 @@ func NewSegment(dir string, baseOffset uint64, c Config) (*Segment, error) {
 
 	// Recover nextOffset from existing index (if any)
 	// Read(-1) gets the last entry
-	if off, _, err := s.index.Read(-1); err != nil {
+	if off, pos, err := s.index.Read(-1); err != nil {
 		// Empty index - start from baseOffset
 		s.nextOffset = baseOffset
 	} else {
-		// Continue from last offset + 1
-		s.nextOffset = baseOffset + uint64(off) + 1
+		// Validate that the store has the data for the last index entry
+		// This handles the case where the index was written but the store
+		// data wasn't synced before a crash
+		storeSize := *s.storeSize
+		if pos >= storeSize {
+			// Index points beyond store - need to truncate index
+			// Find the last valid entry that exists in the store
+			s.nextOffset = s.recoverConsistentOffset(baseOffset, storeSize)
+		} else {
+			// Continue from last offset + 1
+			s.nextOffset = baseOffset + uint64(off) + 1
+		}
 	}
 	return s, nil
+}
+
+// recoverConsistentOffset finds the last offset that has valid data in the store.
+// This is called when the index has entries pointing beyond the store size,
+// which can happen if the server crashed after writing to the index but before
+// syncing the store data.
+//
+// ALGORITHM:
+// Binary search through the index to find the last entry where the position
+// is within the store bounds.
+func (s *Segment) recoverConsistentOffset(baseOffset, storeSize uint64) uint64 {
+	// Binary search for the last valid entry
+	low := uint64(0)
+	high := s.index.size / entWidth
+
+	for low < high {
+		mid := (low + high + 1) / 2
+		_, pos, err := s.index.Read(int64(mid - 1))
+		if err != nil || pos >= storeSize {
+			high = mid - 1
+		} else {
+			low = mid
+		}
+	}
+
+	if low == 0 {
+		// No valid entries - truncate index to empty
+		s.index.size = 0
+		return baseOffset
+	}
+
+	// Truncate index to the last valid entry
+	s.index.size = low * entWidth
+	return baseOffset + low
 }
 
 // Append writes a message to the segment and returns the assigned offset.

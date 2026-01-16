@@ -116,12 +116,19 @@ type Index struct {
 // 1. Get current file size (for recovery of existing index)
 // 2. Pre-allocate file to MaxIndexBytes
 // 3. Memory-map the file for direct access
+// 4. Scan for actual data size (recovery after crash)
 //
 // PRE-ALLOCATION:
 // The file is truncated to MaxIndexBytes even if empty. This:
 // - Reserves contiguous disk space
 // - Allows the mmap to cover the full potential size
 // - Avoids costly resize operations during writes
+//
+// CRASH RECOVERY:
+// If the server crashes without calling Close(), the file will have the
+// pre-allocated size (MaxIndexBytes) but only contain valid data up to
+// the last written entry. We scan the file to find the actual data size
+// by looking for the last non-zero entry.
 //
 // PARAMETERS:
 // - f: Open file handle for the index file
@@ -140,7 +147,7 @@ func NewIndex(f *os.File, config Config) (*Index, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx.size = uint64(fi.Size())
+	savedSize := uint64(fi.Size())
 
 	// Pre-allocate file to maximum size for memory mapping.
 	// This ensures the mmap covers the full potential index size.
@@ -154,7 +161,73 @@ func NewIndex(f *os.File, config Config) (*Index, error) {
 	if idx.mmap, err = gommap.Map(idx.file.Fd(), gommap.PROT_READ|gommap.PROT_WRITE, gommap.MAP_SHARED); err != nil {
 		return nil, err
 	}
+
+	// Recover actual data size after crash
+	// If the file was properly closed, savedSize reflects the actual data size.
+	// If the server crashed, savedSize might be MaxIndexBytes (pre-allocated).
+	// We need to scan to find the actual last valid entry.
+	idx.size = idx.recoverActualSize(savedSize, config.Segment.MaxIndexBytes)
+
 	return idx, nil
+}
+
+// recoverActualSize finds the actual data size in the index after a crash.
+// If the file was properly closed, savedSize is the actual data size.
+// If the server crashed, we need to scan for the last non-zero entry.
+//
+// ALGORITHM:
+// 1. If savedSize < MaxIndexBytes, the file was properly closed - use savedSize
+// 2. If savedSize == MaxIndexBytes, the file might have crashed while pre-allocated
+//    - Scan backwards from the end to find the last non-zero entry
+//    - This is O(n) in the worst case but only happens on crash recovery
+//
+// ZERO ENTRIES:
+// A valid entry has a non-zero position field (8 bytes after offset).
+// The first entry at offset 0 has position 0, but subsequent entries have
+// increasing positions. We check if the entire entry is zero to detect
+// unused space.
+func (i *Index) recoverActualSize(savedSize, maxSize uint64) uint64 {
+	// If file was properly closed (truncated to actual size), use that
+	if savedSize < maxSize && savedSize%entWidth == 0 {
+		return savedSize
+	}
+
+	// File might have crashed while pre-allocated - scan for actual data
+	// Start from the end and work backwards to find the last valid entry
+	numEntries := uint64(len(i.mmap)) / entWidth
+
+	// Binary search for the first zero entry
+	// This is more efficient than linear scan for large indexes
+	low := uint64(0)
+	high := numEntries
+
+	for low < high {
+		mid := (low + high) / 2
+		pos := mid * entWidth
+
+		// Check if this entry is zero (unused)
+		if i.isZeroEntry(pos) {
+			high = mid
+		} else {
+			low = mid + 1
+		}
+	}
+
+	return low * entWidth
+}
+
+// isZeroEntry checks if the entry at the given position is all zeros.
+// This indicates unused space in the pre-allocated index.
+func (i *Index) isZeroEntry(pos uint64) bool {
+	if pos+entWidth > uint64(len(i.mmap)) {
+		return true
+	}
+	for j := pos; j < pos+entWidth; j++ {
+		if i.mmap[j] != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Close syncs the index to disk and closes the file.
