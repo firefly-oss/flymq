@@ -1324,6 +1324,34 @@ func (n *RaftNode) saveState() error {
 		return err
 	}
 
+	// Use atomic write: write to temp file, sync, then rename
+	// This ensures the state file is never corrupted even if the server crashes
 	stateFile := filepath.Join(n.config.DataDir, "raft_state.json")
-	return os.WriteFile(stateFile, data, 0644)
+	tempFile := stateFile + ".tmp"
+
+	f, err := os.Create(tempFile)
+	if err != nil {
+		return err
+	}
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tempFile)
+		return err
+	}
+
+	// Sync to ensure data is on disk before rename
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tempFile)
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tempFile)
+		return err
+	}
+
+	// Atomic rename - this is atomic on POSIX systems
+	return os.Rename(tempFile, stateFile)
 }

@@ -496,8 +496,36 @@ func (m *MembershipManager) saveMembership() error {
 		return err
 	}
 
+	// Use atomic write: write to temp file, sync, then rename
+	// This ensures the membership file is never corrupted even if the server crashes
 	memberFile := filepath.Join(m.config.DataDir, "membership.json")
-	return os.WriteFile(memberFile, data, 0644)
+	tempFile := memberFile + ".tmp"
+
+	f, err := os.Create(tempFile)
+	if err != nil {
+		return err
+	}
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tempFile)
+		return err
+	}
+
+	// Sync to ensure data is on disk before rename
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tempFile)
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tempFile)
+		return err
+	}
+
+	// Atomic rename - this is atomic on POSIX systems
+	return os.Rename(tempFile, memberFile)
 }
 
 // normalizePeerAddress converts localhost to 127.0.0.1 for consistent addressing
