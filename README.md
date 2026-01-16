@@ -99,26 +99,26 @@ All benchmarks run in Docker containers with identical resource limits for fair 
 
 | Metric | FlyMQ | Kafka | FlyMQ Advantage |
 |--------|-------|-------|-----------------|
-| **Average Throughput** | **14,882 msgs/s** | **8,003 msgs/s** | **1.86x faster** |
-| **Peak Throughput** | **29,378 msgs/s** | **18,449 msgs/s** | **1.59x faster** |
-| **Latency (p50)** | **0.30ms** | **0.46ms** | **1.52x lower** |
+| **Average Throughput** | **14,082 msgs/s** | **8,161 msgs/s** | **1.73x faster** |
+| **Peak Throughput** | **28,027 msgs/s** | **18,218 msgs/s** | **1.54x faster** |
+| **Latency (p50)** | **0.31ms** | **0.47ms** | **1.53x lower** |
 
 #### 3-Node Cluster (with Replication)
 
 | Metric | FlyMQ | Kafka | FlyMQ Advantage |
 |--------|-------|-------|-----------------|
-| **Average Throughput** | **14,685 msgs/s** | **7,239 msgs/s** | **2.03x faster** |
-| **Peak Throughput** | **27,896 msgs/s** | **16,647 msgs/s** | **1.68x faster** |
-| **Latency (p50)** | **0.30ms** | **0.51ms** | **1.68x lower** |
+| **Average Throughput** | **11,762 msgs/s** | **6,000 msgs/s** | **1.96x faster** |
+| **Peak Throughput** | **22,713 msgs/s** | **14,952 msgs/s** | **1.52x faster** |
+| **Latency (p50)** | **0.35ms** | **0.64ms** | **1.86x lower** |
 
 #### Key Performance Highlights
 
-- **Consistent Low Latency**: p50 latency remains at 0.30ms regardless of cluster size
-- **Better Cluster Scaling**: Performance advantage increases with cluster size (1.48x → 2.03x)
+- **Consistent Low Latency**: p50 latency remains under 0.35ms regardless of cluster size
+- **Better Cluster Scaling**: Performance advantage increases with cluster size (1.48x → 1.96x)
 - **Binary Protocol**: Go client uses efficient binary encoding (~30% less overhead than JSON)
 - **Memory Efficiency**: Buffer pooling and reduced allocations under load
 
-> **Test Environment**: Apple M3 Pro, 12 cores, 36GB RAM, NVMe SSD (January 2026)
+> **Test Environment**: Apple M3 Pro, 12 cores, 36GB RAM, NVMe SSD (January 16, 2026)
 > Results may vary based on hardware. See [benchmarks/](benchmarks/) for full benchmark suite and reproduction instructions.
 
 ---

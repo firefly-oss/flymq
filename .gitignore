@@ -2,6 +2,7 @@
 /flymq
 /flymq-cli
 /benchmarks/benchmark
+/benchmarks/*.json
 *.exe
 *.exe~
 *.dll
