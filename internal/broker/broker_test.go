@@ -18,6 +18,7 @@ package broker
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -386,5 +387,114 @@ func TestGetTopicInfoNonExistent(t *testing.T) {
 	_, err := b.GetTopicInfo("non-existent")
 	if err == nil {
 		t.Error("Expected error for non-existent topic")
+	}
+}
+
+// TestConsumerGroupResumeFromCommit verifies that consumers resume from
+// their committed offset after a "restart" (simulated by re-subscribing).
+// This is the core behavior that prevents message re-consumption.
+func TestConsumerGroupResumeFromCommit(t *testing.T) {
+	b := newTestBroker(t)
+	topic := "resume-test"
+	group := "test-group"
+
+	b.CreateTopic(topic, 1)
+
+	// Produce 10 messages
+	for i := 0; i < 10; i++ {
+		b.Produce(topic, []byte(fmt.Sprintf("message-%d", i)))
+	}
+
+	// First consumer session: consume 5 messages and commit
+	offset, err := b.Subscribe(topic, group, 0, protocol.SubscribeFromEarliest)
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+	if offset != 0 {
+		t.Errorf("Expected initial offset 0, got %d", offset)
+	}
+
+	// Fetch 5 messages
+	messages, nextOffset, err := b.Fetch(topic, 0, offset, 5)
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if len(messages) != 5 {
+		t.Errorf("Expected 5 messages, got %d", len(messages))
+	}
+	if nextOffset != 5 {
+		t.Errorf("Expected next offset 5, got %d", nextOffset)
+	}
+
+	// Commit offset 5 (next message to read)
+	changed, err := b.CommitOffset(topic, group, 0, nextOffset)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if !changed {
+		t.Error("Expected offset to be marked as changed")
+	}
+
+	// Simulate restart: subscribe again with "committed" mode
+	resumeOffset, err := b.Subscribe(topic, group, 0, protocol.SubscribeFromCommit)
+	if err != nil {
+		t.Fatalf("Subscribe (resume) failed: %v", err)
+	}
+
+	// Should resume from offset 5, not 0
+	if resumeOffset != 5 {
+		t.Errorf("Expected resume offset 5, got %d", resumeOffset)
+	}
+
+	// Fetch remaining messages using FetchWithKeys to verify content
+	fetchedMessages, nextOffset, err := b.FetchWithKeys(topic, 0, resumeOffset, 10)
+	if err != nil {
+		t.Fatalf("Fetch (resume) failed: %v", err)
+	}
+	if len(fetchedMessages) != 5 {
+		t.Errorf("Expected 5 remaining messages, got %d", len(fetchedMessages))
+	}
+
+	// Verify we got messages 5-9, not 0-4
+	if string(fetchedMessages[0].Value) != "message-5" {
+		t.Errorf("Expected first message to be 'message-5', got '%s'", string(fetchedMessages[0].Value))
+	}
+}
+
+// TestCommitOffsetIdempotent verifies that committing the same offset
+// multiple times doesn't cause unnecessary disk writes.
+func TestCommitOffsetIdempotent(t *testing.T) {
+	b := newTestBroker(t)
+	topic := "idempotent-test"
+	group := "test-group"
+
+	b.CreateTopic(topic, 1)
+	b.Produce(topic, []byte("message"))
+
+	// First commit should return changed=true
+	changed, err := b.CommitOffset(topic, group, 0, 1)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if !changed {
+		t.Error("First commit should return changed=true")
+	}
+
+	// Second commit of same offset should return changed=false
+	changed, err = b.CommitOffset(topic, group, 0, 1)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if changed {
+		t.Error("Second commit of same offset should return changed=false")
+	}
+
+	// Third commit of different offset should return changed=true
+	changed, err = b.CommitOffset(topic, group, 0, 2)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if !changed {
+		t.Error("Commit of different offset should return changed=true")
 	}
 }

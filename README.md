@@ -25,6 +25,7 @@ and enterprise-grade security features.
 - [Installation](#installation)
 - [Cluster Deployment](#cluster-deployment)
 - [Configuration](#configuration)
+- [Consumer Groups](docs/consumer-groups.md) - How offset tracking and message consumption works
 - [Security](#security)
 - [Architecture](#architecture)
 - [CLI Reference](#cli-reference)

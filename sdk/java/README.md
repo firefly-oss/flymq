@@ -219,13 +219,37 @@ ClientConfig config = ClientConfig.builder()
     .build();
 ```
 
-## Consumer Groups (Low-Level)
+## Understanding Consumer Groups
+
+A **consumer group** is a named group of consumers that share message processing:
+
+- **Offset Tracking**: FlyMQ remembers where each group left off
+- **Resume on Restart**: If your app crashes, it resumes from the last committed offset
+- **Load Balancing**: Multiple consumers in the same group share partitions
+- **Independent Groups**: Different groups each receive ALL messages
+
+```
+// Two apps consuming the same topic independently:
+App A (group="analytics")  ──► Receives ALL messages
+App B (group="billing")    ──► Also receives ALL messages
+
+// Two instances of the same app sharing work:
+Instance 1 (group="processor") ──► Partition 0
+Instance 2 (group="processor") ──► Partition 1
+```
+
+### Low-Level Consumer Group API
+
+For fine-grained control over offset management:
 
 ```java
 import com.firefly.flymq.protocol.Records.SubscribeMode;
 
 // Subscribe with a consumer group
-long startOffset = client.subscribe("my-topic", "my-group", 0, SubscribeMode.EARLIEST);
+// SubscribeMode.COMMIT: Resume from last committed offset (recommended)
+// SubscribeMode.EARLIEST: Start from beginning
+// SubscribeMode.LATEST: Start from new messages only
+long startOffset = client.subscribe("my-topic", "my-group", 0, SubscribeMode.COMMIT);
 
 // Fetch messages in batches
 var result = client.fetch("my-topic", 0, startOffset, 100);
@@ -233,7 +257,7 @@ for (var message : result.messages()) {
     System.out.println("Received: " + message.dataAsString());
 }
 
-// Commit offset
+// Commit offset after successful processing
 client.commitOffset("my-topic", "my-group", 0, result.nextOffset());
 ```
 
@@ -300,6 +324,8 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 
 The `Consumer` provides a Kafka-like API with auto-commit and poll-based consumption.
 
+### Basic Consumer
+
 ```java
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.consumer.Consumer;
@@ -308,9 +334,10 @@ import java.time.Duration;
 
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 
-    // Create consumer
+    // Create consumer with a group ID
+    // The group ID tracks your position - use a unique name per application
     try (Consumer consumer = client.consumer("my-topic", "my-group")) {
-        consumer.subscribe();
+        consumer.subscribe();  // Resumes from last committed offset
 
         while (true) {
             List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
@@ -319,7 +346,53 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
                 System.out.println("Value: " + msg.dataAsString());
                 System.out.println("Offset: " + msg.offset());
             }
-            // Auto-commit enabled by default
+            // Offset is committed automatically every 5 seconds
+        }
+    }
+}
+```
+
+### Starting Position
+
+When a consumer group first connects (no committed offset):
+
+```java
+import com.firefly.flymq.protocol.Records.SubscribeMode;
+
+// Start from the beginning (process all historical messages)
+consumer.subscribe(SubscribeMode.EARLIEST);
+
+// Start from the end (only new messages) - this is the default
+consumer.subscribe(SubscribeMode.LATEST);
+
+// Resume from committed offset (normal operation)
+consumer.subscribe(SubscribeMode.COMMIT);
+```
+
+After the first run, the consumer always resumes from its committed offset.
+
+### Manual Commit (Exactly-Once Processing)
+
+For critical workloads, disable auto-commit and commit after successful processing:
+
+```java
+ConsumerConfig config = ConsumerConfig.builder()
+    .enableAutoCommit(false)  // Disable auto-commit
+    .build();
+
+try (Consumer consumer = client.consumer("orders", "payment-processor", 0, config)) {
+    consumer.subscribe();
+
+    while (true) {
+        List<ConsumedMessage> messages = consumer.poll(Duration.ofSeconds(1));
+        for (ConsumedMessage msg : messages) {
+            try {
+                processPayment(msg);
+                consumer.commitSync();  // Only commit after successful processing
+            } catch (Exception e) {
+                // Message will be reprocessed on next run
+                logError(e);
+            }
         }
     }
 }
@@ -331,9 +404,9 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 import com.firefly.flymq.consumer.ConsumerConfig;
 
 ConsumerConfig config = ConsumerConfig.builder()
-    .maxPollRecords(100)
-    .enableAutoCommit(true)
-    .autoCommitIntervalMs(5000)
+    .maxPollRecords(100)           // Max messages per poll
+    .enableAutoCommit(true)        // Auto-commit offsets (default: true)
+    .autoCommitIntervalMs(5000)    // Commit interval (default: 5000ms)
     .build();
 
 try (Consumer consumer = client.consumer("my-topic", "my-group", 0, config)) {

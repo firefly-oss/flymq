@@ -752,7 +752,8 @@ func cmdSubscribe(args []string) {
 
 	topic := args[0]
 	groupID := "default"
-	mode := "latest"
+	mode := "committed" // Default: resume from committed offset, fallback to latest
+	modeExplicit := false
 	partition := 0
 	quiet := false
 	showTimestamp := true
@@ -765,12 +766,15 @@ func cmdSubscribe(args []string) {
 		case "--from", "-f":
 			if i+1 < len(args) {
 				mode = args[i+1]
+				modeExplicit = true
 				i++
 			}
 		case "--from-beginning":
 			mode = "earliest"
+			modeExplicit = true
 		case "--from-latest":
 			mode = "latest"
+			modeExplicit = true
 		case "--group", "-g":
 			if i+1 < len(args) {
 				groupID = args[i+1]
@@ -812,7 +816,13 @@ func cmdSubscribe(args []string) {
 	}
 
 	if !quiet {
-		cli.Success("Subscribed to %s (group: %s, starting offset: %d)", topic, groupID, offset)
+		modeDesc := "resuming from committed offset"
+		if modeExplicit {
+			modeDesc = fmt.Sprintf("starting from %s", mode)
+		} else if offset == 0 {
+			modeDesc = "starting from beginning (new group)"
+		}
+		cli.Success("Subscribed to %s (group: %s, %s, offset: %d)", topic, groupID, modeDesc, offset)
 		cli.Info("Press Ctrl+C to stop...")
 		cli.Separator()
 	}
@@ -2798,7 +2808,10 @@ func printProduceHelp() {
 }
 
 func printConsumeHelp() {
-	cli.Header("consume - Consume messages from a topic (batch fetch)")
+	cli.Header("consume - Fetch messages from a topic (one-time batch read)")
+	fmt.Println()
+	fmt.Println("  This command fetches a batch of messages WITHOUT tracking your position.")
+	fmt.Println("  Use this for debugging or one-time reads. For production, use 'subscribe'.")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  flymq-cli consume <topic> [options]")
@@ -2816,10 +2829,10 @@ func printConsumeHelp() {
 	fmt.Println("  --no-offset             Hide offset prefix in output")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  # Consume 10 messages from offset 0")
+	fmt.Println("  # Read first 10 messages")
 	fmt.Println("  flymq-cli consume my-topic")
 	fmt.Println()
-	fmt.Println("  # Consume 50 messages starting at offset 100")
+	fmt.Println("  # Read 50 messages starting at offset 100")
 	fmt.Println("  flymq-cli consume my-topic --offset 100 --count 50")
 	fmt.Println()
 	fmt.Println("  # Show message keys")
@@ -2828,10 +2841,17 @@ func printConsumeHelp() {
 	fmt.Println("  # Raw output for piping")
 	fmt.Println("  flymq-cli consume my-topic --raw | grep 'error'")
 	fmt.Println()
+	fmt.Println("See also:")
+	fmt.Println("  subscribe   Continuous streaming with offset tracking (recommended)")
+	fmt.Println("  groups      Manage consumer groups and offsets")
+	fmt.Println()
 }
 
 func printSubscribeHelp() {
-	cli.Header("subscribe - Subscribe for continuous message streaming")
+	cli.Header("subscribe - Stream messages with automatic offset tracking")
+	fmt.Println()
+	fmt.Println("  This command continuously streams messages and tracks your position.")
+	fmt.Println("  If you restart, it resumes from where you left off. Use this for production.")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  flymq-cli subscribe <topic> [options]")
@@ -2839,11 +2859,18 @@ func printSubscribeHelp() {
 	fmt.Println("Arguments:")
 	fmt.Println("  <topic>     Topic to subscribe to")
 	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  --from, -f <mode>       Start position: earliest, latest (default: latest)")
-	fmt.Println("  --from-beginning        Start from the earliest offset (alias for --from earliest)")
-	fmt.Println("  --from-latest           Start from the latest offset (alias for --from latest)")
-	fmt.Println("  --group, -g <id>        Consumer group ID (default: default)")
+	fmt.Println("Consumer Group Options:")
+	fmt.Println("  --group, -g <id>        Consumer group ID (default: 'default')")
+	fmt.Println("                          Messages are tracked per group. Use a unique name")
+	fmt.Println("                          for each application that consumes from this topic.")
+	fmt.Println()
+	fmt.Println("Starting Position:")
+	fmt.Println("  --from-beginning        Start from the first message (for new groups)")
+	fmt.Println("  --from-latest           Start from new messages only (default for new groups)")
+	fmt.Println("  --from, -f <mode>       Explicit mode: earliest, latest, committed")
+	fmt.Println("                          Note: Existing groups always resume from committed offset")
+	fmt.Println()
+	fmt.Println("Other Options:")
 	fmt.Println("  --partition, -p <n>     Partition number (default: 0)")
 	fmt.Println("  --show-key, -k          Display message keys in output")
 	fmt.Println("  --show-lag, -l          Show consumer lag periodically")
@@ -2856,14 +2883,24 @@ func printSubscribeHelp() {
 	fmt.Println("  # Stream new messages (like tail -f)")
 	fmt.Println("  flymq-cli subscribe my-topic")
 	fmt.Println()
-	fmt.Println("  # Stream from beginning")
-	fmt.Println("  flymq-cli subscribe my-topic --from earliest")
+	fmt.Println("  # Process all messages from beginning with tracking")
+	fmt.Println("  flymq-cli subscribe my-topic --group my-app --from-beginning")
 	fmt.Println()
-	fmt.Println("  # With consumer group (offset tracking)")
-	fmt.Println("  flymq-cli subscribe my-topic --group my-group")
+	fmt.Println("  # Resume from where you left off (after restart)")
+	fmt.Println("  flymq-cli subscribe my-topic --group my-app")
 	fmt.Println()
-	fmt.Println("  # Raw output for piping")
-	fmt.Println("  flymq-cli subscribe my-topic --raw | jq .")
+	fmt.Println("  # Monitor lag while consuming")
+	fmt.Println("  flymq-cli subscribe my-topic --group my-app --show-lag")
+	fmt.Println()
+	fmt.Println("How Consumer Groups Work:")
+	fmt.Println("  - Each group tracks its own position independently")
+	fmt.Println("  - Multiple apps with different groups each see ALL messages")
+	fmt.Println("  - Multiple consumers with SAME group share the workload")
+	fmt.Println("  - Offsets are committed automatically after processing")
+	fmt.Println()
+	fmt.Println("See also:")
+	fmt.Println("  consume     One-time batch read (no tracking)")
+	fmt.Println("  groups      Manage consumer groups and offsets")
 	fmt.Println()
 }
 

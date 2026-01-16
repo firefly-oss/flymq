@@ -183,18 +183,73 @@ producer.close()
 
 The `HighLevelConsumer` provides a familiar Kafka-like API with auto-commit and poll-based consumption.
 
+### Understanding Consumer Groups
+
+A **consumer group** is a named group of consumers that share message processing:
+
+- **Offset Tracking**: FlyMQ remembers where each group left off
+- **Resume on Restart**: If your app crashes, it resumes from the last committed offset
+- **Load Balancing**: Multiple consumers in the same group share partitions
+- **Independent Groups**: Different groups each receive ALL messages
+
+```
+# Two apps consuming the same topic independently:
+App A (group="analytics")  ──► Receives ALL messages
+App B (group="billing")    ──► Also receives ALL messages
+
+# Two instances of the same app sharing work:
+Instance 1 (group="processor") ──► Partition 0
+Instance 2 (group="processor") ──► Partition 1
+```
+
+### Basic Consumer
+
 ```python
 from pyflymq import connect
 
 client = connect("localhost:9092")
 
 # Create consumer with Kafka-like API
-with client.consumer("my-topic", "my-group") as consumer:
-    # Iterate over messages
+# group_id tracks your position - use a unique name per application
+with client.consumer("my-topic", group_id="my-app") as consumer:
     for message in consumer:
         print(f"Received: {message.decode()}")
         print(f"Key: {message.key}, Offset: {message.offset}")
-        # Auto-commit enabled by default
+        # Offset is committed automatically every 5 seconds
+```
+
+### Starting Position
+
+When a consumer group first connects (no committed offset):
+
+```python
+# Start from the beginning (process all historical messages)
+consumer = client.consumer("my-topic", group_id="my-app", auto_offset_reset="earliest")
+
+# Start from the end (only new messages) - this is the default
+consumer = client.consumer("my-topic", group_id="my-app", auto_offset_reset="latest")
+```
+
+After the first run, the consumer always resumes from its committed offset.
+
+### Manual Commit (Exactly-Once Processing)
+
+For critical workloads, disable auto-commit and commit after successful processing:
+
+```python
+consumer = client.consumer(
+    topics=["orders"],
+    group_id="payment-processor",
+    auto_commit=False  # Disable auto-commit
+)
+
+for message in consumer:
+    try:
+        process_payment(message)
+        consumer.commit()  # Only commit after successful processing
+    except Exception as e:
+        # Message will be reprocessed on next run
+        log_error(e)
 ```
 
 ### Poll-Based Consumption
@@ -237,9 +292,9 @@ consumer.seek_to_end()
 position = consumer.position(partition=0)
 ```
 
-## Consumer Groups (Low-Level)
+## Low-Level Consumer API
 
-For more control, use the low-level Consumer API:
+For more control, use the low-level Consumer class:
 
 ```python
 from pyflymq import FlyMQClient, Consumer
@@ -252,7 +307,7 @@ consumer = Consumer(client, "my-topic", group_id="my-group")
 # Poll for messages
 for message in consumer:
     print(f"Received: {message.decode()}")
-    consumer.commit()  # Commit offset
+    consumer.commit()  # Commit offset after processing
 ```
 
 ### Consumer Group with Handler
