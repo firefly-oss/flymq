@@ -684,6 +684,30 @@ flymq-cli txn <topic> <message1> [message2] ...
 
 FlyMQ provides official client SDKs for Go, Python, and Java. All SDKs support the full feature set including encryption, transactions, schemas, and reactive streams.
 
+### Feature Support Matrix
+
+| Feature | Go | Python | Java |
+|---------|----|---------|---------|
+| Basic Produce/Consume | ✅ | ✅ | ✅ |
+| Key-Based Partitioning | ✅ | ✅ | ✅ |
+| Consumer Groups | ✅ | ✅ | ✅ |
+| Transactions | ✅ | ✅ | ✅ |
+| Encryption (AES-256-GCM) | ✅ | ✅ | ✅ |
+| TLS/mTLS | ✅ | ✅ | ✅ |
+| Authentication | ✅ | ✅ | ✅ |
+| Schema Validation | ✅ | ✅ | ✅ |
+| Dead Letter Queues | ✅ | ✅ | ✅ |
+| Delayed Messages | ✅ | ✅ | ✅ |
+| Message TTL | ✅ | ✅ | ✅ |
+| Reactive Streams | ✅ | ✅ | ✅ |
+| Spring Boot Integration | - | - | ✅ |
+
+### Getting Started
+
+- **Python**: [PyFlyMQ Quick Start](sdk/python/docs/GETTING_STARTED.md) | [10 Examples](sdk/python/examples/)
+- **Java**: [Java SDK Quick Start](sdk/java/docs/GETTING_STARTED.md) | [Examples](sdk/java/examples/)
+- **Go**: Reference implementation in `pkg/client/`
+
 For SDK development guidelines, see [docs/sdk_development.md](docs/sdk_development.md).
 
 ---
