@@ -2,15 +2,32 @@
 """
 01_basic_produce_consume.py - FlyMQ Basic Producer and Consumer Example
 
-This is the simplest example to get started with FlyMQ.
-It demonstrates:
-- Creating a FlyMQ client
+This is the foundational example for understanding FlyMQ's core operations.
+
+What this example demonstrates:
+- Creating and managing a FlyMQ client connection
 - Producing a message to a topic
-- Consuming the message from a topic
+- Consuming the message back from the topic
+- Proper resource cleanup
+
+Key Concepts:
+- Topic: A named channel for messages (like a queue or stream)
+- Offset: The position of a message in a topic partition
+- Producer: Sends messages to topics
+- Consumer: Reads messages from topics
 
 Prerequisites:
-    - FlyMQ server running on localhost:9092
+    - FlyMQ server running on localhost:9092 (default port)
     - pyflymq installed: pip install pyflymq
+
+Expected Output:
+    Connecting to FlyMQ at localhost:9092...
+    Creating topic 'hello-world'...
+    Producing message: Hello, FlyMQ! This is my first message.
+    Message written at offset 0 in partition 0
+    Consuming message from offset 0...
+    Received: Hello, FlyMQ! This is my first message.
+    ✓ Successfully produced and consumed a message!
 
 Run with:
     python 01_basic_produce_consume.py

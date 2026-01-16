@@ -2,16 +2,42 @@
 """
 03_consumer_groups.py - Consumer Groups Example
 
+Demonstrates consumer groups for coordinated parallel processing.
+
+What are Consumer Groups?
+    Consumer groups enable multiple consumers to share the work of processing
+    messages from a topic. Each consumer in a group processes a subset of
+    partitions, and the group automatically rebalances when consumers join
+    or leave.
+
+Key Benefits:
+    - Automatic load distribution across consumers
+    - Fault tolerance (if one consumer fails, others take over)
+    - Offset management (group tracks progress)
+    - Horizontal scaling (add more consumers to process faster)
+
+Use Cases:
+    - Parallel data processing pipelines
+    - Distributed log aggregation
+    - Real-time analytics systems
+    - Microservice event processing
+
+How It Works:
+    1. Multiple consumers join the same group (same group_id)
+    2. FlyMQ assigns partitions to consumers
+    3. Each consumer processes its assigned partitions
+    4. Offsets are committed to track progress
+    5. On failure, partitions are reassigned
+
 This example demonstrates:
-- Creating consumer groups
-- Multiple consumers sharing a topic
-- Automatic offset management
-- Committing offsets after processing
+    - Multiple consumers sharing a topic
+    - Automatic offset management
+    - Committing offsets after processing
 
 Consumer groups allow:
-- Distributed processing: Multiple consumers process messages in parallel
-- Load balancing: Partitions are distributed among consumers
-- Fault tolerance: If a consumer fails, its partitions are reassigned
+    - Distributed processing: Multiple consumers process messages in parallel
+    - Load balancing: Partitions are distributed among consumers
+    - Fault tolerance: If a consumer fails, its partitions are reassigned
 
 Prerequisites:
     - FlyMQ server running on localhost:9092

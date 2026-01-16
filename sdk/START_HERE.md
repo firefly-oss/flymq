@@ -88,13 +88,23 @@ The following reference documents provide cross-cutting content useful for all d
 **Comprehensive Reference Guide**: [SDK_DOCUMENTATION_GUIDE.md](SDK_DOCUMENTATION_GUIDE.md)
 
 This master reference document provides:
-- Detailed SDK architecture overview and design principles
 - Common messaging patterns compared side-by-side in Python and Java
 - Use cases and trade-offs for each pattern
 - Complete configuration reference with all available options
 - Feature comparison matrices across SDKs
 - Troubleshooting guide with root cause analysis
 - Production deployment best practices
+
+**Architecture Deep Dive**: [ARCHITECTURE.md](ARCHITECTURE.md)
+
+This technical document provides:
+- Complete FlyMQ system architecture overview
+- Binary protocol specification and design
+- Client-server communication flow
+- Partitioning and consumer group internals
+- Transaction model and isolation levels
+- Performance characteristics and optimization
+- Production deployment considerations
 
 ## Documentation Structure
 

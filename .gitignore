@@ -1,11 +1,20 @@
 # Binaries
 /flymq
 /flymq-cli
+/benchmarks/benchmark
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+*.a
+*.lib
+*.o
+*.obj
+
+# Native library binaries (JNI, Python C extensions)
+*.jnilib
+*.node
 
 # Message queue data files
 *.fmq

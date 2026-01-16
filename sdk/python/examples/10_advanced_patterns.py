@@ -162,12 +162,15 @@ def deadletter_queue_handling():
         try:
             dlq_messages = client.fetch_dlq(topic, max_messages=10)
             print(f"✓ Fetched {len(dlq_messages)} DLQ messages")
-            
+
             # Replay specific DLQ message
             if dlq_messages:
                 msg = dlq_messages[0]
-                print(f"  Replaying message: {msg.get('id')}")
-                # client.replay_dlq(topic, msg['id'])
+                print(f"  Replaying message ID: {msg.id}")
+                print(f"    Error: {msg.error}")
+                print(f"    Retries: {msg.retries}")
+                # Replay the message back to the original topic
+                # client.replay_dlq(topic, msg.id)
         except Exception as e:
             print(f"  Note: DLQ operations - {type(e).__name__}")
         

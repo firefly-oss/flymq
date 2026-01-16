@@ -269,16 +269,25 @@ for (int i = 0; i < numWorkers; i++) {
 
 ## Next Steps
 
-1. Run examples: Check `examples/` directory
-2. Read guides: See `docs/` for detailed topics
-3. API reference: Check main README.md
+1. **Run examples**: Check `examples/` directory for complete working examples
+2. **Read guides**: See `docs/` folder for detailed topics:
+   - `PRODUCER_GUIDE.md` - Producer best practices
+   - `CONSUMER_GUIDE.md` - Consumer best practices
+   - `SECURITY.md` - TLS and authentication
+3. **API reference**: Check main README.md for full API documentation
 
 ## Examples
 
 See `examples/core/` for:
-- BasicProduceConsume.java
-- KeyBasedMessaging.java
-- ConsumerGroupExample.java
+- `BasicProduceConsume.java` - Fundamental produce/consume operations
+- `KeyBasedMessaging.java` - Key-based routing and partitioning
+- `ConsumerGroupExample.java` - Consumer groups for parallel processing
+- `TransactionExample.java` - Atomic multi-topic transactions
+- `TLSAuthenticationExample.java` - Secure connections and authentication
+- `ErrorHandlingExample.java` - Error handling and retry patterns
+- `SchemaValidationExample.java` - JSON schema validation
+- `DLQExample.java` - Dead letter queue operations
+- `AdvancedPatternsExample.java` - Batch processing, connection pooling, TTL
 
 See `examples/spring-mvc/` for:
-- MessageService.java - Spring service integration
+- `MessageService.java` - Spring service integration
