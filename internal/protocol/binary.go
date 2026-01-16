@@ -73,10 +73,18 @@ type BinaryProduceRequest struct {
 	Partition int32
 }
 
-// BinaryProduceResponse represents a binary-encoded produce response.
-type BinaryProduceResponse struct {
-	Offset    uint64
-	Partition int32
+// RecordMetadata represents complete metadata for a produced record.
+// Similar to Kafka's RecordMetadata, this contains all information about
+// where and when the message was stored.
+//
+// Binary format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
+type RecordMetadata struct {
+	Topic       string // Topic name
+	Partition   int32  // Partition the record was sent to
+	Offset      uint64 // Offset of the record in the partition
+	Timestamp   int64  // Timestamp in milliseconds (Unix epoch)
+	KeySize     int32  // Size of the key in bytes (-1 if no key)
+	ValueSize   int32  // Size of the value in bytes
 }
 
 var (
@@ -180,22 +188,90 @@ func DecodeBinaryProduceRequest(data []byte) (*BinaryProduceRequest, error) {
 	return req, nil
 }
 
-// EncodeBinaryProduceResponse encodes a produce response to binary format.
-func EncodeBinaryProduceResponse(resp *BinaryProduceResponse) []byte {
-	buf := make([]byte, 12)
-	binary.BigEndian.PutUint64(buf[0:], resp.Offset)
-	binary.BigEndian.PutUint32(buf[8:], uint32(resp.Partition))
+// EncodeRecordMetadata encodes complete record metadata to binary format.
+// Format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
+func EncodeRecordMetadata(meta *RecordMetadata) []byte {
+	topicBytes := []byte(meta.Topic)
+	topicLen := len(topicBytes)
+
+	// Total size: 2 + topic_len + 4 + 8 + 8 + 4 + 4 = 30 + topic_len
+	size := 2 + topicLen + 4 + 8 + 8 + 4 + 4
+	buf := make([]byte, size)
+	offset := 0
+
+	// Topic
+	binary.BigEndian.PutUint16(buf[offset:], uint16(topicLen))
+	offset += 2
+	copy(buf[offset:], topicBytes)
+	offset += topicLen
+
+	// Partition
+	binary.BigEndian.PutUint32(buf[offset:], uint32(meta.Partition))
+	offset += 4
+
+	// Offset
+	binary.BigEndian.PutUint64(buf[offset:], meta.Offset)
+	offset += 8
+
+	// Timestamp
+	binary.BigEndian.PutUint64(buf[offset:], uint64(meta.Timestamp))
+	offset += 8
+
+	// Key size
+	binary.BigEndian.PutUint32(buf[offset:], uint32(meta.KeySize))
+	offset += 4
+
+	// Value size
+	binary.BigEndian.PutUint32(buf[offset:], uint32(meta.ValueSize))
+
 	return buf
 }
 
-// DecodeBinaryProduceResponse decodes a binary produce response.
-func DecodeBinaryProduceResponse(data []byte) (*BinaryProduceResponse, error) {
-	if len(data) < 12 {
+// DecodeRecordMetadata decodes complete record metadata from binary format.
+func DecodeRecordMetadata(data []byte) (*RecordMetadata, error) {
+	if len(data) < 2 {
 		return nil, ErrBufferTooSmall
 	}
-	return &BinaryProduceResponse{
-		Offset:    binary.BigEndian.Uint64(data[0:]),
-		Partition: int32(binary.BigEndian.Uint32(data[8:])),
+
+	offset := 0
+
+	// Topic
+	topicLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+
+	if len(data) < offset+topicLen+28 { // 4+8+8+4+4 = 28
+		return nil, ErrBufferTooSmall
+	}
+
+	topic := string(data[offset : offset+topicLen])
+	offset += topicLen
+
+	// Partition
+	partition := int32(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	// Offset
+	recordOffset := binary.BigEndian.Uint64(data[offset:])
+	offset += 8
+
+	// Timestamp
+	timestamp := int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// Key size
+	keySize := int32(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	// Value size
+	valueSize := int32(binary.BigEndian.Uint32(data[offset:]))
+
+	return &RecordMetadata{
+		Topic:     topic,
+		Partition: partition,
+		Offset:    recordOffset,
+		Timestamp: timestamp,
+		KeySize:   keySize,
+		ValueSize: valueSize,
 	}, nil
 }
 

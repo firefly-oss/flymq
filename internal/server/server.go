@@ -1022,11 +1022,20 @@ func (s *Server) handleProduce(w io.Writer, payload []byte, flags byte) error {
 		s.perfLogger.LogLatency("produce", latencyMs, true)
 	}
 
-	// Send binary response
-	resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{
+	// Send RecordMetadata response (Kafka-like)
+	keySize := int32(-1)
+	if len(key) > 0 {
+		keySize = int32(len(key))
+	}
+	metadata := &protocol.RecordMetadata{
+		Topic:     topic,
+		Partition: 0, // TODO: Return actual partition from partitioner
 		Offset:    offset,
-		Partition: 0, // TODO: Return actual partition
-	})
+		Timestamp: time.Now().UnixMilli(),
+		KeySize:   keySize,
+		ValueSize: int32(len(data)),
+	}
+	resp := protocol.EncodeRecordMetadata(metadata)
 	return protocol.WriteBinaryMessage(w, protocol.OpProduce, resp)
 }
 
@@ -1658,8 +1667,15 @@ func (s *Server) handleProduceDelayed(w io.Writer, payload []byte) error {
 		return err
 	}
 	s.logger.Debug("Delayed message queued", "topic", req.Topic, "delay_ms", req.DelayMs)
-	resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{Offset: offset, Partition: 0})
-	return protocol.WriteBinaryMessage(w, protocol.OpProduceDelayed, resp)
+	metadata := &protocol.RecordMetadata{
+		Topic:     req.Topic,
+		Partition: 0,
+		Offset:    offset,
+		Timestamp: time.Now().UnixMilli(),
+		KeySize:   -1,
+		ValueSize: int32(len(req.Data)),
+	}
+	return protocol.WriteBinaryMessage(w, protocol.OpProduceDelayed, protocol.EncodeRecordMetadata(metadata))
 }
 
 func (s *Server) handleProduceWithTTL(w io.Writer, payload []byte) error {
@@ -1674,8 +1690,15 @@ func (s *Server) handleProduceWithTTL(w io.Writer, payload []byte) error {
 		return err
 	}
 	s.logger.Debug("Message with TTL produced", "topic", req.Topic, "ttl_ms", req.TTLMs)
-	resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{Offset: offset, Partition: 0})
-	return protocol.WriteBinaryMessage(w, protocol.OpProduceWithTTL, resp)
+	metadata := &protocol.RecordMetadata{
+		Topic:     req.Topic,
+		Partition: 0,
+		Offset:    offset,
+		Timestamp: time.Now().UnixMilli(),
+		KeySize:   -1,
+		ValueSize: int32(len(req.Data)),
+	}
+	return protocol.WriteBinaryMessage(w, protocol.OpProduceWithTTL, protocol.EncodeRecordMetadata(metadata))
 }
 
 func (s *Server) handleProduceWithSchema(w io.Writer, payload []byte) error {
@@ -1699,8 +1722,15 @@ func (s *Server) handleProduceWithSchema(w io.Writer, payload []byte) error {
 		return err
 	}
 	s.logger.Debug("Message with schema produced", "topic", req.Topic, "schema", req.SchemaName)
-	resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{Offset: offset, Partition: 0})
-	return protocol.WriteBinaryMessage(w, protocol.OpProduceWithSchema, resp)
+	metadata := &protocol.RecordMetadata{
+		Topic:     req.Topic,
+		Partition: 0,
+		Offset:    offset,
+		Timestamp: time.Now().UnixMilli(),
+		KeySize:   -1,
+		ValueSize: int32(len(req.Data)),
+	}
+	return protocol.WriteBinaryMessage(w, protocol.OpProduceWithSchema, protocol.EncodeRecordMetadata(metadata))
 }
 
 func (s *Server) handleRegisterSchema(w io.Writer, payload []byte) error {
@@ -1919,8 +1949,15 @@ func (s *Server) handleProduceTx(w io.Writer, payload []byte) error {
 		return err
 	}
 	s.logger.Debug("Transactional message produced", "txn_id", req.TxnID, "topic", req.Topic)
-	resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{Offset: offset, Partition: 0})
-	return protocol.WriteBinaryMessage(w, protocol.OpProduceTx, resp)
+	metadata := &protocol.RecordMetadata{
+		Topic:     req.Topic,
+		Partition: 0,
+		Offset:    offset,
+		Timestamp: time.Now().UnixMilli(),
+		KeySize:   -1,
+		ValueSize: int32(len(req.Data)),
+	}
+	return protocol.WriteBinaryMessage(w, protocol.OpProduceTx, protocol.EncodeRecordMetadata(metadata))
 }
 
 // ============================================================================

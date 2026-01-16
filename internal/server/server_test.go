@@ -528,13 +528,16 @@ func TestHandleProduce(t *testing.T) {
 		t.Fatalf("Failed to read response: %v", err)
 	}
 
-	resp, err := protocol.DecodeBinaryProduceResponse(msg.Payload)
+	meta, err := protocol.DecodeRecordMetadata(msg.Payload)
 	if err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if resp.Offset != 0 {
-		t.Errorf("Expected offset 0, got %d", resp.Offset)
+	if meta.Offset != 0 {
+		t.Errorf("Expected offset 0, got %d", meta.Offset)
+	}
+	if meta.Topic != "test-topic" {
+		t.Errorf("Expected topic 'test-topic', got %s", meta.Topic)
 	}
 }
 

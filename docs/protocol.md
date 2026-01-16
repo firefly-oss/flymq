@@ -210,11 +210,29 @@ All payloads use consistent binary encoding:
 [int32]  partition (-1 = auto-assign)
 ```
 
-**Response:**
+**Response (RecordMetadata):**
+
+The produce response returns complete `RecordMetadata`, similar to Kafka's RecordMetadata.
+This provides all information about where and when the message was stored.
+
 ```
-[uint64] offset (assigned offset)
+[uint16] topic length
+[bytes]  topic name (UTF-8)
 [int32]  partition (assigned partition)
+[uint64] offset (assigned offset)
+[int64]  timestamp (milliseconds since Unix epoch)
+[int32]  key_size (-1 if no key, otherwise key length in bytes)
+[int32]  value_size (value length in bytes)
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| topic | string | Topic name the message was produced to |
+| partition | int32 | Partition the message was assigned to |
+| offset | uint64 | Offset of the message in the partition |
+| timestamp | int64 | Server timestamp when message was stored (ms) |
+| key_size | int32 | Size of key in bytes (-1 if no key) |
+| value_size | int32 | Size of value in bytes |
 
 **Wire Example - Produce "hello" to "test":**
 ```
@@ -228,11 +246,16 @@ Request:
     68 65 6C 6C 6F              Value: "hello"
     FF FF FF FF                 Partition: -1 (auto)
 
-Response:
-  Header: AF 01 01 01 00 00 00 0C
+Response (RecordMetadata):
+  Header: AF 01 01 01 00 00 00 22
   Payload:
-    00 00 00 00 00 00 00 2A     Offset: 42
+    00 04                       Topic length: 4
+    74 65 73 74                 Topic: "test"
     00 00 00 00                 Partition: 0
+    00 00 00 00 00 00 00 2A     Offset: 42
+    00 00 01 8D 5A 3B 2C 00     Timestamp: 1705123456000 (ms)
+    FF FF FF FF                 Key size: -1 (no key)
+    00 00 00 05                 Value size: 5
 ```
 
 ### CONSUME (0x02)
