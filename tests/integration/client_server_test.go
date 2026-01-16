@@ -94,13 +94,16 @@ func TestClientServerProduceConsume(t *testing.T) {
 	topic := "test-topic"
 	message := []byte("Hello, FlyMQ!")
 
-	offset, err := c.Produce(topic, message)
+	meta, err := c.Produce(topic, message)
 	if err != nil {
 		t.Fatalf("Failed to produce message: %v", err)
 	}
 
-	if offset != 0 {
-		t.Errorf("Expected offset 0, got %d", offset)
+	if meta.Offset != 0 {
+		t.Errorf("Expected offset 0, got %d", meta.Offset)
+	}
+	if meta.Topic != topic {
+		t.Errorf("Expected topic %s, got %s", topic, meta.Topic)
 	}
 
 	// Consume the message
@@ -137,12 +140,12 @@ func TestClientServerMultipleMessages(t *testing.T) {
 	// Produce multiple messages
 	for i := 0; i < numMessages; i++ {
 		msg := fmt.Sprintf("Message %d", i)
-		offset, err := c.Produce(topic, []byte(msg))
+		meta, err := c.Produce(topic, []byte(msg))
 		if err != nil {
 			t.Fatalf("Failed to produce message %d: %v", i, err)
 		}
-		if offset != uint64(i) {
-			t.Errorf("Expected offset %d, got %d", i, offset)
+		if meta.Offset != uint64(i) {
+			t.Errorf("Expected offset %d, got %d", i, meta.Offset)
 		}
 	}
 
@@ -267,13 +270,13 @@ func TestClientServerLargeMessage(t *testing.T) {
 		largeMsg[i] = byte(i % 256)
 	}
 
-	offset, err := c.Produce(topic, largeMsg)
+	meta, err := c.Produce(topic, largeMsg)
 	if err != nil {
 		t.Fatalf("Failed to produce large message: %v", err)
 	}
 
-	if offset != 0 {
-		t.Errorf("Expected offset 0, got %d", offset)
+	if meta.Offset != 0 {
+		t.Errorf("Expected offset 0, got %d", meta.Offset)
 	}
 
 	// Fetch the large message

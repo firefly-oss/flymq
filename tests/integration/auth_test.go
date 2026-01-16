@@ -150,12 +150,12 @@ func TestAuthenticationWithValidCredentials(t *testing.T) {
 	defer c.Close()
 
 	// Should be able to produce
-	offset, err := c.Produce("test-topic", []byte("test message"))
+	meta, err := c.Produce("test-topic", []byte("test message"))
 	if err != nil {
 		t.Fatalf("Failed to produce with valid credentials: %v", err)
 	}
-	if offset != 0 {
-		t.Errorf("Expected offset 0, got %d", offset)
+	if meta.Offset != 0 {
+		t.Errorf("Expected offset 0, got %d", meta.Offset)
 	}
 }
 

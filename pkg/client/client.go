@@ -96,8 +96,48 @@ type Client struct {
 }
 
 // NewClient creates a new client connected to the specified address.
+// This is the simplest way to connect to FlyMQ.
+//
+// Example:
+//
+//	client, err := client.NewClient("localhost:9092")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	offset, err := client.Produce("my-topic", []byte("Hello!"))
 func NewClient(addr string) (*Client, error) {
 	return NewClientWithOptions(addr, ClientOptions{})
+}
+
+// Connect is an alias for NewClient for consistency with other SDKs.
+// It creates a new client connected to the specified address.
+//
+// Example:
+//
+//	client, err := client.Connect("localhost:9092")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer client.Close()
+func Connect(addr string) (*Client, error) {
+	return NewClient(addr)
+}
+
+// MustConnect creates a new client and panics on error.
+// Use this only in tests or when you're certain the connection will succeed.
+//
+// Example:
+//
+//	client := client.MustConnect("localhost:9092")
+//	defer client.Close()
+func MustConnect(addr string) *Client {
+	c, err := NewClient(addr)
+	if err != nil {
+		panic(fmt.Sprintf("flymq: failed to connect to %s: %v", addr, err))
+	}
+	return c
 }
 
 // NewClusterClient creates a new client with multiple bootstrap servers for HA.
@@ -482,16 +522,48 @@ func (c *Client) executeWithLeaderFailover(fn func() error) error {
 	return fmt.Errorf("operation failed after %d attempts", c.opts.MaxRetries)
 }
 
-// Produce sends a message to a topic with automatic failover.
+// Produce sends a message to a topic and returns RecordMetadata (Kafka-like).
 // If the current server is unavailable, it will try other bootstrap servers.
-func (c *Client) Produce(topic string, data []byte) (uint64, error) {
+//
+// Returns RecordMetadata containing:
+//   - Topic: the topic name
+//   - Partition: the partition the message was written to
+//   - Offset: the offset of the message in the partition
+//   - Timestamp: server timestamp when message was stored
+//   - KeySize: size of key (-1 if no key)
+//   - ValueSize: size of value
+func (c *Client) Produce(topic string, data []byte) (*protocol.RecordMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	return c.produceWithRetry(topic, data)
+	return c.produceWithRetry(topic, nil, data, -1)
 }
 
-func (c *Client) produceWithRetry(topic string, data []byte) (uint64, error) {
+// ProduceWithKey produces a message with a key for key-based partitioning.
+// Messages with the same key will be sent to the same partition.
+// Returns RecordMetadata with complete information about the produced record.
+func (c *Client) ProduceWithKey(topic string, key, data []byte) (*protocol.RecordMetadata, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.produceWithRetry(topic, key, data, -1)
+}
+
+// ProduceToPartition produces a message to a specific partition.
+// Returns RecordMetadata with complete information about the produced record.
+func (c *Client) ProduceToPartition(topic string, partition int, data []byte) (*protocol.RecordMetadata, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.produceWithRetry(topic, nil, data, partition)
+}
+
+// ProduceWithKeyToPartition produces a message with a key to a specific partition.
+// Returns RecordMetadata with complete information about the produced record.
+func (c *Client) ProduceWithKeyToPartition(topic string, partition int, key, data []byte) (*protocol.RecordMetadata, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.produceWithRetry(topic, key, data, partition)
+}
+
+func (c *Client) produceWithRetry(topic string, key, data []byte, partition int) (*protocol.RecordMetadata, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < c.opts.MaxRetries; attempt++ {
@@ -505,9 +577,9 @@ func (c *Client) produceWithRetry(topic string, data []byte) (uint64, error) {
 			}
 		}
 
-		offset, err := c.doProduceRequest(topic, data)
+		meta, err := c.doProduceRequest(topic, key, data, partition)
 		if err == nil {
-			return offset, nil
+			return meta, nil
 		}
 
 		lastErr = err
@@ -516,30 +588,25 @@ func (c *Client) produceWithRetry(topic string, data []byte) (uint64, error) {
 		if isNotLeaderError(err) {
 			leaderAddr := parseLeaderAddr(err.Error())
 			if leaderAddr != "" {
-				// Close current connection and connect to leader
 				if c.conn != nil {
 					c.conn.Close()
 					c.conn = nil
 				}
 				c.leaderAddr = leaderAddr
 				if connErr := c.connectToServer(leaderAddr); connErr == nil {
-					// Successfully connected to leader, retry immediately
 					continue
 				}
 			} else {
-				// Leader address unknown - election may be in progress
-				// Add a small delay before trying another server
 				time.Sleep(time.Duration(c.opts.RetryDelayMs/2) * time.Millisecond)
 			}
-			// Fall through to try other servers
 		}
 
 		// If it's a non-retryable server error, don't retry
 		if strings.Contains(err.Error(), "server error:") && !isNotLeaderError(err) {
-			return 0, err
+			return nil, err
 		}
 
-		// Connection error or leader not found - try next server in rotation
+		// Connection error - try next server
 		if c.conn != nil {
 			c.conn.Close()
 			c.conn = nil
@@ -548,29 +615,19 @@ func (c *Client) produceWithRetry(topic string, data []byte) (uint64, error) {
 		c.currentServer = (c.currentServer + 1) % len(c.servers)
 		if err := c.connectToServer(c.servers[c.currentServer]); err != nil {
 			lastErr = err
-			// Small delay before trying next server
 			time.Sleep(time.Duration(c.opts.RetryDelayMs/4) * time.Millisecond)
 			continue
 		}
 	}
 
-	return 0, fmt.Errorf("produce failed after %d attempts: %w", c.opts.MaxRetries, lastErr)
+	return nil, fmt.Errorf("produce failed after %d attempts: %w", c.opts.MaxRetries, lastErr)
 }
 
-func (c *Client) doProduceRequest(topic string, data []byte) (uint64, error) {
-	return c.doProduceRequestFull(topic, nil, data, -1)
-}
-
-func (c *Client) doProduceRequestWithKey(topic string, key, data []byte) (uint64, error) {
-	return c.doProduceRequestFull(topic, key, data, -1)
-}
-
-func (c *Client) doProduceRequestFull(topic string, key, data []byte, partition int) (uint64, error) {
-	// Use binary protocol for better performance on all message sizes
-	// Binary protocol has ~30% less overhead than JSON
+// doProduceRequest sends a produce request and returns RecordMetadata.
+func (c *Client) doProduceRequest(topic string, key, data []byte, partition int) (*protocol.RecordMetadata, error) {
 	part := int32(partition)
 	if partition < 0 {
-		part = -1 // Sentinel for auto-partition
+		part = -1
 	}
 	req := &protocol.BinaryProduceRequest{
 		Topic:     topic,
@@ -580,47 +637,18 @@ func (c *Client) doProduceRequestFull(topic string, key, data []byte, partition 
 	}
 	payload := protocol.EncodeBinaryProduceRequest(req)
 	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpProduce, payload); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	respMsg, err := protocol.ReadMessage(c.conn)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
 	}
 
-	// Parse binary response (binary-only protocol)
-	resp, err := protocol.DecodeBinaryProduceResponse(respMsg.Payload)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Offset, nil
-}
-
-// ProduceWithKey produces a message with a key for key-based partitioning.
-// Messages with the same key will be sent to the same partition.
-func (c *Client) ProduceWithKey(topic string, key, data []byte) (uint64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.doProduceRequestWithKey(topic, key, data)
-}
-
-// ProduceToPartition produces a message to a specific partition.
-// Use this when you need explicit control over partition assignment.
-func (c *Client) ProduceToPartition(topic string, partition int, data []byte) (uint64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.doProduceRequestFull(topic, nil, data, partition)
-}
-
-// ProduceWithKeyToPartition produces a message with a key to a specific partition.
-// Note: When partition is specified, it overrides key-based partition selection.
-func (c *Client) ProduceWithKeyToPartition(topic string, partition int, key, data []byte) (uint64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.doProduceRequestFull(topic, key, data, partition)
+	return protocol.DecodeRecordMetadata(respMsg.Payload)
 }
 
 // ConsumedMessage represents a consumed message with its key and value.
@@ -1181,10 +1209,10 @@ func (c *Client) BeginTransaction() (*Transaction, error) {
 	}, nil
 }
 
-// ProduceInTransaction produces a message within a transaction.
-func (t *Transaction) Produce(topic string, data []byte) (uint64, error) {
+// Produce produces a message within a transaction and returns RecordMetadata.
+func (t *Transaction) Produce(topic string, data []byte) (*protocol.RecordMetadata, error) {
 	if !t.active {
-		return 0, fmt.Errorf("transaction is not active")
+		return nil, fmt.Errorf("transaction is not active")
 	}
 
 	t.client.mu.Lock()
@@ -1197,22 +1225,18 @@ func (t *Transaction) Produce(topic string, data []byte) (uint64, error) {
 	}
 	payload := protocol.EncodeBinaryTxnProduceRequest(req)
 	if err := protocol.WriteBinaryMessage(t.client.conn, protocol.OpTxnProduce, payload); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	respMsg, err := protocol.ReadMessage(t.client.conn)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
 	}
 
-	resp, err := protocol.DecodeBinaryProduceResponse(respMsg.Payload)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Offset, nil
+	return protocol.DecodeRecordMetadata(respMsg.Payload)
 }
 
 // Commit commits the transaction.
@@ -1271,6 +1295,15 @@ func (t *Transaction) Rollback() error {
 
 // ProduceDelayed produces a message with a delay.
 func (c *Client) ProduceDelayed(topic string, data []byte, delayMs int64) (uint64, error) {
+	meta, err := c.ProduceDelayedWithMetadata(topic, data, delayMs)
+	if err != nil {
+		return 0, err
+	}
+	return meta.Offset, nil
+}
+
+// ProduceDelayedWithMetadata produces a message with a delay and returns full metadata.
+func (c *Client) ProduceDelayedWithMetadata(topic string, data []byte, delayMs int64) (*protocol.RecordMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1281,26 +1314,31 @@ func (c *Client) ProduceDelayed(topic string, data []byte, delayMs int64) (uint6
 	}
 	payload := protocol.EncodeBinaryProduceDelayedRequest(req)
 	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpProduceDelayed, payload); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	respMsg, err := protocol.ReadMessage(c.conn)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
 	}
 
-	resp, err := protocol.DecodeBinaryProduceResponse(respMsg.Payload)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Offset, nil
+	return protocol.DecodeRecordMetadata(respMsg.Payload)
 }
 
 // ProduceWithTTL produces a message with a time-to-live.
 func (c *Client) ProduceWithTTL(topic string, data []byte, ttlMs int64) (uint64, error) {
+	meta, err := c.ProduceWithTTLAndMetadata(topic, data, ttlMs)
+	if err != nil {
+		return 0, err
+	}
+	return meta.Offset, nil
+}
+
+// ProduceWithTTLAndMetadata produces a message with a TTL and returns full metadata.
+func (c *Client) ProduceWithTTLAndMetadata(topic string, data []byte, ttlMs int64) (*protocol.RecordMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1311,26 +1349,31 @@ func (c *Client) ProduceWithTTL(topic string, data []byte, ttlMs int64) (uint64,
 	}
 	payload := protocol.EncodeBinaryProduceWithTTLRequest(req)
 	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpProduceWithTTL, payload); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	respMsg, err := protocol.ReadMessage(c.conn)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
 	}
 
-	resp, err := protocol.DecodeBinaryProduceResponse(respMsg.Payload)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Offset, nil
+	return protocol.DecodeRecordMetadata(respMsg.Payload)
 }
 
 // ProduceWithSchema produces a message with schema validation.
 func (c *Client) ProduceWithSchema(topic string, data []byte, schemaName string) (uint64, error) {
+	meta, err := c.ProduceWithSchemaAndMetadata(topic, data, schemaName)
+	if err != nil {
+		return 0, err
+	}
+	return meta.Offset, nil
+}
+
+// ProduceWithSchemaAndMetadata produces a message with schema validation and returns full metadata.
+func (c *Client) ProduceWithSchemaAndMetadata(topic string, data []byte, schemaName string) (*protocol.RecordMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1341,22 +1384,18 @@ func (c *Client) ProduceWithSchema(topic string, data []byte, schemaName string)
 	}
 	payload := protocol.EncodeBinaryProduceWithSchemaRequest(req)
 	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpProduceWithSchema, payload); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	respMsg, err := protocol.ReadMessage(c.conn)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
 	}
 
-	resp, err := protocol.DecodeBinaryProduceResponse(respMsg.Payload)
-	if err != nil {
-		return 0, err
-	}
-	return resp.Offset, nil
+	return protocol.DecodeRecordMetadata(respMsg.Payload)
 }
 
 // DLQMessage represents a message in the dead letter queue.
@@ -1987,4 +2026,227 @@ func (c *Client) ListRoles() ([]RoleInfo, error) {
 		}
 	}
 	return roles, nil
+}
+
+// =============================================================================
+// High-Level Consumer API (Kafka-like)
+// =============================================================================
+
+// ConsumerConfig configures a high-level consumer.
+type ConsumerConfig struct {
+	// GroupID is the consumer group ID for offset tracking.
+	GroupID string
+
+	// AutoOffsetReset determines where to start if no committed offset exists.
+	// Valid values: "earliest", "latest" (default: "latest")
+	AutoOffsetReset string
+
+	// EnableAutoCommit enables automatic offset commits.
+	EnableAutoCommit bool
+
+	// AutoCommitIntervalMs is the interval between auto-commits in milliseconds.
+	AutoCommitIntervalMs int
+
+	// MaxPollRecords is the maximum records to return per poll.
+	MaxPollRecords int
+}
+
+// DefaultConsumerConfig returns a ConsumerConfig with sensible defaults.
+func DefaultConsumerConfig(groupID string) ConsumerConfig {
+	return ConsumerConfig{
+		GroupID:              groupID,
+		AutoOffsetReset:      "latest",
+		EnableAutoCommit:     true,
+		AutoCommitIntervalMs: 5000,
+		MaxPollRecords:       500,
+	}
+}
+
+// Consumer creates a high-level consumer similar to Kafka's KafkaConsumer.
+//
+// This consumer automatically handles:
+//   - Partition assignment (consumes from all partitions)
+//   - Offset tracking and commits
+//   - Automatic rebalancing
+//
+// Example:
+//
+//	consumer := client.Consumer([]string{"my-topic"}, client.DefaultConsumerConfig("my-group"))
+//	defer consumer.Close()
+//
+//	for {
+//	    messages := consumer.Poll(time.Second)
+//	    for _, msg := range messages {
+//	        fmt.Printf("Received: %s\n", string(msg.Value))
+//	    }
+//	}
+func (c *Client) Consumer(topics []string, config ConsumerConfig) *HighLevelConsumer {
+	return NewHighLevelConsumer(c, topics, config)
+}
+
+// HighLevelConsumer provides a Kafka-like consumer interface.
+// It automatically handles partition assignment and offset management.
+type HighLevelConsumer struct {
+	client          *Client
+	topics          []string
+	config          ConsumerConfig
+	offsets         map[string]map[int]uint64 // topic -> partition -> offset
+	partitionCounts map[string]int            // topic -> partition count
+	closed          bool
+	mu              sync.Mutex
+	lastCommit      time.Time
+}
+
+// NewHighLevelConsumer creates a new high-level consumer.
+func NewHighLevelConsumer(client *Client, topics []string, config ConsumerConfig) *HighLevelConsumer {
+	hc := &HighLevelConsumer{
+		client:          client,
+		topics:          topics,
+		config:          config,
+		offsets:         make(map[string]map[int]uint64),
+		partitionCounts: make(map[string]int),
+		lastCommit:      time.Now(),
+	}
+	hc.initialize()
+	return hc
+}
+
+// initialize subscribes to all partitions of all topics.
+func (hc *HighLevelConsumer) initialize() {
+	mode := string(protocol.SubscribeFromLatest)
+	if hc.config.AutoOffsetReset == "earliest" {
+		mode = string(protocol.SubscribeFromEarliest)
+	}
+
+	for _, topic := range hc.topics {
+		hc.offsets[topic] = make(map[int]uint64)
+
+		// Subscribe to partition 0 first
+		offset, err := hc.client.Subscribe(topic, hc.config.GroupID, 0, mode)
+		if err != nil {
+			continue
+		}
+		hc.offsets[topic][0] = offset
+		numPartitions := 1
+
+		// Try to discover more partitions (up to 64)
+		for partition := 1; partition < 64; partition++ {
+			offset, err := hc.client.Subscribe(topic, hc.config.GroupID, partition, mode)
+			if err != nil {
+				break
+			}
+			hc.offsets[topic][partition] = offset
+			numPartitions = partition + 1
+		}
+
+		hc.partitionCounts[topic] = numPartitions
+	}
+}
+
+// ConsumerMessage represents a consumed message with metadata.
+type ConsumerMessage struct {
+	Topic     string
+	Partition int
+	Offset    uint64
+	Key       []byte
+	Value     []byte
+}
+
+// Poll fetches messages from all subscribed topics and partitions.
+func (hc *HighLevelConsumer) Poll(timeout time.Duration) []ConsumerMessage {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	if hc.closed {
+		return nil
+	}
+
+	var allMessages []ConsumerMessage
+	maxPerPartition := hc.config.MaxPollRecords / len(hc.topics)
+	if maxPerPartition < 1 {
+		maxPerPartition = 1
+	}
+
+	for _, topic := range hc.topics {
+		partitions := hc.partitionCounts[topic]
+		perPartition := maxPerPartition / partitions
+		if perPartition < 1 {
+			perPartition = 1
+		}
+
+		for partition := 0; partition < partitions; partition++ {
+			offset := hc.offsets[topic][partition]
+
+			messages, nextOffset, err := hc.client.FetchWithKeys(topic, partition, offset, perPartition)
+			if err != nil {
+				continue
+			}
+
+			for _, msg := range messages {
+				allMessages = append(allMessages, ConsumerMessage{
+					Topic:     topic,
+					Partition: partition,
+					Offset:    offset,
+					Key:       msg.Key,
+					Value:     msg.Value,
+				})
+				offset++
+			}
+
+			hc.offsets[topic][partition] = nextOffset
+		}
+	}
+
+	// Auto-commit if enabled
+	if hc.config.EnableAutoCommit {
+		interval := time.Duration(hc.config.AutoCommitIntervalMs) * time.Millisecond
+		if time.Since(hc.lastCommit) >= interval {
+			hc.commitLocked()
+			hc.lastCommit = time.Now()
+		}
+	}
+
+	return allMessages
+}
+
+// Commit commits current offsets for all partitions.
+func (hc *HighLevelConsumer) Commit() error {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+	return hc.commitLocked()
+}
+
+func (hc *HighLevelConsumer) commitLocked() error {
+	var lastErr error
+	for topic, partitions := range hc.offsets {
+		for partition, offset := range partitions {
+			if err := hc.client.CommitOffset(topic, hc.config.GroupID, partition, offset); err != nil {
+				lastErr = err
+			}
+		}
+	}
+	return lastErr
+}
+
+// Close closes the consumer and commits final offsets.
+func (hc *HighLevelConsumer) Close() error {
+	hc.mu.Lock()
+	defer hc.mu.Unlock()
+
+	if hc.closed {
+		return nil
+	}
+
+	hc.closed = true
+	return hc.commitLocked()
+}
+
+// Topics returns the subscribed topics.
+func (hc *HighLevelConsumer) Topics() []string {
+	return hc.topics
+}
+
+// GroupID returns the consumer group ID.
+func (hc *HighLevelConsumer) GroupID() string {
+	return hc.config.GroupID
 }

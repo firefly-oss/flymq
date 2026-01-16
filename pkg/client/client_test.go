@@ -74,11 +74,16 @@ func TestClientProduce(t *testing.T) {
 			t.Errorf("Expected OpProduce, got %d", msg.Header.Op)
 		}
 
-		// Send binary response
-		resp := protocol.EncodeBinaryProduceResponse(&protocol.BinaryProduceResponse{
-			Offset:    42,
+		// Send RecordMetadata response
+		meta := &protocol.RecordMetadata{
+			Topic:     "test-topic",
 			Partition: 0,
-		})
+			Offset:    42,
+			Timestamp: 1234567890000,
+			KeySize:   -1,
+			ValueSize: 5,
+		}
+		resp := protocol.EncodeRecordMetadata(meta)
 		protocol.WriteBinaryMessage(conn, protocol.OpProduce, resp)
 	})
 	defer listener.Close()
@@ -89,13 +94,19 @@ func TestClientProduce(t *testing.T) {
 	}
 	defer client.Close()
 
-	offset, err := client.Produce("test-topic", []byte("hello"))
+	meta, err := client.Produce("test-topic", []byte("hello"))
 	if err != nil {
 		t.Fatalf("Produce failed: %v", err)
 	}
 
-	if offset != 42 {
-		t.Errorf("Expected offset 42, got %d", offset)
+	if meta.Offset != 42 {
+		t.Errorf("Expected offset 42, got %d", meta.Offset)
+	}
+	if meta.Topic != "test-topic" {
+		t.Errorf("Expected topic test-topic, got %s", meta.Topic)
+	}
+	if meta.Timestamp != 1234567890000 {
+		t.Errorf("Expected timestamp 1234567890000, got %d", meta.Timestamp)
 	}
 }
 
