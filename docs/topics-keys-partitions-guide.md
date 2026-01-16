@@ -163,9 +163,10 @@ client.close()
 ```java
 import com.firefly.flymq.FlyMQClient;
 
-try (FlyMQClient client = new FlyMQClient("localhost:9092")) {
-    // 1. Simple produce
-    long offset = client.produce("events", "Hello World".getBytes());
+try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
+    // 1. Simple produce - returns RecordMetadata
+    var meta = client.produce("events", "Hello World".getBytes());
+    System.out.println("Produced at offset " + meta.offset());
 
     // 2. Key-based partitioning
     client.produceWithKey("orders", "user-123", "{\"order\": 1}");

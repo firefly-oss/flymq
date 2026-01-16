@@ -22,18 +22,21 @@ and enterprise-grade security features.
 - [Features](#features)
 - [Performance](#performance)
 - [Quick Start](#quick-start)
+- [Key Concepts](#key-concepts) - Topics, partitions, consumer groups, offsets
 - [Installation](#installation)
 - [Cluster Deployment](#cluster-deployment)
 - [Configuration](#configuration)
-- [Consumer Groups](docs/consumer-groups.md) - How offset tracking and message consumption works
 - [Security](#security)
 - [Architecture](#architecture)
 - [CLI Reference](#cli-reference)
-- [Client SDK](#client-sdk)
+- [Client SDKs](#client-sdks) - Python and Java
 - [Benchmarks](#benchmarks)
 - [Project Structure](#project-structure)
 - [Contributing](#contributing)
 - [License](#license)
+
+**Additional Documentation:**
+- [Consumer Groups Guide](docs/consumer-groups.md) - Detailed guide on offset tracking and consumption patterns
 
 ---
 
@@ -221,6 +224,116 @@ cd flymq
 # Use credentials with other commands
 ./bin/flymq-cli produce my-topic "Hello" --username admin --password secret
 ```
+
+---
+
+## Key Concepts
+
+Understanding these core concepts will help you use FlyMQ effectively.
+
+### Topics and Partitions
+
+A **topic** is a named stream of messages. Topics are divided into **partitions** for parallelism and scalability.
+
+```
+Topic: "orders"
+┌─────────────────────────────────────────────────────────────┐
+│  Partition 0: [msg0] [msg1] [msg2] [msg3] ...               │
+│  Partition 1: [msg0] [msg1] [msg2] ...                      │
+│  Partition 2: [msg0] [msg1] [msg2] [msg3] [msg4] ...        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Messages within a partition are ordered** - Message 0 always comes before Message 1
+- **Messages across partitions have no ordering guarantee** - Partition 0's Message 1 may arrive before or after Partition 1's Message 0
+- **Partitions enable parallelism** - Multiple consumers can read different partitions simultaneously
+
+### Message Keys
+
+A **message key** determines which partition a message goes to. Messages with the same key always go to the same partition, guaranteeing order for related messages.
+
+```
+Producer sends:
+  key="user-123" → hash("user-123") % 3 = Partition 1
+  key="user-123" → hash("user-123") % 3 = Partition 1  (same partition!)
+  key="user-456" → hash("user-456") % 3 = Partition 0  (different partition)
+```
+
+**Use case**: All orders for a user go to the same partition, so they're processed in order.
+
+### Offsets
+
+An **offset** is a message's position within a partition. Offsets start at 0 and increment by 1 for each message.
+
+```
+Partition 0:
+┌─────┬─────┬─────┬─────┬─────┬─────┐
+│  0  │  1  │  2  │  3  │  4  │  5  │  ← Offsets
+└─────┴─────┴─────┴─────┴─────┴─────┘
+                           ↑
+                    Current position
+```
+
+- **Offsets are per-partition** - Each partition has its own offset sequence
+- **Offsets are immutable** - Once assigned, an offset never changes
+- **Consumers track their position** using offsets
+
+### Consumer Groups
+
+A **consumer group** is a named group of consumers that share message processing. FlyMQ tracks each group's position (offset) independently.
+
+```
+                        ┌─────────────────────────────────┐
+                        │  Topic: "orders"                │
+                        │  [0] [1] [2] [3] [4] [5] [6]    │
+                        └─────────────────────────────────┘
+                                        │
+              ┌─────────────────────────┼─────────────────────────┐
+              │                         │                         │
+              ▼                         ▼                         ▼
+       ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+       │ Group: analytics │    │ Group: billing   │    │ Group: shipping  │
+       │ Offset: 7        │    │ Offset: 4        │    │ Offset: 2        │
+       │ (caught up)      │    │ (processing)     │    │ (behind)         │
+       └──────────────────┘    └──────────────────┘    └──────────────────┘
+```
+
+**Key behaviors:**
+- **Each group receives ALL messages** - Groups are independent
+- **Position is tracked per group** - Each group has its own offset
+- **Resume on restart** - If your app crashes, it resumes from the last committed offset
+- **Multiple consumers in a group share work** - Partitions are distributed among them
+
+### Offset Commits
+
+**Committing an offset** saves your position so you don't reprocess messages after a restart.
+
+```
+1. Consumer reads message at offset 5
+2. Consumer processes the message successfully
+3. Consumer commits offset 6 (next message to read)
+4. If consumer crashes and restarts, it resumes from offset 6
+```
+
+**Auto-commit vs Manual commit:**
+- **Auto-commit** (default): Offsets are committed automatically every 5 seconds
+- **Manual commit**: You control exactly when offsets are committed (for exactly-once processing)
+
+### High-Level vs Low-Level APIs
+
+FlyMQ SDKs provide two API levels:
+
+| API Level | Use Case | Features |
+|-----------|----------|----------|
+| **High-Level** | Most applications | Auto-commit, batching, retries, simple iteration |
+| **Low-Level** | Advanced control | Manual offset management, direct partition access |
+
+**Recommendation**: Start with High-Level APIs. Use Low-Level APIs only when you need fine-grained control.
+
+For detailed documentation, see:
+- [Consumer Groups Guide](docs/consumer-groups.md)
+- [Python SDK](sdk/python/README.md)
+- [Java SDK](sdk/java/README.md)
 
 ---
 
@@ -649,34 +762,45 @@ FlyMQ uses a custom binary protocol for efficiency:
 # Topic management
 flymq-cli create <topic> [--partitions N]
 flymq-cli delete <topic>
-flymq-cli list
+flymq-cli topics                    # List all topics
+flymq-cli info <topic>              # Topic details
 
 # Producing messages
 flymq-cli produce <topic> <message> [--key KEY]
 
 # Consuming messages
-flymq-cli consume <topic> [--offset N] [--show-key]
+flymq-cli consume <topic> [--offset N] [--count N] [--show-key]
 flymq-cli subscribe <topic> [--group GROUP] [--from earliest|latest] [--show-key]
 
+# Consumer groups
+flymq-cli groups list               # List all groups
+flymq-cli groups describe <group>   # Group details
+flymq-cli groups lag <group>        # Consumer lag
+
 # Advanced Commands
-
-# Delayed message delivery
 flymq-cli produce-delayed <topic> <message> <delay-ms>
-
-# Message with TTL
 flymq-cli produce-ttl <topic> <message> <ttl-ms>
+flymq-cli txn <topic> <message1> [message2] ...
 
-# Dead letter queue operations
+# Dead letter queue
 flymq-cli dlq list <topic> [--count N]
 flymq-cli dlq replay <topic> <message-id>
 flymq-cli dlq purge <topic>
 
-# Schema operations
+# Schema registry
 flymq-cli schema register <name> <type> <schema>
 flymq-cli schema produce <topic> <schema-name> <message>
+flymq-cli schema list
 
-# Transactional messages
-flymq-cli txn <topic> <message1> [message2] ...
+# Cluster & Admin
+flymq-cli cluster                   # Cluster status
+flymq-cli health                    # Health checks
+flymq-cli admin                     # Admin API
+
+# Security
+flymq-cli auth                      # Authenticate
+flymq-cli whoami                    # Current user
+flymq-cli users/roles/acl           # Access control
 ```
 
 ---
@@ -728,17 +852,18 @@ defer c.Close()
 // Authenticate (if auth is enabled)
 err = c.Authenticate("admin", "password")
 
-// Produce message
-offset, err := c.Produce("my-topic", []byte("Hello, World!"))
+// Produce message - returns RecordMetadata (Kafka-like)
+meta, err := c.Produce("my-topic", []byte("Hello, World!"))
+fmt.Printf("Produced to %s partition %d at offset %d\n", meta.Topic, meta.Partition, meta.Offset)
 
 // Produce with key (Kafka-style partitioning)
-offset, err := c.ProduceWithKey("orders", []byte("user-123"), []byte(`{"id": 1}`))
+meta, err = c.ProduceWithKey("orders", []byte("user-123"), []byte(`{"id": 1}`))
 
 // Consume message (returns value only)
-data, err := c.Consume("my-topic", offset)
+data, err := c.Consume("my-topic", meta.Offset)
 
 // Consume with key
-msg, err := c.ConsumeWithKey("orders", offset)
+msg, err := c.ConsumeWithKey("orders", meta.Offset)
 fmt.Printf("Key: %s, Value: %s\n", msg.Key, msg.Value)
 
 // Fetch multiple messages with keys
@@ -748,7 +873,7 @@ for _, m := range messages {
 }
 
 // With authentication and encryption
-c, err := client.NewClientWithOptions("localhost:9092", client.ClientOptions{
+c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
     Username:      "admin",
     Password:      "password",
     EncryptionKey: "your-64-char-hex-key",
@@ -843,11 +968,11 @@ producer.send_many([b"msg1", b"msg2", b"msg3"])
 **Pydantic Models:**
 
 ```python path=null start=null
-from pyflymq.models import Message, TopicInfo, ProduceResponse
+from pyflymq import RecordMetadata, TopicMetadata, ConsumedMessage
 
-# All responses are validated Pydantic models
-response: ProduceResponse = client.produce("my-topic", b"data")
-print(response.offset)  # Type-safe access
+# produce() returns RecordMetadata (Kafka-like)
+metadata: RecordMetadata = client.produce("my-topic", b"data")
+print(f"Offset: {metadata.offset}, Partition: {metadata.partition}")
 ```
 
 ### Java Client (Spring Boot)
@@ -912,14 +1037,15 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
 import com.firefly.flymq.FlyMQClient;
 
 try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
-    // Produce message
-    long offset = client.produce("my-topic", "Hello, World!".getBytes());
+    // Produce message - returns RecordMetadata (Kafka-like)
+    var meta = client.produce("my-topic", "Hello, World!".getBytes());
+    System.out.println("Produced to " + meta.topic() + " at offset " + meta.offset());
 
     // Produce with key (Kafka-style partitioning)
-    client.produceWithKey("orders", "user-123", "{\"id\": 1}");
+    meta = client.produceWithKey("orders", "user-123", "{\"id\": 1}");
 
     // Consume with key
-    var msg = client.consumeWithKey("orders", 0);
+    var msg = client.consumeWithKey("orders", meta.offset());
     System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
 }
 ```
@@ -1051,17 +1177,19 @@ flymq/
 │   └── flymq-cli/          # CLI binary
 ├── internal/
 │   ├── admin/              # REST Admin API
+│   ├── auth/               # Authentication and RBAC
+│   ├── banner/             # Server startup banner
 │   ├── broker/             # Topic, partition, and consumer group management
 │   ├── cluster/            # Raft consensus, membership, replication
 │   ├── config/             # Configuration handling
-│   ├── crypto/             # Encryption utilities
-│   ├── delay/              # Delayed message delivery
+│   ├── crypto/             # Encryption and TLS utilities
+│   ├── delayed/            # Delayed message delivery
 │   ├── dlq/                # Dead letter queues
 │   ├── health/             # Health check endpoints
 │   ├── logging/            # Structured logging
 │   ├── metrics/            # Prometheus metrics
 │   ├── performance/        # Zero-copy, compression, async I/O
-│   ├── protocol/           # Wire protocol
+│   ├── protocol/           # Wire protocol (binary)
 │   ├── schema/             # Schema registry and validation
 │   ├── server/             # TCP server
 │   ├── storage/            # Segmented log storage engine
@@ -1069,20 +1197,26 @@ flymq/
 │   ├── transaction/        # Transaction coordinator
 │   └── ttl/                # Message TTL and expiration
 ├── pkg/
+│   ├── cli/                # CLI utilities (colors, formatting)
 │   └── client/             # Go client SDK
 ├── sdk/
 │   ├── python/             # Python SDK (pyflymq)
-│   │   └── pyflymq/        # Client, models, crypto, reactive
+│   │   ├── pyflymq/        # Client, models, crypto, reactive
+│   │   ├── examples/       # Usage examples
+│   │   └── tests/          # Unit tests
 │   └── java/               # Java SDK (Maven multi-module)
 │       ├── flymq-client-core/        # Core client library
 │       ├── flymq-client-spring/      # Spring Boot MVC integration
 │       └── flymq-client-spring-webflux/  # Spring WebFlux (reactive)
 ├── benchmarks/             # Performance benchmark suite
-│   ├── benchmark.go        # FlyMQ vs Kafka benchmark tool
-│   ├── docker-compose.yml  # Kafka containers for benchmarks
-│   └── README.md           # Benchmark documentation
+├── tests/                  # Integration and E2E tests
 ├── docs/                   # Documentation
-├── install.sh              # Interactive installer
+├── deploy/                 # Deployment configurations
+│   ├── docker/             # Docker files
+│   └── systemd/            # Systemd service files
+├── install.sh              # Interactive installer (macOS/Linux)
+├── install.ps1             # PowerShell installer (Windows)
+├── uninstall.sh            # Uninstaller
 ├── CHANGELOG.md            # Version history
 ├── CONTRIBUTING.md         # Contribution guidelines
 └── ROADMAP.md              # Planned features
