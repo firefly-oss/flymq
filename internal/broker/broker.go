@@ -919,7 +919,8 @@ func (b *Broker) Subscribe(topic, groupID string, partition int, mode protocol.S
 }
 
 // CommitOffset commits the consumer offset.
-func (b *Broker) CommitOffset(topic, groupID string, partition int, offset uint64) error {
+// Returns (changed, error) where changed indicates if the offset was actually updated.
+func (b *Broker) CommitOffset(topic, groupID string, partition int, offset uint64) (bool, error) {
 	return b.consumers.CommitOffset(topic, groupID, partition, offset)
 }
 

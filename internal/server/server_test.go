@@ -148,15 +148,20 @@ func (b *MockBroker) Subscribe(topic, groupID string, partition int, mode protoc
 	}
 }
 
-func (b *MockBroker) CommitOffset(topic, groupID string, partition int, offset uint64) error {
+func (b *MockBroker) CommitOffset(topic, groupID string, partition int, offset uint64) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if _, ok := b.offsets[topic]; !ok {
 		b.offsets[topic] = make(map[string]uint64)
 	}
-	b.offsets[topic][groupID] = offset
-	return nil
+	key := groupID
+	currentOffset, exists := b.offsets[topic][key]
+	changed := !exists || currentOffset != offset
+	if changed {
+		b.offsets[topic][key] = offset
+	}
+	return changed, nil
 }
 
 func (b *MockBroker) Fetch(topic string, partition int, offset uint64, maxMessages int) ([][]byte, uint64, error) {

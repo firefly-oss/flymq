@@ -57,9 +57,12 @@ func TestCommitAndGetOffset(t *testing.T) {
 	dir := t.TempDir()
 	mgr, _ := NewConsumerGroupManager(dir)
 
-	err := mgr.CommitOffset("test-topic", "test-group", 0, 100)
+	changed, err := mgr.CommitOffset("test-topic", "test-group", 0, 100)
 	if err != nil {
 		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if !changed {
+		t.Error("Expected changed to be true for first commit")
 	}
 
 	offset, exists := mgr.GetCommittedOffset("test-topic", "test-group", 0)
@@ -68,6 +71,24 @@ func TestCommitAndGetOffset(t *testing.T) {
 	}
 	if offset != 100 {
 		t.Errorf("Expected offset 100, got %d", offset)
+	}
+
+	// Commit same offset again - should not change
+	changed, err = mgr.CommitOffset("test-topic", "test-group", 0, 100)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if changed {
+		t.Error("Expected changed to be false for same offset")
+	}
+
+	// Commit different offset - should change
+	changed, err = mgr.CommitOffset("test-topic", "test-group", 0, 101)
+	if err != nil {
+		t.Fatalf("CommitOffset failed: %v", err)
+	}
+	if !changed {
+		t.Error("Expected changed to be true for new offset")
 	}
 }
 
@@ -86,9 +107,9 @@ func TestMultiplePartitionOffsets(t *testing.T) {
 	mgr, _ := NewConsumerGroupManager(dir)
 
 	// Commit offsets for multiple partitions
-	mgr.CommitOffset("test-topic", "test-group", 0, 100)
-	mgr.CommitOffset("test-topic", "test-group", 1, 200)
-	mgr.CommitOffset("test-topic", "test-group", 2, 300)
+	_, _ = mgr.CommitOffset("test-topic", "test-group", 0, 100)
+	_, _ = mgr.CommitOffset("test-topic", "test-group", 1, 200)
+	_, _ = mgr.CommitOffset("test-topic", "test-group", 2, 300)
 
 	tests := []struct {
 		partition int
@@ -115,8 +136,8 @@ func TestMultipleGroups(t *testing.T) {
 	mgr, _ := NewConsumerGroupManager(dir)
 
 	// Commit offsets for different groups
-	mgr.CommitOffset("test-topic", "group-a", 0, 100)
-	mgr.CommitOffset("test-topic", "group-b", 0, 200)
+	_, _ = mgr.CommitOffset("test-topic", "group-a", 0, 100)
+	_, _ = mgr.CommitOffset("test-topic", "group-b", 0, 200)
 
 	offsetA, _ := mgr.GetCommittedOffset("test-topic", "group-a", 0)
 	offsetB, _ := mgr.GetCommittedOffset("test-topic", "group-b", 0)
@@ -134,7 +155,7 @@ func TestOffsetPersistence(t *testing.T) {
 
 	// Create manager and commit offset
 	mgr1, _ := NewConsumerGroupManager(dir)
-	mgr1.CommitOffset("test-topic", "test-group", 0, 500)
+	_, _ = mgr1.CommitOffset("test-topic", "test-group", 0, 500)
 
 	// Create new manager (simulating restart)
 	mgr2, err := NewConsumerGroupManager(dir)

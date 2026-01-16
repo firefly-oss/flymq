@@ -141,7 +141,8 @@ type Broker interface {
 
 	// CommitOffset persists the consumer's progress for a topic partition.
 	// This enables resuming consumption from the last committed position.
-	CommitOffset(topic, groupID string, partition int, offset uint64) error
+	// Returns (changed, error) where changed indicates if the offset was actually updated.
+	CommitOffset(topic, groupID string, partition int, offset uint64) (bool, error)
 
 	// ListConsumerGroups returns all consumer groups.
 	ListConsumerGroups() []*broker.ConsumerGroupInfo
@@ -1180,14 +1181,17 @@ func (s *Server) handleCommit(w io.Writer, payload []byte, flags byte) error {
 	partition := int(req.Partition)
 	offset := req.Offset
 
-	// Persist the commit
-	if err := s.broker.CommitOffset(topic, groupID, partition, offset); err != nil {
+	// Persist the commit (only if offset changed)
+	changed, err := s.broker.CommitOffset(topic, groupID, partition, offset)
+	if err != nil {
 		return err
 	}
 
-	// Log commit operation
-	consumerID := "unknown" // TODO: Extract from connection context
-	s.consumerLogger.LogCommit(consumerID, groupID, topic, partition, offset)
+	// Only log when offset actually changes (avoid spamming logs on auto-commit)
+	if changed {
+		consumerID := "unknown" // TODO: Extract from connection context
+		s.consumerLogger.LogCommit(consumerID, groupID, topic, partition, offset)
+	}
 
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
 	s.perfLogger.LogLatency("commit", latencyMs, true)
@@ -1490,7 +1494,7 @@ func (s *Server) handleResetOffset(w io.Writer, payload []byte) error {
 	default:
 		return fmt.Errorf("unknown reset mode: %s", req.Mode)
 	}
-	if err := s.broker.CommitOffset(req.Topic, req.GroupID, int(req.Partition), target); err != nil {
+	if _, err := s.broker.CommitOffset(req.Topic, req.GroupID, int(req.Partition), target); err != nil {
 		return err
 	}
 	resp := protocol.EncodeBinarySimpleBoolResponse(&protocol.BinarySimpleBoolResponse{Success: true})

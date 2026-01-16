@@ -151,14 +151,23 @@ func (m *ConsumerGroupManager) GetCommittedOffset(topic, groupID string, partiti
 }
 
 // CommitOffset commits an offset for a consumer group.
-func (m *ConsumerGroupManager) CommitOffset(topic, groupID string, partition int, offset uint64) error {
+// Returns (changed, error) where changed indicates if the offset was actually updated.
+func (m *ConsumerGroupManager) CommitOffset(topic, groupID string, partition int, offset uint64) (bool, error) {
 	group := m.GetOrCreateGroup(topic, groupID)
 
 	group.mu.Lock()
-	group.Offsets[partition] = offset
+	currentOffset, exists := group.Offsets[partition]
+	changed := !exists || currentOffset != offset
+	if changed {
+		group.Offsets[partition] = offset
+	}
 	group.mu.Unlock()
 
-	return m.persistGroup(group)
+	// Only persist if the offset actually changed
+	if changed {
+		return true, m.persistGroup(group)
+	}
+	return false, nil
 }
 
 func (m *ConsumerGroupManager) persistGroup(group *ConsumerGroup) error {
