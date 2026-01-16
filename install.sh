@@ -17,8 +17,8 @@ set -euo pipefail
 # Configuration
 # =============================================================================
 
-readonly SCRIPT_VERSION="1.26.7"
-readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.7}"
+readonly SCRIPT_VERSION="1.26.8"
+readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.8}"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Installation options
