@@ -2,7 +2,7 @@
 
 This document outlines the planned features and improvements for FlyMQ.
 
-## Current Status (v1.26.8)
+## Current Status (v1.26.9)
 
 The following features are implemented and available:
 
@@ -39,6 +39,9 @@ The following features are implemented and available:
 - ✅ Rancher-style join bundle for easy cluster deployment
 - ✅ Advertise address auto-detection (Docker, Kubernetes, AWS, GCP, Azure)
 - ✅ Schema replication across cluster nodes
+- ✅ **Partition-Level Leadership** - Horizontal write scaling with per-partition leaders
+- ✅ **mDNS Service Discovery** - Zero-configuration cluster node discovery
+- ✅ **Cluster Metadata API** - Partition-to-node mappings for smart client routing
 
 ### Performance Improvements
 - ✅ Zero-copy message delivery
@@ -68,6 +71,7 @@ The following features are implemented and available:
 - ✅ **RecordMetadata** - Complete metadata returned from all produce operations
 - ✅ **connect() Factory** - One-liner connection in Python and Java
 - ✅ **Enhanced Exceptions** - Errors with hints and actionable suggestions
+- ✅ **Cluster Metadata API** - `get_cluster_metadata()` for smart partition routing
 
 ### Deployment & Operations
 - ✅ Interactive installer for Linux, macOS, Windows

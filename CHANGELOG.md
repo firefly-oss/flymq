@@ -5,6 +5,52 @@ All notable changes to FlyMQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January 2026, Patch 1).
 
+## [1.26.9] - 2026-01-17
+
+### Added
+
+#### Partition-Level Leadership for Horizontal Scaling
+- **Partition Leader Distribution** - Each partition can have a different leader node
+  - Enables horizontal write scaling across cluster nodes (like Kafka)
+  - `PartitionLeaderInfo` struct with routing information (leader address, epoch)
+  - `PartitionAssignment` extended with `LeaderAddr`, `ReplicaAddrs`, and `Epoch` fields
+- **Cluster Metadata API** - New endpoint for smart client routing
+  - `GET /cluster/metadata` - Returns partition-to-node mappings
+  - `GET /cluster/partitions` - Detailed partition assignments with ISR status
+  - Enables clients to route requests directly to partition leaders
+
+#### mDNS Service Discovery
+- **`flymq-discover` Tool** - New CLI tool for automatic node discovery
+  - Discovers FlyMQ nodes on local network using mDNS (Bonjour/Avahi)
+  - Supports `--json`, `--quiet`, and `--timeout` flags
+  - Used by installer for zero-configuration cluster joining
+- **Discovery Service** - mDNS advertisement and discovery (`internal/cluster/discovery.go`)
+  - Service type: `_flymq._tcp.local`
+  - Publishes node_id, cluster_id, client_port, version in TXT records
+
+#### CLI Partition Management Commands
+- **`cluster metadata`** - Get partition-to-node mappings for smart routing
+- **`cluster partitions`** - List all partition assignments with replicas and ISR
+- **`cluster leaders`** - Show leader distribution across nodes
+- **`cluster rebalance`** - Trigger partition rebalance for even distribution
+- **`cluster reassign`** - Reassign a partition to a new leader
+
+#### SDK Cluster Metadata Support
+- **Python SDK** - `client.get_cluster_metadata(topic)` method
+  - Returns `ClusterMetadata` with `TopicPartitionInfo` and `PartitionInfo`
+- **Java SDK** - `ClusterMetadata` class with partition routing helpers
+  - `getPartitionLeader(topic, partition)` for direct leader lookup
+  - `getTopicPartitions(topic)` for all partition info
+
+### Changed
+- **Broker Interface** - Extended `Cluster` interface with partition-level leadership methods
+  - `IsPartitionLeader()`, `GetPartitionLeaderInfo()`, `GetAllPartitionLeaders()`
+  - `ProposeAssignPartition()`, `TriggerRebalance()`, `ReassignPartition()`
+- **Swagger/OpenAPI** - Added cluster metadata and partition endpoints to API spec
+- **Installer** - Enhanced with mDNS discovery integration for cluster setup
+
+---
+
 ## [1.26.8] - 2026-01-16
 
 ### Added
@@ -317,6 +363,8 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ---
 
+[1.26.9]: https://github.com/firefly-oss/flymq/compare/v1.26.8...v1.26.9
+[1.26.8]: https://github.com/firefly-oss/flymq/compare/v1.26.7...v1.26.8
 [1.26.7]: https://github.com/firefly-oss/flymq/compare/v1.26.6...v1.26.7
 [1.26.6]: https://github.com/firefly-oss/flymq/compare/v1.26.5...v1.26.6
 [1.26.5]: https://github.com/firefly-oss/flymq/compare/v1.26.4...v1.26.5
