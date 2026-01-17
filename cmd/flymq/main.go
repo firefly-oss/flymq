@@ -61,6 +61,7 @@ import (
 	"flymq/internal/broker"
 	"flymq/internal/cluster"
 	"flymq/internal/config"
+	"flymq/internal/crypto"
 	"flymq/internal/dlq"
 	"flymq/internal/health"
 	"flymq/internal/logging"
@@ -148,6 +149,17 @@ func main() {
 	// Finalize config (auto-enable linked settings)
 	cfg.Finalize()
 
+	// Validate configuration early (before banner)
+	if err := cfg.Validate(); err != nil {
+		fmt.Printf("\n\033[1;31m✗ Configuration Error\033[0m\n\n")
+		fmt.Printf("  %v\n\n", err)
+		if cfg.Security.EncryptionEnabled && cfg.Security.EncryptionKey == "" {
+			fmt.Printf("\033[1;33mSecurity Note:\033[0m Encryption keys must be provided via environment\n")
+			fmt.Printf("variable for security reasons (never stored in config files).\n\n")
+		}
+		os.Exit(1)
+	}
+
 	// Override log format if --human-readable flag is set
 	if *humanReadable {
 		cfg.LogJSON = false
@@ -164,6 +176,24 @@ func main() {
 	logger := logging.NewLogger("main")
 
 	logger.Info("Starting FlyMQ", "version", banner.Version, "node_id", cfg.NodeID)
+
+	// Verify encryption key if encryption is enabled
+	if cfg.Security.EncryptionEnabled {
+		if err := verifyEncryptionKey(cfg, logger); err != nil {
+			logger.Error("Encryption key verification failed", "error", err)
+			fmt.Printf("\n\033[1;31m✗ Encryption Key Error\033[0m\n\n")
+			fmt.Printf("  %v\n\n", err)
+			fmt.Printf("\033[1;33mPossible causes:\033[0m\n")
+			fmt.Printf("  • Wrong FLYMQ_ENCRYPTION_KEY environment variable\n")
+			fmt.Printf("  • Data directory was encrypted with a different key\n")
+			fmt.Printf("  • Corrupted key verification file\n\n")
+			fmt.Printf("\033[1;33mTo fix:\033[0m\n")
+			fmt.Printf("  • Ensure FLYMQ_ENCRYPTION_KEY matches the original key\n")
+			fmt.Printf("  • For new installation, remove: %s/.encryption_marker\n\n", cfg.DataDir)
+			os.Exit(1)
+		}
+		logger.Info("Encryption key verified successfully")
+	}
 
 	// Initialize Broker
 	b, err := broker.NewBroker(cfg)
@@ -321,4 +351,50 @@ func main() {
 	if err := srv.Stop(); err != nil {
 		logger.Error("Error stopping server", "error", err)
 	}
+}
+
+// verifyEncryptionKey verifies the encryption key matches the one used to encrypt existing data.
+// On first run, it creates a marker file. On subsequent runs, it verifies the key can decrypt it.
+func verifyEncryptionKey(cfg *config.Config, logger *logging.Logger) error {
+	markerPath := cfg.DataDir + "/.encryption_marker"
+
+	// Create encryptor with the provided key
+	encryptor, err := crypto.NewEncryptor(cfg.Security.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("failed to create encryptor: %w", err)
+	}
+
+	// Check if marker file exists
+	markerData, err := os.ReadFile(markerPath)
+	if os.IsNotExist(err) {
+		// First run - create the marker file
+		logger.Info("Creating encryption key verification marker", "path", markerPath)
+
+		// Ensure data directory exists
+		if err := os.MkdirAll(cfg.DataDir, 0750); err != nil {
+			return fmt.Errorf("failed to create data directory: %w", err)
+		}
+
+		// Create encrypted marker
+		encrypted, err := encryptor.CreateKeyVerificationMarker()
+		if err != nil {
+			return fmt.Errorf("failed to create key verification marker: %w", err)
+		}
+
+		// Write marker file with restricted permissions
+		if err := os.WriteFile(markerPath, encrypted, 0600); err != nil {
+			return fmt.Errorf("failed to write key verification marker: %w", err)
+		}
+
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to read key verification marker: %w", err)
+	}
+
+	// Marker exists - verify the key
+	if err := encryptor.VerifyKeyWithMarker(markerData); err != nil {
+		return crypto.ErrWrongEncryptionKey
+	}
+
+	return nil
 }
