@@ -700,6 +700,8 @@ flymq --config /etc/flymq/flymq.json
 > - Never commit encryption keys to version control
 > - Back up the key securely - **data cannot be recovered without it**
 >
+> **🔗 Cluster Requirement:** All nodes in a cluster **must use the same encryption key**. FlyMQ validates key consistency when nodes join the cluster and rejects nodes with mismatched keys.
+>
 > **Key Verification:** FlyMQ verifies the encryption key on startup. If the wrong key is provided, the server will refuse to start with a clear error message.
 
 ---

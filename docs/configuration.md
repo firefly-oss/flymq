@@ -94,6 +94,12 @@ flymq -quiet -human-readable
 > - Never commit encryption keys to version control
 > - Back up the key securely - data cannot be recovered without it
 >
+> **🔗 Cluster Requirement:**
+> **All nodes in a cluster MUST use the same encryption key.** When a node attempts
+> to join a cluster, FlyMQ validates that its encryption key fingerprint matches the
+> existing cluster members. Nodes with mismatched keys will be rejected with a clear
+> error message. This ensures data consistency and prevents accidental misconfiguration.
+>
 > **Key Verification:**
 > On first startup with encryption enabled, FlyMQ creates a `.encryption_marker` file
 > in the data directory. On subsequent startups, this marker is used to verify the
@@ -110,6 +116,19 @@ flymq -quiet -human-readable
 >
 > # Start FlyMQ
 > flymq --config /etc/flymq/flymq.json
+> ```
+>
+> **Cluster Deployment:**
+> ```bash
+> # Generate key once on the bootstrap node
+> openssl rand -hex 32 > /etc/flymq/encryption.key
+>
+> # Copy to all cluster nodes
+> scp /etc/flymq/encryption.key node2:/etc/flymq/
+> scp /etc/flymq/encryption.key node3:/etc/flymq/
+>
+> # Each node loads the same key
+> export FLYMQ_ENCRYPTION_KEY=$(cat /etc/flymq/encryption.key)
 > ```
 
 ### Authentication & RBAC
