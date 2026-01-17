@@ -23,6 +23,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -168,4 +169,22 @@ func (e *Encryptor) VerifyKeyWithMarker(encryptedMarker []byte) error {
 // CreateKeyVerificationMarker creates an encrypted marker for key verification.
 func (e *Encryptor) CreateKeyVerificationMarker() ([]byte, error) {
 	return e.Encrypt([]byte(KeyVerificationMarker))
+}
+
+// KeyFingerprint generates a short fingerprint of an encryption key for comparison.
+// This is used to verify that all cluster nodes use the same encryption key
+// without exposing the actual key. Returns first 16 chars of SHA-256 hash.
+func KeyFingerprint(hexKey string) string {
+	if hexKey == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(hexKey))
+	return hex.EncodeToString(hash[:8]) // First 8 bytes = 16 hex chars
+}
+
+// Fingerprint returns the fingerprint of this encryptor's key.
+func (e *Encryptor) Fingerprint() string {
+	// We hash the raw key bytes, not the hex string
+	hash := sha256.Sum256(e.key)
+	return hex.EncodeToString(hash[:8])
 }

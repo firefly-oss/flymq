@@ -67,18 +67,21 @@ import (
 	"flymq/internal/banner"
 	"flymq/internal/broker"
 	"flymq/internal/config"
+	"flymq/internal/crypto"
 	"flymq/internal/logging"
 )
 
 // ClusterConfig holds configuration for the cluster.
 type ClusterConfig struct {
-	NodeID            string
-	ClusterAddr       string // Address to bind for cluster traffic
-	AdvertiseCluster  string // Address to advertise to other nodes (auto-detected if empty)
-	Peers             []string
-	DataDir           string
-	ReplicationFactor int
-	MinISR            int
+	NodeID                   string
+	ClusterAddr              string // Address to bind for cluster traffic
+	AdvertiseCluster         string // Address to advertise to other nodes (auto-detected if empty)
+	Peers                    []string
+	DataDir                  string
+	ReplicationFactor        int
+	MinISR                   int
+	EncryptionEnabled        bool   // Whether encryption is enabled
+	EncryptionKeyFingerprint string // Fingerprint of encryption key for cluster validation
 }
 
 // CommandApplier is the interface for applying committed commands.
@@ -136,14 +139,22 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 	// Get the resolved advertise cluster address (auto-detects if not set)
 	advertiseCluster := cfg.GetAdvertiseCluster()
 
+	// Compute encryption key fingerprint for cluster validation
+	var encryptionFingerprint string
+	if cfg.Security.EncryptionEnabled && cfg.Security.EncryptionKey != "" {
+		encryptionFingerprint = crypto.KeyFingerprint(cfg.Security.EncryptionKey)
+	}
+
 	clusterConfig := ClusterConfig{
-		NodeID:            cfg.NodeID,
-		ClusterAddr:       cfg.ClusterAddr,
-		AdvertiseCluster:  advertiseCluster,
-		Peers:             cfg.Peers,
-		DataDir:           cfg.DataDir,
-		ReplicationFactor: 3,
-		MinISR:            2,
+		NodeID:                   cfg.NodeID,
+		ClusterAddr:              cfg.ClusterAddr,
+		AdvertiseCluster:         advertiseCluster,
+		Peers:                    cfg.Peers,
+		DataDir:                  cfg.DataDir,
+		ReplicationFactor:        3,
+		MinISR:                   2,
+		EncryptionEnabled:        cfg.Security.EncryptionEnabled,
+		EncryptionKeyFingerprint: encryptionFingerprint,
 	}
 
 	c := &Cluster{
@@ -201,15 +212,17 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 
 	// Initialize membership manager
 	membershipConfig := MembershipConfig{
-		NodeID:         clusterConfig.NodeID,
-		Address:        cfg.BindAddr,
-		ClusterAddr:    clusterConfig.ClusterAddr,
-		AdvertiseAddr:  clusterConfig.AdvertiseCluster,
-		DataDir:        clusterConfig.DataDir,
-		GossipInterval: 1 * time.Second,
-		SuspectTimeout: 5 * time.Second,
-		DeadTimeout:    30 * time.Second,
-		Peers:          clusterConfig.Peers,
+		NodeID:                   clusterConfig.NodeID,
+		Address:                  cfg.BindAddr,
+		ClusterAddr:              clusterConfig.ClusterAddr,
+		AdvertiseAddr:            clusterConfig.AdvertiseCluster,
+		DataDir:                  clusterConfig.DataDir,
+		GossipInterval:           1 * time.Second,
+		SuspectTimeout:           5 * time.Second,
+		DeadTimeout:              30 * time.Second,
+		Peers:                    clusterConfig.Peers,
+		EncryptionEnabled:        clusterConfig.EncryptionEnabled,
+		EncryptionKeyFingerprint: clusterConfig.EncryptionKeyFingerprint,
 	}
 
 	membership, err := NewMembershipManager(membershipConfig)

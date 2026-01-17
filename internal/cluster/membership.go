@@ -112,15 +112,17 @@ type MemberStats struct {
 
 // MembershipConfig holds configuration for membership management.
 type MembershipConfig struct {
-	NodeID         string
-	Address        string // Bind address for client connections
-	ClusterAddr    string // Bind address for cluster traffic
-	AdvertiseAddr  string // Advertised cluster address (what other nodes use to reach us)
-	DataDir        string
-	GossipInterval time.Duration
-	SuspectTimeout time.Duration
-	DeadTimeout    time.Duration
-	Peers          []string
+	NodeID                   string
+	Address                  string // Bind address for client connections
+	ClusterAddr              string // Bind address for cluster traffic
+	AdvertiseAddr            string // Advertised cluster address (what other nodes use to reach us)
+	DataDir                  string
+	GossipInterval           time.Duration
+	SuspectTimeout           time.Duration
+	DeadTimeout              time.Duration
+	Peers                    []string
+	EncryptionEnabled        bool   // Whether encryption is enabled
+	EncryptionKeyFingerprint string // Fingerprint of encryption key for cluster validation
 }
 
 // DefaultMembershipConfig returns default membership configuration.
@@ -156,12 +158,21 @@ func NewMembershipManager(config MembershipConfig) (*MembershipManager, error) {
 		advertiseAddr = config.ClusterAddr
 	}
 
+	// Build metadata with encryption info for cluster validation
+	metadata := make(map[string]string)
+	if config.EncryptionEnabled {
+		metadata["encryption_enabled"] = "true"
+		metadata["encryption_fingerprint"] = config.EncryptionKeyFingerprint
+	} else {
+		metadata["encryption_enabled"] = "false"
+	}
+
 	self := &Member{
 		ID:          config.NodeID,
 		Address:     config.Address,
 		ClusterAddr: advertiseAddr, // Use advertise address for cluster communication
 		Status:      MemberAlive,
-		Metadata:    make(map[string]string),
+		Metadata:    metadata,
 		JoinedAt:    time.Now(),
 		LastSeen:    time.Now(),
 	}
@@ -231,9 +242,17 @@ func (m *MembershipManager) Stop() error {
 }
 
 // Join adds a new member to the cluster.
+// ErrEncryptionMismatch is returned when a node's encryption config doesn't match the cluster.
+var ErrEncryptionMismatch = fmt.Errorf("encryption configuration mismatch")
+
 func (m *MembershipManager) Join(member *Member) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Validate encryption configuration matches
+	if err := m.validateEncryptionConfig(member); err != nil {
+		return err
+	}
 
 	if _, exists := m.members[member.ID]; exists {
 		// Update existing member
@@ -256,6 +275,43 @@ func (m *MembershipManager) Join(member *Member) error {
 	}
 
 	return m.saveMembership()
+}
+
+// validateEncryptionConfig checks that a joining member has matching encryption configuration.
+func (m *MembershipManager) validateEncryptionConfig(member *Member) error {
+	selfEncEnabled := m.self.Metadata["encryption_enabled"] == "true"
+	selfFingerprint := m.self.Metadata["encryption_fingerprint"]
+
+	memberEncEnabled := member.Metadata["encryption_enabled"] == "true"
+	memberFingerprint := member.Metadata["encryption_fingerprint"]
+
+	// Check encryption enabled/disabled matches
+	if selfEncEnabled != memberEncEnabled {
+		if selfEncEnabled {
+			m.logger.Error("Encryption mismatch: this node has encryption enabled but joining node does not",
+				"member_id", member.ID,
+				"self_encryption", selfEncEnabled,
+				"member_encryption", memberEncEnabled)
+			return fmt.Errorf("%w: this node has encryption enabled but node %s does not - all cluster nodes must have the same encryption setting", ErrEncryptionMismatch, member.ID)
+		} else {
+			m.logger.Error("Encryption mismatch: joining node has encryption enabled but this node does not",
+				"member_id", member.ID,
+				"self_encryption", selfEncEnabled,
+				"member_encryption", memberEncEnabled)
+			return fmt.Errorf("%w: node %s has encryption enabled but this node does not - all cluster nodes must have the same encryption setting", ErrEncryptionMismatch, member.ID)
+		}
+	}
+
+	// If encryption is enabled, check fingerprints match
+	if selfEncEnabled && selfFingerprint != memberFingerprint {
+		m.logger.Error("Encryption key mismatch: joining node has different encryption key",
+			"member_id", member.ID,
+			"self_fingerprint", selfFingerprint,
+			"member_fingerprint", memberFingerprint)
+		return fmt.Errorf("%w: node %s has a different encryption key (fingerprint: %s vs %s) - all cluster nodes must use the same FLYMQ_ENCRYPTION_KEY", ErrEncryptionMismatch, member.ID, memberFingerprint, selfFingerprint)
+	}
+
+	return nil
 }
 
 // Leave removes a member from the cluster.
