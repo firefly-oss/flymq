@@ -90,6 +90,10 @@ public enum OpCode {
     PASSWORD_CHANGE(0x7C),
     ROLE_LIST(0x7D),
 
+    // ========== Audit Trail Operations (0xA0-0xAF) ==========
+    AUDIT_QUERY(0xA0),
+    AUDIT_EXPORT(0xA1),
+
     // ========== Error Response (0xFF) ==========
     ERROR(0xFF);
 

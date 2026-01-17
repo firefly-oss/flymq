@@ -159,6 +159,58 @@ readinessProbe:
 
 ---
 
+## Audit Trail
+
+FlyMQ includes a comprehensive audit trail system for security monitoring and compliance. Audit logging is **enabled by default**.
+
+### Tracked Events
+
+| Category | Events | Description |
+|----------|--------|-------------|
+| Authentication | `auth.success`, `auth.failure`, `auth.logout` | User login/logout events |
+| Authorization | `access.granted`, `access.denied` | Resource access decisions |
+| Topics | `topic.create`, `topic.delete`, `topic.modify` | Topic management |
+| Users | `user.create`, `user.delete`, `user.modify` | User management |
+| ACLs | `acl.change` | Access control changes |
+| Cluster | `cluster.join`, `cluster.leave` | Node membership |
+
+### Querying Audit Events
+
+**Via CLI:**
+```bash
+# List recent events
+flymq-cli audit list
+
+# Query with filters
+flymq-cli audit query --user admin --type auth.failure --start 2026-01-01T00:00:00Z
+
+# Export for SIEM integration
+flymq-cli audit export --format json --output /var/log/flymq-audit.json
+```
+
+**Via Admin API:**
+```bash
+# Query events
+curl -u admin:password "http://localhost:8080/api/v1/audit/events?type=auth.failure&limit=100"
+
+# Export as CSV for compliance reporting
+curl -u admin:password "http://localhost:8080/api/v1/audit/export?format=csv" > audit.csv
+```
+
+### SIEM Integration
+
+Audit logs are stored in JSON Lines format, making them easy to ingest into SIEM systems:
+
+```bash
+# Stream audit logs to Splunk
+tail -f /var/lib/flymq/audit/audit.log | curl -X POST -d @- https://splunk:8088/services/collector
+
+# Ship to Elasticsearch
+filebeat -c filebeat-flymq.yml
+```
+
+---
+
 ## Grafana Dashboard
 
 A sample Grafana dashboard is available at `examples/grafana/flymq-dashboard.json`.

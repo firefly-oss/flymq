@@ -168,6 +168,53 @@ Topics can have explicit ACLs that override the default public setting:
 - `allowed_users` - List of usernames with access
 - `allowed_roles` - List of roles with access
 
+### Audit Trail
+
+FlyMQ includes a comprehensive audit trail system for tracking security-relevant operations. Audit logging is **enabled by default** for compliance and security monitoring.
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `audit.enabled` | `FLYMQ_AUDIT_ENABLED` | `true` | Enable audit trail logging |
+| `audit.log_dir` | `FLYMQ_AUDIT_LOG_DIR` | `<data_dir>/audit` | Directory for audit log files |
+| `audit.max_file_size` | `FLYMQ_AUDIT_MAX_FILE_SIZE` | `104857600` | Max audit file size before rotation (100MB) |
+| `audit.retention_days` | `FLYMQ_AUDIT_RETENTION_DAYS` | `90` | Days to retain audit logs |
+
+**Tracked Event Types:**
+
+| Category | Events | Description |
+|----------|--------|-------------|
+| Authentication | `auth.success`, `auth.failure`, `auth.logout` | User login/logout events |
+| Authorization | `access.granted`, `access.denied` | Resource access decisions |
+| Topics | `topic.create`, `topic.delete`, `topic.modify` | Topic management operations |
+| Users | `user.create`, `user.delete`, `user.modify` | User management operations |
+| ACLs | `acl.change` | Access control list changes |
+| Configuration | `config.change` | Configuration modifications |
+| Cluster | `cluster.join`, `cluster.leave` | Node membership changes |
+
+**Example Configuration:**
+```json
+{
+  "audit": {
+    "enabled": true,
+    "log_dir": "/var/lib/flymq/audit",
+    "max_file_size": 104857600,
+    "retention_days": 90
+  }
+}
+```
+
+**Querying Audit Events:**
+```bash
+# List recent events
+flymq-cli audit list
+
+# Query with filters
+flymq-cli audit query --user admin --type auth.success,auth.failure
+
+# Export for compliance
+flymq-cli audit export --format csv --output audit-report.csv
+```
+
 ## Cluster Configuration
 
 | Option | Env Variable | Default | Description |

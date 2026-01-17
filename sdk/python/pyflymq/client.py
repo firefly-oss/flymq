@@ -39,10 +39,12 @@ from __future__ import annotations
 
 import socket
 import ssl
+import struct
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Iterator
 
 from .exceptions import (
@@ -50,6 +52,7 @@ from .exceptions import (
     ConnectionClosedError,
     ConnectionError,
     ConnectionTimeoutError,
+    FlyMQError,
     NoAvailableServerError,
     NotLeaderError,
     ServerError,
@@ -1334,6 +1337,286 @@ class FlyMQClient:
             max_poll_records=max_poll_records,
         )
         return HighLevelConsumer(self, topic_list, group_id, config)
+
+    # =========================================================================
+    # Audit Trail Operations
+    # =========================================================================
+
+    def query_audit_events(
+        self,
+        *,
+        start_time: "datetime | None" = None,
+        end_time: "datetime | None" = None,
+        event_types: list[str] | None = None,
+        user: str = "",
+        resource: str = "",
+        result: str = "",
+        search: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> "AuditQueryResult":
+        """
+        Query audit events with optional filters.
+
+        Args:
+            start_time: Start of time range (inclusive).
+            end_time: End of time range (inclusive).
+            event_types: List of event types to filter by.
+            user: Filter by username.
+            resource: Filter by resource (topic, user, etc.).
+            result: Filter by result (success, failure, denied).
+            search: Full-text search query.
+            limit: Maximum number of events to return.
+            offset: Offset for pagination.
+
+        Returns:
+            AuditQueryResult with events, total count, and has_more flag.
+
+        Raises:
+            FlyMQError: If the query fails.
+        """
+        from .models import AuditEvent, AuditQueryResult
+
+        # Build request payload
+        payload = bytearray()
+
+        # Start time (int64)
+        start_ts = int(start_time.timestamp()) if start_time else 0
+        payload.extend(struct.pack(">q", start_ts))
+
+        # End time (int64)
+        end_ts = int(end_time.timestamp()) if end_time else 0
+        payload.extend(struct.pack(">q", end_ts))
+
+        # Event types count and strings
+        types = event_types or []
+        payload.extend(struct.pack(">H", len(types)))
+        for et in types:
+            et_bytes = et.encode("utf-8")
+            payload.extend(struct.pack(">H", len(et_bytes)))
+            payload.extend(et_bytes)
+
+        # User filter
+        user_bytes = user.encode("utf-8")
+        payload.extend(struct.pack(">H", len(user_bytes)))
+        payload.extend(user_bytes)
+
+        # Resource filter
+        resource_bytes = resource.encode("utf-8")
+        payload.extend(struct.pack(">H", len(resource_bytes)))
+        payload.extend(resource_bytes)
+
+        # Result filter
+        result_bytes = result.encode("utf-8")
+        payload.extend(struct.pack(">H", len(result_bytes)))
+        payload.extend(result_bytes)
+
+        # Search query
+        search_bytes = search.encode("utf-8")
+        payload.extend(struct.pack(">H", len(search_bytes)))
+        payload.extend(search_bytes)
+
+        # Limit and offset
+        payload.extend(struct.pack(">I", limit))
+        payload.extend(struct.pack(">I", offset))
+
+        # Send request
+        self._send_message(OpCode.AUDIT_QUERY, bytes(payload))
+
+        # Read response
+        op, resp_payload = self._read_message()
+        if op == OpCode.ERROR:
+            raise FlyMQError(resp_payload.decode("utf-8"))
+
+        # Parse response
+        pos = 0
+
+        # Total count (int32)
+        total_count = struct.unpack(">I", resp_payload[pos : pos + 4])[0]
+        pos += 4
+
+        # Has more (bool)
+        has_more = resp_payload[pos] != 0
+        pos += 1
+
+        # Event count
+        event_count = struct.unpack(">I", resp_payload[pos : pos + 4])[0]
+        pos += 4
+
+        events = []
+        for _ in range(event_count):
+            # ID
+            id_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            event_id = resp_payload[pos : pos + id_len].decode("utf-8")
+            pos += id_len
+
+            # Timestamp (int64 milliseconds)
+            timestamp_ms = struct.unpack(">q", resp_payload[pos : pos + 8])[0]
+            pos += 8
+            timestamp = datetime.fromtimestamp(timestamp_ms / 1000.0)
+
+            # Type
+            type_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            event_type = resp_payload[pos : pos + type_len].decode("utf-8")
+            pos += type_len
+
+            # User
+            user_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            event_user = resp_payload[pos : pos + user_len].decode("utf-8")
+            pos += user_len
+
+            # Client IP
+            ip_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            client_ip = resp_payload[pos : pos + ip_len].decode("utf-8")
+            pos += ip_len
+
+            # Resource
+            res_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            event_resource = resp_payload[pos : pos + res_len].decode("utf-8")
+            pos += res_len
+
+            # Action
+            action_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            action = resp_payload[pos : pos + action_len].decode("utf-8")
+            pos += action_len
+
+            # Result
+            result_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            event_result = resp_payload[pos : pos + result_len].decode("utf-8")
+            pos += result_len
+
+            # Details count
+            details_count = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            details = {}
+            for _ in range(details_count):
+                key_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+                pos += 2
+                key = resp_payload[pos : pos + key_len].decode("utf-8")
+                pos += key_len
+                val_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+                pos += 2
+                val = resp_payload[pos : pos + val_len].decode("utf-8")
+                pos += val_len
+                details[key] = val
+
+            # Node ID
+            node_len = struct.unpack(">H", resp_payload[pos : pos + 2])[0]
+            pos += 2
+            node_id = resp_payload[pos : pos + node_len].decode("utf-8")
+            pos += node_len
+
+            events.append(
+                AuditEvent(
+                    id=event_id,
+                    timestamp=timestamp,
+                    type=event_type,
+                    user=event_user,
+                    client_ip=client_ip,
+                    resource=event_resource,
+                    action=action,
+                    result=event_result,
+                    details=details,
+                    node_id=node_id,
+                )
+            )
+
+        return AuditQueryResult(
+            events=events, total_count=total_count, has_more=has_more
+        )
+
+    def export_audit_events(
+        self,
+        format: str = "json",
+        *,
+        start_time: "datetime | None" = None,
+        end_time: "datetime | None" = None,
+        event_types: list[str] | None = None,
+        user: str = "",
+        resource: str = "",
+        result: str = "",
+        search: str = "",
+    ) -> bytes:
+        """
+        Export audit events in the specified format.
+
+        Args:
+            format: Export format ("json" or "csv").
+            start_time: Start of time range (inclusive).
+            end_time: End of time range (inclusive).
+            event_types: List of event types to filter by.
+            user: Filter by username.
+            resource: Filter by resource.
+            result: Filter by result.
+            search: Full-text search query.
+
+        Returns:
+            Exported data as bytes.
+
+        Raises:
+            FlyMQError: If the export fails.
+        """
+        # Build request payload
+        payload = bytearray()
+
+        # Format
+        format_bytes = format.encode("utf-8")
+        payload.extend(struct.pack(">H", len(format_bytes)))
+        payload.extend(format_bytes)
+
+        # Start time (int64)
+        start_ts = int(start_time.timestamp()) if start_time else 0
+        payload.extend(struct.pack(">q", start_ts))
+
+        # End time (int64)
+        end_ts = int(end_time.timestamp()) if end_time else 0
+        payload.extend(struct.pack(">q", end_ts))
+
+        # Event types count and strings
+        types = event_types or []
+        payload.extend(struct.pack(">H", len(types)))
+        for et in types:
+            et_bytes = et.encode("utf-8")
+            payload.extend(struct.pack(">H", len(et_bytes)))
+            payload.extend(et_bytes)
+
+        # User filter
+        user_bytes = user.encode("utf-8")
+        payload.extend(struct.pack(">H", len(user_bytes)))
+        payload.extend(user_bytes)
+
+        # Resource filter
+        resource_bytes = resource.encode("utf-8")
+        payload.extend(struct.pack(">H", len(resource_bytes)))
+        payload.extend(resource_bytes)
+
+        # Result filter
+        result_bytes = result.encode("utf-8")
+        payload.extend(struct.pack(">H", len(result_bytes)))
+        payload.extend(result_bytes)
+
+        # Search query
+        search_bytes = search.encode("utf-8")
+        payload.extend(struct.pack(">H", len(search_bytes)))
+        payload.extend(search_bytes)
+
+        # Send request
+        self._send_message(OpCode.AUDIT_EXPORT, bytes(payload))
+
+        # Read response
+        op, resp_payload = self._read_message()
+        if op == OpCode.ERROR:
+            raise FlyMQError(resp_payload.decode("utf-8"))
+
+        # Response is just the raw data
+        return resp_payload
 
     # =========================================================================
     # High-Level Producer API (Kafka-like)

@@ -2250,3 +2250,81 @@ func (hc *HighLevelConsumer) Topics() []string {
 func (hc *HighLevelConsumer) GroupID() string {
 	return hc.config.GroupID
 }
+
+// ============================================================================
+// Audit Trail Operations
+// ============================================================================
+
+// QueryAuditEvents queries audit events based on the provided filter.
+// Returns the events, total count, and whether there are more results.
+func (c *Client) QueryAuditEvents(req *protocol.BinaryAuditQueryRequest) ([]protocol.BinaryAuditEvent, int32, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Encode request
+	payload := protocol.EncodeBinaryAuditQueryRequest(req)
+
+	// Send request
+	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpAuditQuery, payload); err != nil {
+		return nil, 0, false, fmt.Errorf("failed to send audit query request: %w", err)
+	}
+
+	// Read response
+	msg, err := protocol.ReadMessage(c.conn)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("failed to read audit query response: %w", err)
+	}
+
+	// Check for error response
+	if msg.Header.Op == protocol.OpError {
+		return nil, 0, false, fmt.Errorf("audit query failed: %s", string(msg.Payload))
+	}
+
+	// Decode response
+	resp, err := protocol.DecodeBinaryAuditQueryResponse(msg.Payload)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("failed to decode audit query response: %w", err)
+	}
+
+	return resp.Events, resp.TotalCount, resp.HasMore, nil
+}
+
+// ExportAuditEvents exports audit events in the specified format.
+// Returns the exported data as bytes.
+func (c *Client) ExportAuditEvents(query *protocol.BinaryAuditQueryRequest, format string) ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Build export request
+	req := &protocol.BinaryAuditExportRequest{
+		Query:  *query,
+		Format: format,
+	}
+
+	// Encode request
+	payload := protocol.EncodeBinaryAuditExportRequest(req)
+
+	// Send request
+	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpAuditExport, payload); err != nil {
+		return nil, fmt.Errorf("failed to send audit export request: %w", err)
+	}
+
+	// Read response
+	msg, err := protocol.ReadMessage(c.conn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read audit export response: %w", err)
+	}
+
+	// Check for error response
+	if msg.Header.Op == protocol.OpError {
+		return nil, fmt.Errorf("audit export failed: %s", string(msg.Payload))
+	}
+
+	// Decode response
+	resp, err := protocol.DecodeBinaryAuditExportResponse(msg.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode audit export response: %w", err)
+	}
+
+	return resp.Data, nil
+}

@@ -51,6 +51,7 @@ package protocol
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -4007,3 +4008,656 @@ func DecodeBinaryClusterMetadataResponse(data []byte) (*BinaryClusterMetadataRes
 	}, nil
 }
 
+// ============================================================================
+// Audit Trail Operations
+// ============================================================================
+
+// BinaryAuditQueryRequest represents a request to query audit events.
+// Format: [8B start_time][8B end_time][4B type_count][types...][2B user_len][user]
+//         [2B resource_len][resource][2B result_len][result][2B search_len][search]
+//         [4B limit][4B offset]
+type BinaryAuditQueryRequest struct {
+	StartTime  int64    // Unix timestamp (0 = no filter)
+	EndTime    int64    // Unix timestamp (0 = no filter)
+	EventTypes []string // Event types to filter
+	User       string   // Username filter
+	Resource   string   // Resource filter
+	Result     string   // Result filter (success, failure, denied)
+	Search     string   // Full-text search
+	Limit      int32    // Max events to return
+	Offset     int32    // Pagination offset
+}
+
+// BinaryAuditEvent represents a single audit event in binary format.
+type BinaryAuditEvent struct {
+	ID        string            // Event ID
+	Timestamp int64             // Unix timestamp (milliseconds)
+	Type      string            // Event type
+	User      string            // Username
+	ClientIP  string            // Client IP
+	Resource  string            // Resource affected
+	Action    string            // Action performed
+	Result    string            // Result (success, failure, denied)
+	Details   map[string]string // Additional details
+	NodeID    string            // Cluster node ID
+}
+
+// BinaryAuditQueryResponse represents the response to an audit query.
+type BinaryAuditQueryResponse struct {
+	Events     []BinaryAuditEvent
+	TotalCount int32
+	HasMore    bool
+}
+
+// BinaryAuditExportRequest represents a request to export audit events.
+// Format: [query_request][2B format_len][format]
+type BinaryAuditExportRequest struct {
+	Query  BinaryAuditQueryRequest
+	Format string // "json" or "csv"
+}
+
+// BinaryAuditExportResponse represents the response to an audit export.
+type BinaryAuditExportResponse struct {
+	Format string // Format of the data
+	Data   []byte // Exported data
+}
+
+// EncodeBinaryAuditQueryRequest encodes an audit query request.
+func EncodeBinaryAuditQueryRequest(req *BinaryAuditQueryRequest) []byte {
+	// Calculate size
+	size := 8 + 8 + 4 // start_time + end_time + type_count
+	for _, t := range req.EventTypes {
+		size += 2 + len(t)
+	}
+	size += 2 + len(req.User)
+	size += 2 + len(req.Resource)
+	size += 2 + len(req.Result)
+	size += 2 + len(req.Search)
+	size += 4 + 4 // limit + offset
+
+	buf := make([]byte, size)
+	offset := 0
+
+	// Start time
+	binary.BigEndian.PutUint64(buf[offset:], uint64(req.StartTime))
+	offset += 8
+
+	// End time
+	binary.BigEndian.PutUint64(buf[offset:], uint64(req.EndTime))
+	offset += 8
+
+	// Event types
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(req.EventTypes)))
+	offset += 4
+	for _, t := range req.EventTypes {
+		binary.BigEndian.PutUint16(buf[offset:], uint16(len(t)))
+		offset += 2
+		copy(buf[offset:], t)
+		offset += len(t)
+	}
+
+	// User
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(req.User)))
+	offset += 2
+	copy(buf[offset:], req.User)
+	offset += len(req.User)
+
+	// Resource
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(req.Resource)))
+	offset += 2
+	copy(buf[offset:], req.Resource)
+	offset += len(req.Resource)
+
+	// Result
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(req.Result)))
+	offset += 2
+	copy(buf[offset:], req.Result)
+	offset += len(req.Result)
+
+	// Search
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(req.Search)))
+	offset += 2
+	copy(buf[offset:], req.Search)
+	offset += len(req.Search)
+
+	// Limit
+	binary.BigEndian.PutUint32(buf[offset:], uint32(req.Limit))
+	offset += 4
+
+	// Offset
+	binary.BigEndian.PutUint32(buf[offset:], uint32(req.Offset))
+
+	return buf
+}
+
+// DecodeBinaryAuditQueryRequest decodes an audit query request.
+func DecodeBinaryAuditQueryRequest(data []byte) (*BinaryAuditQueryRequest, error) {
+	if len(data) < 28 { // minimum size
+		return nil, errors.New("audit query request too short")
+	}
+
+	offset := 0
+	req := &BinaryAuditQueryRequest{}
+
+	// Start time
+	req.StartTime = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// End time
+	req.EndTime = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// Event types
+	typeCount := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+	req.EventTypes = make([]string, 0, typeCount)
+	for i := 0; i < typeCount; i++ {
+		if offset+2 > len(data) {
+			return nil, errors.New("invalid event type length")
+		}
+		typeLen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+typeLen > len(data) {
+			return nil, errors.New("invalid event type")
+		}
+		req.EventTypes = append(req.EventTypes, string(data[offset:offset+typeLen]))
+		offset += typeLen
+	}
+
+	// User
+	if offset+2 > len(data) {
+		return nil, errors.New("missing user length")
+	}
+	userLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+userLen > len(data) {
+		return nil, errors.New("invalid user")
+	}
+	req.User = string(data[offset : offset+userLen])
+	offset += userLen
+
+	// Resource
+	if offset+2 > len(data) {
+		return nil, errors.New("missing resource length")
+	}
+	resourceLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+resourceLen > len(data) {
+		return nil, errors.New("invalid resource")
+	}
+	req.Resource = string(data[offset : offset+resourceLen])
+	offset += resourceLen
+
+	// Result
+	if offset+2 > len(data) {
+		return nil, errors.New("missing result length")
+	}
+	resultLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+resultLen > len(data) {
+		return nil, errors.New("invalid result")
+	}
+	req.Result = string(data[offset : offset+resultLen])
+	offset += resultLen
+
+	// Search
+	if offset+2 > len(data) {
+		return nil, errors.New("missing search length")
+	}
+	searchLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+searchLen > len(data) {
+		return nil, errors.New("invalid search")
+	}
+	req.Search = string(data[offset : offset+searchLen])
+	offset += searchLen
+
+	// Limit
+	if offset+4 > len(data) {
+		return nil, errors.New("missing limit")
+	}
+	req.Limit = int32(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	// Offset
+	if offset+4 > len(data) {
+		return nil, errors.New("missing offset")
+	}
+	req.Offset = int32(binary.BigEndian.Uint32(data[offset:]))
+
+	return req, nil
+}
+
+
+
+// EncodeBinaryAuditEvent encodes a single audit event.
+func EncodeBinaryAuditEvent(event *BinaryAuditEvent) []byte {
+	// Calculate size
+	size := 2 + len(event.ID)
+	size += 8 // timestamp
+	size += 2 + len(event.Type)
+	size += 2 + len(event.User)
+	size += 2 + len(event.ClientIP)
+	size += 2 + len(event.Resource)
+	size += 2 + len(event.Action)
+	size += 2 + len(event.Result)
+	size += 2 + len(event.NodeID)
+	size += 4 // details count
+	for k, v := range event.Details {
+		size += 2 + len(k) + 2 + len(v)
+	}
+
+	buf := make([]byte, size)
+	offset := 0
+
+	// ID
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.ID)))
+	offset += 2
+	copy(buf[offset:], event.ID)
+	offset += len(event.ID)
+
+	// Timestamp
+	binary.BigEndian.PutUint64(buf[offset:], uint64(event.Timestamp))
+	offset += 8
+
+	// Type
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.Type)))
+	offset += 2
+	copy(buf[offset:], event.Type)
+	offset += len(event.Type)
+
+	// User
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.User)))
+	offset += 2
+	copy(buf[offset:], event.User)
+	offset += len(event.User)
+
+	// ClientIP
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.ClientIP)))
+	offset += 2
+	copy(buf[offset:], event.ClientIP)
+	offset += len(event.ClientIP)
+
+	// Resource
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.Resource)))
+	offset += 2
+	copy(buf[offset:], event.Resource)
+	offset += len(event.Resource)
+
+	// Action
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.Action)))
+	offset += 2
+	copy(buf[offset:], event.Action)
+	offset += len(event.Action)
+
+	// Result
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.Result)))
+	offset += 2
+	copy(buf[offset:], event.Result)
+	offset += len(event.Result)
+
+	// NodeID
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(event.NodeID)))
+	offset += 2
+	copy(buf[offset:], event.NodeID)
+	offset += len(event.NodeID)
+
+	// Details
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(event.Details)))
+	offset += 4
+	for k, v := range event.Details {
+		binary.BigEndian.PutUint16(buf[offset:], uint16(len(k)))
+		offset += 2
+		copy(buf[offset:], k)
+		offset += len(k)
+		binary.BigEndian.PutUint16(buf[offset:], uint16(len(v)))
+		offset += 2
+		copy(buf[offset:], v)
+		offset += len(v)
+	}
+
+	return buf
+}
+
+// EncodeBinaryAuditQueryResponse encodes an audit query response.
+func EncodeBinaryAuditQueryResponse(resp *BinaryAuditQueryResponse) []byte {
+	// First encode all events
+	var eventData [][]byte
+	totalEventSize := 0
+	for _, event := range resp.Events {
+		data := EncodeBinaryAuditEvent(&event)
+		eventData = append(eventData, data)
+		totalEventSize += 4 + len(data) // 4 bytes for length prefix
+	}
+
+	// Calculate total size: event_count(4) + events + total_count(4) + has_more(1)
+	size := 4 + totalEventSize + 4 + 1
+	buf := make([]byte, size)
+	offset := 0
+
+	// Event count
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(resp.Events)))
+	offset += 4
+
+	// Events
+	for _, data := range eventData {
+		binary.BigEndian.PutUint32(buf[offset:], uint32(len(data)))
+		offset += 4
+		copy(buf[offset:], data)
+		offset += len(data)
+	}
+
+	// Total count
+	binary.BigEndian.PutUint32(buf[offset:], uint32(resp.TotalCount))
+	offset += 4
+
+	// Has more
+	if resp.HasMore {
+		buf[offset] = 1
+	} else {
+		buf[offset] = 0
+	}
+
+	return buf
+}
+
+// DecodeBinaryAuditEvent decodes a single audit event.
+func DecodeBinaryAuditEvent(data []byte) (*BinaryAuditEvent, int, error) {
+	if len(data) < 2 {
+		return nil, 0, errors.New("audit event too short")
+	}
+
+	offset := 0
+	event := &BinaryAuditEvent{}
+
+	// ID
+	idLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+idLen > len(data) {
+		return nil, 0, errors.New("invalid event ID")
+	}
+	event.ID = string(data[offset : offset+idLen])
+	offset += idLen
+
+	// Timestamp
+	if offset+8 > len(data) {
+		return nil, 0, errors.New("missing timestamp")
+	}
+	event.Timestamp = int64(binary.BigEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// Type
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing type length")
+	}
+	typeLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+typeLen > len(data) {
+		return nil, 0, errors.New("invalid type")
+	}
+	event.Type = string(data[offset : offset+typeLen])
+	offset += typeLen
+
+	// User
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing user length")
+	}
+	userLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+userLen > len(data) {
+		return nil, 0, errors.New("invalid user")
+	}
+	event.User = string(data[offset : offset+userLen])
+	offset += userLen
+
+	// ClientIP
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing client IP length")
+	}
+	clientIPLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+clientIPLen > len(data) {
+		return nil, 0, errors.New("invalid client IP")
+	}
+	event.ClientIP = string(data[offset : offset+clientIPLen])
+	offset += clientIPLen
+
+	// Resource
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing resource length")
+	}
+	resourceLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+resourceLen > len(data) {
+		return nil, 0, errors.New("invalid resource")
+	}
+	event.Resource = string(data[offset : offset+resourceLen])
+	offset += resourceLen
+
+	// Action
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing action length")
+	}
+	actionLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+actionLen > len(data) {
+		return nil, 0, errors.New("invalid action")
+	}
+	event.Action = string(data[offset : offset+actionLen])
+	offset += actionLen
+
+	// Result
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing result length")
+	}
+	resultLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+resultLen > len(data) {
+		return nil, 0, errors.New("invalid result")
+	}
+	event.Result = string(data[offset : offset+resultLen])
+	offset += resultLen
+
+	// NodeID
+	if offset+2 > len(data) {
+		return nil, 0, errors.New("missing node ID length")
+	}
+	nodeIDLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+nodeIDLen > len(data) {
+		return nil, 0, errors.New("invalid node ID")
+	}
+	event.NodeID = string(data[offset : offset+nodeIDLen])
+	offset += nodeIDLen
+
+	// Details
+	if offset+4 > len(data) {
+		return nil, 0, errors.New("missing details count")
+	}
+	detailsCount := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+	event.Details = make(map[string]string, detailsCount)
+	for i := 0; i < detailsCount; i++ {
+		if offset+2 > len(data) {
+			return nil, 0, errors.New("missing detail key length")
+		}
+		keyLen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+keyLen > len(data) {
+			return nil, 0, errors.New("invalid detail key")
+		}
+		key := string(data[offset : offset+keyLen])
+		offset += keyLen
+
+		if offset+2 > len(data) {
+			return nil, 0, errors.New("missing detail value length")
+		}
+		valLen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+valLen > len(data) {
+			return nil, 0, errors.New("invalid detail value")
+		}
+		event.Details[key] = string(data[offset : offset+valLen])
+		offset += valLen
+	}
+
+	return event, offset, nil
+}
+
+// DecodeBinaryAuditQueryResponse decodes an audit query response.
+func DecodeBinaryAuditQueryResponse(data []byte) (*BinaryAuditQueryResponse, error) {
+	if len(data) < 9 { // event_count(4) + total_count(4) + has_more(1)
+		return nil, errors.New("audit query response too short")
+	}
+
+	offset := 0
+	resp := &BinaryAuditQueryResponse{}
+
+	// Event count
+	eventCount := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	// Events
+	resp.Events = make([]BinaryAuditEvent, 0, eventCount)
+	for i := 0; i < eventCount; i++ {
+		if offset+4 > len(data) {
+			return nil, errors.New("missing event length")
+		}
+		eventLen := int(binary.BigEndian.Uint32(data[offset:]))
+		offset += 4
+		if offset+eventLen > len(data) {
+			return nil, errors.New("invalid event data")
+		}
+		event, _, err := DecodeBinaryAuditEvent(data[offset : offset+eventLen])
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode event: %w", err)
+		}
+		resp.Events = append(resp.Events, *event)
+		offset += eventLen
+	}
+
+	// Total count
+	if offset+4 > len(data) {
+		return nil, errors.New("missing total count")
+	}
+	resp.TotalCount = int32(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	// Has more
+	if offset >= len(data) {
+		return nil, errors.New("missing has_more flag")
+	}
+	resp.HasMore = data[offset] == 1
+
+	return resp, nil
+}
+
+// EncodeBinaryAuditExportRequest encodes an audit export request.
+func EncodeBinaryAuditExportRequest(req *BinaryAuditExportRequest) []byte {
+	queryData := EncodeBinaryAuditQueryRequest(&req.Query)
+	size := 4 + len(queryData) + 2 + len(req.Format)
+	buf := make([]byte, size)
+	offset := 0
+
+	// Query data length
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(queryData)))
+	offset += 4
+	copy(buf[offset:], queryData)
+	offset += len(queryData)
+
+	// Format
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(req.Format)))
+	offset += 2
+	copy(buf[offset:], req.Format)
+
+	return buf
+}
+
+// DecodeBinaryAuditExportRequest decodes an audit export request.
+func DecodeBinaryAuditExportRequest(data []byte) (*BinaryAuditExportRequest, error) {
+	if len(data) < 6 {
+		return nil, errors.New("audit export request too short")
+	}
+
+	offset := 0
+	req := &BinaryAuditExportRequest{}
+
+	// Query data length
+	queryLen := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+	if offset+queryLen > len(data) {
+		return nil, errors.New("invalid query data")
+	}
+	query, err := DecodeBinaryAuditQueryRequest(data[offset : offset+queryLen])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode query: %w", err)
+	}
+	req.Query = *query
+	offset += queryLen
+
+	// Format
+	if offset+2 > len(data) {
+		return nil, errors.New("missing format length")
+	}
+	formatLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+formatLen > len(data) {
+		return nil, errors.New("invalid format")
+	}
+	req.Format = string(data[offset : offset+formatLen])
+
+	return req, nil
+}
+
+// EncodeBinaryAuditExportResponse encodes an audit export response.
+func EncodeBinaryAuditExportResponse(resp *BinaryAuditExportResponse) []byte {
+	size := 2 + len(resp.Format) + 4 + len(resp.Data)
+	buf := make([]byte, size)
+	offset := 0
+
+	// Format
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(resp.Format)))
+	offset += 2
+	copy(buf[offset:], resp.Format)
+	offset += len(resp.Format)
+
+	// Data
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(resp.Data)))
+	offset += 4
+	copy(buf[offset:], resp.Data)
+
+	return buf
+}
+
+// DecodeBinaryAuditExportResponse decodes an audit export response.
+func DecodeBinaryAuditExportResponse(data []byte) (*BinaryAuditExportResponse, error) {
+	if len(data) < 6 {
+		return nil, errors.New("audit export response too short")
+	}
+
+	offset := 0
+	resp := &BinaryAuditExportResponse{}
+
+	// Format
+	formatLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+formatLen > len(data) {
+		return nil, errors.New("invalid format")
+	}
+	resp.Format = string(data[offset : offset+formatLen])
+	offset += formatLen
+
+	// Data
+	if offset+4 > len(data) {
+		return nil, errors.New("missing data length")
+	}
+	dataLen := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+	if offset+dataLen > len(data) {
+		return nil, errors.New("invalid data")
+	}
+	resp.Data = make([]byte, dataLen)
+	copy(resp.Data, data[offset:offset+dataLen])
+
+	return resp, nil
+}

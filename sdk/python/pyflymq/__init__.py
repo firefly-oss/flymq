@@ -122,6 +122,10 @@ from .exceptions import (
 )
 from .models import (
     AckMode,
+    AuditEvent,
+    AuditEventType,
+    AuditQueryFilter,
+    AuditQueryResult,
     ClientConfig,
     ClusterInfo,
     Compatibility,
@@ -206,6 +210,11 @@ __all__ = [
     "NodeInfo",
     "TransactionInfo",
     "TransactionState",
+    # Audit Trail
+    "AuditEvent",
+    "AuditEventType",
+    "AuditQueryFilter",
+    "AuditQueryResult",
     # Exceptions
     "FlyMQError",
     "ConnectionError",

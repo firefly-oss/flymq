@@ -1174,6 +1174,229 @@ public class FlyMQClient implements AutoCloseable {
     }
 
     // =========================================================================
+    // Audit Trail API
+    // =========================================================================
+
+    /**
+     * Queries audit events with optional filters.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * var filter = AuditQueryFilter.builder()
+     *     .user("admin")
+     *     .eventTypes(List.of("auth.success", "auth.failure"))
+     *     .limit(50)
+     *     .build();
+     *
+     * AuditQueryResult result = client.queryAuditEvents(filter);
+     * for (AuditEvent event : result.events()) {
+     *     System.out.println(event.type() + ": " + event.user());
+     * }
+     * }</pre>
+     *
+     * @param filter the query filter
+     * @return the query result containing events and pagination info
+     * @throws FlyMQException if the query fails
+     */
+    public AuditQueryResult queryAuditEvents(AuditQueryFilter filter) throws FlyMQException {
+        lock.lock();
+        try {
+            ensureConnected();
+
+            // Build request payload
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            // Start time (int64)
+            dos.writeLong(filter.startTime() != null ? filter.startTime().toEpochMilli() / 1000 : 0);
+
+            // End time (int64)
+            dos.writeLong(filter.endTime() != null ? filter.endTime().toEpochMilli() / 1000 : 0);
+
+            // Event types
+            List<String> types = filter.eventTypes() != null ? filter.eventTypes() : List.of();
+            dos.writeShort(types.size());
+            for (String type : types) {
+                byte[] typeBytes = type.getBytes(StandardCharsets.UTF_8);
+                dos.writeShort(typeBytes.length);
+                dos.write(typeBytes);
+            }
+
+            // User filter
+            byte[] userBytes = (filter.user() != null ? filter.user() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(userBytes.length);
+            dos.write(userBytes);
+
+            // Resource filter
+            byte[] resourceBytes = (filter.resource() != null ? filter.resource() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(resourceBytes.length);
+            dos.write(resourceBytes);
+
+            // Result filter
+            byte[] resultBytes = (filter.result() != null ? filter.result() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(resultBytes.length);
+            dos.write(resultBytes);
+
+            // Search query
+            byte[] searchBytes = (filter.search() != null ? filter.search() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(searchBytes.length);
+            dos.write(searchBytes);
+
+            // Limit and offset
+            dos.writeInt(filter.limit());
+            dos.writeInt(filter.offset());
+
+            // Send request
+            Protocol.writeMessage(outputStream, OpCode.AUDIT_QUERY, baos.toByteArray());
+
+            // Read response
+            Protocol.Message response = Protocol.readMessage(inputStream);
+            if (response.op() == OpCode.ERROR) {
+                throw new FlyMQException(new String(response.payload(), StandardCharsets.UTF_8));
+            }
+
+            // Parse response
+            DataInputStream dis = new DataInputStream(new ByteArrayInputStream(response.payload()));
+
+            int totalCount = dis.readInt();
+            boolean hasMore = dis.readBoolean();
+            int eventCount = dis.readInt();
+
+            List<AuditEvent> events = new ArrayList<>();
+            for (int i = 0; i < eventCount; i++) {
+                String id = readString(dis);
+                long timestampMs = dis.readLong();
+                String type = readString(dis);
+                String user = readString(dis);
+                String clientIp = readString(dis);
+                String resource = readString(dis);
+                String action = readString(dis);
+                String eventResult = readString(dis);
+
+                int detailsCount = dis.readShort();
+                Map<String, String> details = new HashMap<>();
+                for (int j = 0; j < detailsCount; j++) {
+                    String key = readString(dis);
+                    String value = readString(dis);
+                    details.put(key, value);
+                }
+
+                String nodeId = readString(dis);
+
+                events.add(new AuditEvent(
+                        id,
+                        java.time.Instant.ofEpochMilli(timestampMs),
+                        type,
+                        user,
+                        clientIp,
+                        resource,
+                        action,
+                        eventResult,
+                        details,
+                        nodeId
+                ));
+            }
+
+            return new AuditQueryResult(events, totalCount, hasMore);
+        } catch (IOException e) {
+            throw new FlyMQException("Failed to query audit events", e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Exports audit events in the specified format.
+     *
+     * <p>Example:
+     * <pre>{@code
+     * var filter = AuditQueryFilter.builder()
+     *     .startTime(Instant.now().minus(Duration.ofDays(7)))
+     *     .build();
+     *
+     * byte[] jsonData = client.exportAuditEvents(filter, "json");
+     * Files.write(Path.of("audit-export.json"), jsonData);
+     * }</pre>
+     *
+     * @param filter the query filter
+     * @param format the export format ("json" or "csv")
+     * @return the exported data as bytes
+     * @throws FlyMQException if the export fails
+     */
+    public byte[] exportAuditEvents(AuditQueryFilter filter, String format) throws FlyMQException {
+        lock.lock();
+        try {
+            ensureConnected();
+
+            // Build request payload
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            DataOutputStream dos = new DataOutputStream(baos);
+
+            // Format
+            byte[] formatBytes = format.getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(formatBytes.length);
+            dos.write(formatBytes);
+
+            // Start time (int64)
+            dos.writeLong(filter.startTime() != null ? filter.startTime().toEpochMilli() / 1000 : 0);
+
+            // End time (int64)
+            dos.writeLong(filter.endTime() != null ? filter.endTime().toEpochMilli() / 1000 : 0);
+
+            // Event types
+            List<String> types = filter.eventTypes() != null ? filter.eventTypes() : List.of();
+            dos.writeShort(types.size());
+            for (String type : types) {
+                byte[] typeBytes = type.getBytes(StandardCharsets.UTF_8);
+                dos.writeShort(typeBytes.length);
+                dos.write(typeBytes);
+            }
+
+            // User filter
+            byte[] userBytes = (filter.user() != null ? filter.user() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(userBytes.length);
+            dos.write(userBytes);
+
+            // Resource filter
+            byte[] resourceBytes = (filter.resource() != null ? filter.resource() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(resourceBytes.length);
+            dos.write(resourceBytes);
+
+            // Result filter
+            byte[] resultBytes = (filter.result() != null ? filter.result() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(resultBytes.length);
+            dos.write(resultBytes);
+
+            // Search query
+            byte[] searchBytes = (filter.search() != null ? filter.search() : "").getBytes(StandardCharsets.UTF_8);
+            dos.writeShort(searchBytes.length);
+            dos.write(searchBytes);
+
+            // Send request
+            Protocol.writeMessage(outputStream, OpCode.AUDIT_EXPORT, baos.toByteArray());
+
+            // Read response
+            Protocol.Message response = Protocol.readMessage(inputStream);
+            if (response.op() == OpCode.ERROR) {
+                throw new FlyMQException(new String(response.payload(), StandardCharsets.UTF_8));
+            }
+
+            return response.payload();
+        } catch (IOException e) {
+            throw new FlyMQException("Failed to export audit events", e);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private String readString(DataInputStream dis) throws IOException {
+        int len = dis.readShort();
+        byte[] bytes = new byte[len];
+        dis.readFully(bytes);
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    // =========================================================================
     // High-Level Consumer API
     // =========================================================================
 

@@ -94,6 +94,10 @@ class OpCode(IntEnum):
     AUTH_RESPONSE = 0x71
     WHOAMI = 0x72
 
+    # Audit Trail Operations (0xA0-0xAF)
+    AUDIT_QUERY = 0xA0
+    AUDIT_EXPORT = 0xA1
+
     # Error Response
     ERROR = 0xFF
 

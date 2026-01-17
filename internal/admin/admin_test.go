@@ -219,6 +219,18 @@ func (m *mockHandler) ReassignPartition(topic string, partition int, newLeader s
 	return nil
 }
 
+func (m *mockHandler) QueryAuditEvents(filter *AuditQueryFilter) (*AuditQueryResult, error) {
+	return &AuditQueryResult{
+		Events:     []AuditEventInfo{},
+		TotalCount: 0,
+		HasMore:    false,
+	}, nil
+}
+
+func (m *mockHandler) ExportAuditEvents(filter *AuditQueryFilter, format string) ([]byte, error) {
+	return []byte("[]"), nil
+}
+
 func TestNewServer(t *testing.T) {
 	cfg := &config.AdminConfig{Enabled: true, Addr: ":8080"}
 	handler := &mockHandler{}

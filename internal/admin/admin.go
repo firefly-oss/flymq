@@ -145,6 +145,10 @@ type AdminHandler interface {
 	GetLeaderDistribution() (map[string]int, error)
 	TriggerRebalance() (*RebalanceResult, error)
 	ReassignPartition(topic string, partition int, newLeader string, newReplicas []string) error
+
+	// Audit trail operations
+	QueryAuditEvents(filter *AuditQueryFilter) (*AuditQueryResult, error)
+	ExportAuditEvents(filter *AuditQueryFilter, format string) ([]byte, error)
 }
 
 // ClusterInfo represents cluster information.
@@ -358,6 +362,50 @@ type PartitionMove struct {
 type ReassignPartitionRequest struct {
 	NewLeader   string   `json:"new_leader"`
 	NewReplicas []string `json:"new_replicas,omitempty"`
+}
+
+// ============================================================================
+// Audit Trail Types
+// ============================================================================
+
+// AuditQueryFilter represents filter criteria for querying audit events.
+type AuditQueryFilter struct {
+	StartTime  *time.Time `json:"start_time,omitempty"`
+	EndTime    *time.Time `json:"end_time,omitempty"`
+	EventTypes []string   `json:"event_types,omitempty"`
+	User       string     `json:"user,omitempty"`
+	Resource   string     `json:"resource,omitempty"`
+	Result     string     `json:"result,omitempty"`
+	Search     string     `json:"search,omitempty"`
+	Limit      int        `json:"limit,omitempty"`
+	Offset     int        `json:"offset,omitempty"`
+}
+
+// AuditQueryResult represents the result of an audit query.
+type AuditQueryResult struct {
+	Events     []AuditEventInfo `json:"events"`
+	TotalCount int              `json:"total_count"`
+	HasMore    bool             `json:"has_more"`
+}
+
+// AuditEventInfo represents a single audit event.
+type AuditEventInfo struct {
+	ID        string            `json:"id"`
+	Timestamp string            `json:"timestamp"`
+	Type      string            `json:"type"`
+	User      string            `json:"user"`
+	ClientIP  string            `json:"client_ip"`
+	Resource  string            `json:"resource"`
+	Action    string            `json:"action"`
+	Result    string            `json:"result"`
+	Details   map[string]string `json:"details,omitempty"`
+	NodeID    string            `json:"node_id,omitempty"`
+}
+
+// AuditExportRequest represents a request to export audit events.
+type AuditExportRequest struct {
+	Filter AuditQueryFilter `json:"filter"`
+	Format string           `json:"format"` // "json" or "csv"
 }
 
 // MetricsResponse represents metrics in Prometheus format.
@@ -661,6 +709,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/cluster/partitions/", wrap(PermissionAdmin, s.handlePartitionReassign))
 	mux.HandleFunc("/api/v1/cluster/leaders", wrap(PermissionRead, s.handleLeaderDistribution))
 	mux.HandleFunc("/api/v1/cluster/rebalance", wrap(PermissionAdmin, s.handleRebalance))
+
+	// Audit trail routes - admin only
+	mux.HandleFunc("/api/v1/audit/events", wrap(PermissionAdmin, s.handleAuditQuery))
+	mux.HandleFunc("/api/v1/audit/export", wrap(PermissionAdmin, s.handleAuditExport))
 
 	// Keep the helper variable to silence unused warning
 	_ = wrapAdminOrSelf
@@ -1540,4 +1592,108 @@ func (s *Server) handleRebalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, result)
+}
+
+// ============================================================================
+// Audit Trail Handlers
+// ============================================================================
+
+// handleAuditQuery handles GET /api/v1/audit/events
+// Returns audit events matching the query parameters.
+func (s *Server) handleAuditQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	filter := &AuditQueryFilter{}
+
+	// Parse time range
+	if startStr := r.URL.Query().Get("start_time"); startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			filter.StartTime = &t
+		}
+	}
+	if endStr := r.URL.Query().Get("end_time"); endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			filter.EndTime = &t
+		}
+	}
+
+	// Parse event types
+	if types := r.URL.Query().Get("types"); types != "" {
+		filter.EventTypes = strings.Split(types, ",")
+	}
+
+	// Parse other filters
+	filter.User = r.URL.Query().Get("user")
+	filter.Resource = r.URL.Query().Get("resource")
+	filter.Result = r.URL.Query().Get("result")
+	filter.Search = r.URL.Query().Get("search")
+
+	// Parse pagination
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			filter.Limit = limit
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil {
+			filter.Offset = offset
+		}
+	}
+
+	// Default limit
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+
+	result, err := s.handler.QueryAuditEvents(filter)
+	if err != nil {
+		s.logger.Error("Failed to query audit events", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.writeJSON(w, result)
+}
+
+// handleAuditExport handles POST /api/v1/audit/export
+// Exports audit events in the specified format (JSON or CSV).
+func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req AuditExportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Default format
+	if req.Format == "" {
+		req.Format = "json"
+	}
+
+	data, err := s.handler.ExportAuditEvents(&req.Filter, req.Format)
+	if err != nil {
+		s.logger.Error("Failed to export audit events", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set content type based on format
+	switch req.Format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=audit_events.csv")
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=audit_events.json")
+	}
+
+	w.Write(data)
 }

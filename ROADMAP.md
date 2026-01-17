@@ -113,7 +113,7 @@ These features are under consideration for future versions:
 ### Enterprise Features
 - Multi-tenancy support
 - Quotas and rate limiting
-- Audit logging
+- ~~Audit logging~~ ✅ Implemented in v1.26.9
 - LDAP/SAML/OIDC authentication providers
 
 ---

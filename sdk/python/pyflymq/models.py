@@ -301,10 +301,73 @@ class TransactionState(str, Enum):
 
 class TransactionInfo(BaseModel):
     """Information about a transaction."""
-    
+
     model_config = ConfigDict(frozen=True)
-    
+
     txn_id: str
     state: TransactionState
     created_at: datetime
     timeout_ms: int = 30000
+
+
+# ============================================================================
+# Audit Trail Models
+# ============================================================================
+
+
+class AuditEventType(str, Enum):
+    """Types of audit events."""
+    AUTH_SUCCESS = "auth.success"
+    AUTH_FAILURE = "auth.failure"
+    AUTH_LOGOUT = "auth.logout"
+    ACCESS_GRANTED = "access.granted"
+    ACCESS_DENIED = "access.denied"
+    TOPIC_CREATE = "topic.create"
+    TOPIC_DELETE = "topic.delete"
+    TOPIC_MODIFY = "topic.modify"
+    USER_CREATE = "user.create"
+    USER_DELETE = "user.delete"
+    USER_MODIFY = "user.modify"
+    ACL_CHANGE = "acl.change"
+    CONFIG_CHANGE = "config.change"
+    CLUSTER_JOIN = "cluster.join"
+    CLUSTER_LEAVE = "cluster.leave"
+
+
+class AuditEvent(BaseModel):
+    """Represents a single audit event."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    timestamp: datetime
+    type: str
+    user: str
+    client_ip: str
+    resource: str
+    action: str
+    result: str
+    details: dict[str, str] = Field(default_factory=dict)
+    node_id: str = ""
+
+
+class AuditQueryFilter(BaseModel):
+    """Filter criteria for querying audit events."""
+
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    event_types: list[str] = Field(default_factory=list)
+    user: str = ""
+    resource: str = ""
+    result: str = ""
+    search: str = ""
+    limit: int = Field(default=100, ge=1, le=10000)
+    offset: int = Field(default=0, ge=0)
+
+
+class AuditQueryResult(BaseModel):
+    """Result of an audit query."""
+
+    events: list[AuditEvent]
+    total_count: int
+    has_more: bool

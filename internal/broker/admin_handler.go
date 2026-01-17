@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"flymq/internal/admin"
+	"flymq/internal/audit"
 	"flymq/internal/auth"
 	"flymq/internal/config"
 	"flymq/internal/dlq"
@@ -36,6 +37,7 @@ type AdminHandler struct {
 	startTime  time.Time
 	authorizer *auth.Authorizer
 	dlqManager *dlq.Manager
+	auditStore audit.Store
 }
 
 // NewAdminHandler creates a new admin handler.
@@ -56,6 +58,11 @@ func (h *AdminHandler) SetAuthorizer(a *auth.Authorizer) {
 // SetDLQManager sets the DLQ manager for dead letter queue operations.
 func (h *AdminHandler) SetDLQManager(m *dlq.Manager) {
 	h.dlqManager = m
+}
+
+// SetAuditStore sets the audit store for audit trail operations.
+func (h *AdminHandler) SetAuditStore(s audit.Store) {
+	h.auditStore = s
 }
 
 // GetClusterInfo returns cluster information.
@@ -1018,4 +1025,101 @@ func (h *AdminHandler) TriggerRebalance() (*admin.RebalanceResult, error) {
 // ReassignPartition reassigns a partition to a new leader and/or replicas.
 func (h *AdminHandler) ReassignPartition(topic string, partition int, newLeader string, newReplicas []string) error {
 	return h.broker.ReassignPartition(topic, partition, newLeader, newReplicas)
+}
+
+// ============================================================================
+// Audit Trail Operations
+// ============================================================================
+
+// QueryAuditEvents queries audit events based on the provided filter.
+func (h *AdminHandler) QueryAuditEvents(filter *admin.AuditQueryFilter) (*admin.AuditQueryResult, error) {
+	if h.auditStore == nil {
+		return nil, fmt.Errorf("audit trail is not enabled")
+	}
+
+	// Convert admin filter to audit filter
+	auditFilter := &audit.QueryFilter{
+		User:     filter.User,
+		Resource: filter.Resource,
+		Result:   filter.Result,
+		Search:   filter.Search,
+		Limit:    filter.Limit,
+		Offset:   filter.Offset,
+	}
+
+	if filter.StartTime != nil {
+		auditFilter.StartTime = filter.StartTime
+	}
+	if filter.EndTime != nil {
+		auditFilter.EndTime = filter.EndTime
+	}
+
+	// Convert event types
+	for _, et := range filter.EventTypes {
+		auditFilter.EventTypes = append(auditFilter.EventTypes, audit.EventType(et))
+	}
+
+	// Execute query
+	result, err := h.auditStore.Query(auditFilter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to admin result
+	events := make([]admin.AuditEventInfo, len(result.Events))
+	for i, event := range result.Events {
+		events[i] = admin.AuditEventInfo{
+			ID:        event.ID,
+			Timestamp: event.Timestamp.Format(time.RFC3339),
+			Type:      string(event.Type),
+			User:      event.User,
+			ClientIP:  event.ClientIP,
+			Resource:  event.Resource,
+			Action:    event.Action,
+			Result:    event.Result,
+			Details:   event.Details,
+			NodeID:    event.NodeID,
+		}
+	}
+
+	return &admin.AuditQueryResult{
+		Events:     events,
+		TotalCount: result.TotalCount,
+		HasMore:    result.HasMore,
+	}, nil
+}
+
+// ExportAuditEvents exports audit events in the specified format.
+func (h *AdminHandler) ExportAuditEvents(filter *admin.AuditQueryFilter, format string) ([]byte, error) {
+	if h.auditStore == nil {
+		return nil, fmt.Errorf("audit trail is not enabled")
+	}
+
+	// Convert admin filter to audit filter
+	auditFilter := &audit.QueryFilter{
+		User:     filter.User,
+		Resource: filter.Resource,
+		Result:   filter.Result,
+		Search:   filter.Search,
+	}
+
+	if filter.StartTime != nil {
+		auditFilter.StartTime = filter.StartTime
+	}
+	if filter.EndTime != nil {
+		auditFilter.EndTime = filter.EndTime
+	}
+
+	// Convert event types
+	for _, et := range filter.EventTypes {
+		auditFilter.EventTypes = append(auditFilter.EventTypes, audit.EventType(et))
+	}
+
+	// Determine export format
+	exportFormat := audit.ExportJSON
+	if format == "csv" {
+		exportFormat = audit.ExportCSV
+	}
+
+	return h.auditStore.Export(auditFilter, exportFormat)
 }

@@ -60,6 +60,7 @@ OPCODE RANGES:
 - 0x50-0x5F: Cluster operations
 - 0x60-0x6F: Consumer group operations
 - 0x70-0x7F: Authentication and user management operations
+- 0x80-0x8F: Audit trail operations
 - 0xFF: Error response
 
 BINARY PAYLOAD ENCODING:
@@ -240,6 +241,12 @@ const (
 	OpACLList        OpCode = 0x7B // List all ACLs
 	OpPasswordChange OpCode = 0x7C // Change user password
 	OpRoleList       OpCode = 0x7D // List all available roles
+
+	// ========== Audit Trail Operations (0x80-0x8F) ==========
+	// Audit logging and compliance operations.
+
+	OpAuditQuery  OpCode = 0x80 // Query audit events with filters
+	OpAuditExport OpCode = 0x81 // Export audit events to file format
 
 	// ========== Error Response (0xFF) ==========
 	OpError OpCode = 0xFF // Error response from server

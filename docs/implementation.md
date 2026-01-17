@@ -893,3 +893,74 @@ func (s *Server) handleConsumeZeroCopy(w io.Writer, payload []byte) error {
 - **macOS**: Uses Darwin `sendfile()` with different syscall signature
 - **Windows/Others**: Gracefully falls back to buffered I/O
 
+## Audit Trail
+
+FlyMQ includes a comprehensive audit trail system for tracking security-relevant operations. The audit system is implemented in `internal/audit/`.
+
+### Audit Event Types
+
+The audit system tracks the following event categories:
+
+| Category | Event Types | Description |
+|----------|-------------|-------------|
+| Authentication | `auth.success`, `auth.failure`, `auth.logout` | User authentication events |
+| Authorization | `access.granted`, `access.denied` | Resource access decisions |
+| Topics | `topic.create`, `topic.delete`, `topic.modify` | Topic management operations |
+| Users | `user.create`, `user.delete`, `user.modify` | User management operations |
+| ACLs | `acl.change` | Access control list changes |
+| Configuration | `config.change` | Configuration modifications |
+| Cluster | `cluster.join`, `cluster.leave` | Cluster membership changes |
+
+### Audit Event Structure
+
+Each audit event contains:
+
+```go
+type AuditEvent struct {
+    ID        string            // Unique event identifier
+    Timestamp time.Time         // When the event occurred
+    Type      AuditEventType    // Event type (e.g., auth.success)
+    User      string            // Username who performed the action
+    ClientIP  string            // Client IP address
+    Resource  string            // Resource affected (topic, user, etc.)
+    Action    string            // Action performed
+    Result    string            // Result (success, failure, denied)
+    Details   map[string]string // Additional context
+    NodeID    string            // Cluster node that recorded the event
+}
+```
+
+### Storage Format
+
+Audit events are stored in JSON Lines format for easy parsing:
+
+```json
+{"id":"evt_abc123","timestamp":"2026-01-17T10:30:00Z","type":"auth.success","user":"admin",...}
+{"id":"evt_abc124","timestamp":"2026-01-17T10:30:01Z","type":"topic.create","user":"admin",...}
+```
+
+### Query API
+
+The audit system supports flexible querying:
+
+```go
+filter := &AuditQueryFilter{
+    StartTime:  time.Now().Add(-24 * time.Hour),
+    EndTime:    time.Now(),
+    EventTypes: []string{"auth.success", "auth.failure"},
+    User:       "admin",
+    Limit:      100,
+}
+result, err := auditStore.Query(filter)
+```
+
+### Integration Points
+
+Audit events are recorded at key points in the server:
+
+1. **Authentication** - `handleAuth()` records success/failure
+2. **Authorization** - ACL checks record access decisions
+3. **Topic Operations** - Create/delete/modify operations
+4. **User Management** - User CRUD operations
+5. **Cluster Events** - Node join/leave events
+

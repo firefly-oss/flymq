@@ -5,6 +5,7 @@ go 1.24.0
 require github.com/tysonmote/gommap v0.0.3
 
 require (
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/mdns v1.0.6 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/miekg/dns v1.1.55 // indirect

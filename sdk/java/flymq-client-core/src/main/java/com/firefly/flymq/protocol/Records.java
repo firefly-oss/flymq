@@ -282,4 +282,115 @@ public final class Records {
     public record GetLagRequest(String topic, String groupId, int partition) {}
     public record DescribeGroupRequest(String groupId) {}
     public record DeleteGroupRequest(String groupId) {}
+
+    // ========== Audit Trail Records ==========
+
+    /**
+     * Represents a single audit event.
+     */
+    public record AuditEvent(
+            String id,
+            Instant timestamp,
+            String type,
+            String user,
+            String clientIp,
+            String resource,
+            String action,
+            String result,
+            Map<String, String> details,
+            String nodeId
+    ) {}
+
+    /**
+     * Filter criteria for querying audit events.
+     */
+    public record AuditQueryFilter(
+            Instant startTime,
+            Instant endTime,
+            List<String> eventTypes,
+            String user,
+            String resource,
+            String result,
+            String search,
+            int limit,
+            int offset
+    ) {
+        public AuditQueryFilter() {
+            this(null, null, List.of(), "", "", "", "", 100, 0);
+        }
+
+        public static Builder builder() {
+            return new Builder();
+        }
+
+        public static class Builder {
+            private Instant startTime;
+            private Instant endTime;
+            private List<String> eventTypes = List.of();
+            private String user = "";
+            private String resource = "";
+            private String result = "";
+            private String search = "";
+            private int limit = 100;
+            private int offset = 0;
+
+            public Builder startTime(Instant startTime) {
+                this.startTime = startTime;
+                return this;
+            }
+
+            public Builder endTime(Instant endTime) {
+                this.endTime = endTime;
+                return this;
+            }
+
+            public Builder eventTypes(List<String> eventTypes) {
+                this.eventTypes = eventTypes;
+                return this;
+            }
+
+            public Builder user(String user) {
+                this.user = user;
+                return this;
+            }
+
+            public Builder resource(String resource) {
+                this.resource = resource;
+                return this;
+            }
+
+            public Builder result(String result) {
+                this.result = result;
+                return this;
+            }
+
+            public Builder search(String search) {
+                this.search = search;
+                return this;
+            }
+
+            public Builder limit(int limit) {
+                this.limit = limit;
+                return this;
+            }
+
+            public Builder offset(int offset) {
+                this.offset = offset;
+                return this;
+            }
+
+            public AuditQueryFilter build() {
+                return new AuditQueryFilter(startTime, endTime, eventTypes, user, resource, result, search, limit, offset);
+            }
+        }
+    }
+
+    /**
+     * Result of an audit query.
+     */
+    public record AuditQueryResult(
+            List<AuditEvent> events,
+            int totalCount,
+            boolean hasMore
+    ) {}
 }

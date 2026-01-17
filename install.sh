@@ -128,6 +128,12 @@ CFG_PARTITION_REBALANCE_THRESHOLD="0.2"
 CFG_DISCOVERY_ENABLED="false"
 CFG_DISCOVERY_CLUSTER_ID=""
 
+# Audit Trail - ENABLED by default for security compliance
+CFG_AUDIT_ENABLED="true"
+CFG_AUDIT_LOG_DIR=""  # Default: data_dir/audit
+CFG_AUDIT_MAX_FILE_SIZE="104857600"  # 100MB
+CFG_AUDIT_RETENTION_DAYS="90"
+
 # System service installation
 INSTALL_SYSTEMD="false"
 INSTALL_LAUNCHD="false"
@@ -1120,6 +1126,13 @@ generate_config() {
       "tls_key_file": "${CFG_ADMIN_TLS_KEY_FILE}",
       "tls_auto_generate": ${CFG_ADMIN_TLS_AUTO_GENERATE}
     }
+  },
+
+  "audit": {
+    "enabled": ${CFG_AUDIT_ENABLED},
+    "log_dir": "${CFG_AUDIT_LOG_DIR}",
+    "max_file_size": ${CFG_AUDIT_MAX_FILE_SIZE},
+    "retention_days": ${CFG_AUDIT_RETENTION_DAYS}
   }
 }
 EOF
@@ -1549,6 +1562,7 @@ print_post_install() {
     [[ "$CFG_DLQ_ENABLED" == "true" ]] && enabled_features+="DLQ "
     [[ "$CFG_DELAYED_ENABLED" == "true" ]] && enabled_features+="Delayed "
     [[ "$CFG_TXN_ENABLED" == "true" ]] && enabled_features+="Transactions "
+    [[ "$CFG_AUDIT_ENABLED" == "true" ]] && enabled_features+="Audit "
 
     if [[ -n "$enabled_features" ]]; then
         echo -e "  ${DIM}Features${RESET}       ${GREEN}${enabled_features}${RESET}"
@@ -1955,6 +1969,22 @@ configure_section_security() {
     else
         CFG_AUTH_ENABLED="false"
     fi
+    echo ""
+
+    echo -e "  ${BOLD}Audit Trail${RESET}"
+    echo -e "  ${DIM}Log all security-relevant operations for compliance and forensics.${RESET}"
+    echo -e "  ${DIM}Tracks authentication, authorization, and administrative actions.${RESET}"
+    echo ""
+    if prompt_yes_no "Enable audit trail" "y"; then
+        CFG_AUDIT_ENABLED="true"
+        local custom_retention
+        custom_retention=$(prompt_value "Audit log retention (days)" "${CFG_AUDIT_RETENTION_DAYS}")
+        if [[ -n "$custom_retention" ]]; then
+            CFG_AUDIT_RETENTION_DAYS="$custom_retention"
+        fi
+    else
+        CFG_AUDIT_ENABLED="false"
+    fi
 }
 
 configure_section_advanced() {
@@ -2315,6 +2345,11 @@ show_configuration_summary() {
         fi
     else
         echo -e "      Authentication:    ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_AUDIT_ENABLED" == "true" ]]; then
+        echo -e "      Audit Trail:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_AUDIT_RETENTION_DAYS} days retention)${RESET}"
+    else
+        echo -e "      Audit Trail:       ${YELLOW}Disabled${RESET}"
     fi
     echo ""
 

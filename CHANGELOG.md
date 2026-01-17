@@ -9,6 +9,35 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ### Added
 
+#### Audit Trail System
+- **Comprehensive Audit Logging** - Track all security-relevant operations
+  - Authentication events (success, failure, logout)
+  - Authorization events (access granted, denied)
+  - Administrative operations (topic/user/ACL management)
+  - Cluster events (node join, leave)
+- **Audit Store** - File-based audit log storage with rotation
+  - JSON Lines format for easy parsing
+  - Configurable retention and rotation policies
+  - Thread-safe concurrent writes
+- **Query API** - Flexible audit event querying
+  - Filter by time range, event type, user, resource, result
+  - Full-text search across event details
+  - Pagination support for large result sets
+- **Export Functionality** - Export audit logs in JSON or CSV format
+  - Supports same filters as query API
+  - Suitable for compliance reporting and SIEM integration
+- **CLI Commands** - New `audit` command group
+  - `flymq-cli audit list` - List recent audit events
+  - `flymq-cli audit query` - Query with filters
+  - `flymq-cli audit export` - Export to file
+- **Admin API Endpoints** - REST API for audit trail
+  - `GET /audit/events` - Query audit events
+  - `GET /audit/export` - Export audit events
+- **SDK Support** - Audit trail methods in all SDKs
+  - Go: `QueryAuditEvents()`, `ExportAuditEvents()`
+  - Python: `query_audit_events()`, `export_audit_events()`
+  - Java: `queryAuditEvents()`, `exportAuditEvents()`
+
 #### Encryption Key Security Enhancements
 - **Environment Variable Only** - Encryption key must be set via `FLYMQ_ENCRYPTION_KEY` environment variable
   - Removed support for encryption key in config files (security best practice)

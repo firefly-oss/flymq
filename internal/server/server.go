@@ -78,6 +78,7 @@ import (
 	"sync"
 	"time"
 
+	"flymq/internal/audit"
 	"flymq/internal/auth"
 	"flymq/internal/broker"
 	"flymq/internal/config"
@@ -315,6 +316,9 @@ type Server struct {
 
 	// txnCoordinator handles transaction coordination
 	txnCoordinator *transaction.Coordinator
+
+	// auditStore handles audit trail logging
+	auditStore audit.Store
 }
 
 // brokerMessageStore adapts the Broker interface to delayed.MessageStore.
@@ -555,6 +559,27 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		baseLogger.Info("Transaction coordinator initialized")
 	}
 
+	// Initialize audit store for audit trail logging
+	var auditStore audit.Store
+	if cfg.Audit.Enabled {
+		auditDir := cfg.DataDir + "/audit"
+		if cfg.Audit.LogDir != "" {
+			auditDir = cfg.Audit.LogDir
+		}
+		store, err := audit.NewFileStore(audit.FileStoreConfig{
+			Dir:           auditDir,
+			NodeID:        cfg.NodeID,
+			MaxFileSize:   cfg.Audit.MaxFileSize,
+			RetentionDays: cfg.Audit.RetentionDays,
+		})
+		if err != nil {
+			baseLogger.Warn("Failed to initialize audit store", "error", err)
+		} else {
+			auditStore = store
+			baseLogger.Info("Audit trail enabled", "dir", auditDir)
+		}
+	}
+
 	return &Server{
 		config:         cfg,
 		broker:         broker,
@@ -578,6 +603,7 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		ttlManager:       ttlManager,
 		dlqManager:       dlqManager,
 		txnCoordinator:   txnCoordinator,
+		auditStore:       auditStore,
 	}
 }
 
@@ -666,6 +692,12 @@ func (s *Server) GetAuthorizer() *auth.Authorizer {
 	return s.authorizer
 }
 
+// GetAuditStore returns the server's audit store.
+// This can be used to wire the audit store to the admin handler for REST API access.
+func (s *Server) GetAuditStore() audit.Store {
+	return s.auditStore
+}
+
 // Stop gracefully shuts down the server.
 //
 // SHUTDOWN SEQUENCE:
@@ -732,8 +764,53 @@ func (s *Server) Stop() error {
 		s.logger.Debug("Transaction coordinator stopped")
 	}
 
+	// Close audit store if it was started
+	if s.auditStore != nil {
+		s.auditStore.Close()
+		s.logger.Debug("Audit store closed")
+	}
+
 	s.logger.Info("Server stopped")
 	return nil
+}
+
+// recordAudit records an audit event if audit logging is enabled.
+// This is a helper method that handles nil checks and error logging.
+func (s *Server) recordAudit(eventType audit.EventType, user, clientIP, resource, action, result string, details map[string]string) {
+	if s.auditStore == nil {
+		return
+	}
+
+	event := &audit.Event{
+		Timestamp: time.Now().UTC(),
+		Type:      eventType,
+		User:      user,
+		ClientIP:  clientIP,
+		Resource:  resource,
+		Action:    action,
+		Result:    result,
+		Details:   details,
+	}
+
+	if err := s.auditStore.Record(event); err != nil {
+		s.logger.Warn("Failed to record audit event", "error", err, "type", eventType)
+	}
+}
+
+// getClientIP extracts the client IP address from a connection.
+func getClientIP(conn net.Conn) string {
+	if conn == nil {
+		return ""
+	}
+	addr := conn.RemoteAddr()
+	if addr == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
 }
 
 // acceptLoop is the main loop that accepts incoming connections.
@@ -1002,6 +1079,12 @@ func (s *Server) handleMessage(conn io.Writer, msg *protocol.Message) error {
 	case protocol.OpClusterMetadata:
 		return s.handleClusterMetadata(conn, msg.Payload)
 
+	// ========== Audit Trail Operations ==========
+	case protocol.OpAuditQuery:
+		return s.handleAuditQuery(conn, msg.Payload)
+	case protocol.OpAuditExport:
+		return s.handleAuditExport(conn, msg.Payload)
+
 	default:
 		return fmt.Errorf("unknown opcode: %d", msg.Header.Op)
 	}
@@ -1263,9 +1346,17 @@ func (s *Server) handleCreateTopic(w io.Writer, payload []byte, flags byte) erro
 	topic := req.Topic
 	partitions := int(req.Partitions)
 
+	// Get connection info for audit
+	username := s.getConnUsername(w)
+	clientIP := ""
+	if conn, ok := w.(net.Conn); ok {
+		clientIP = getClientIP(conn)
+	}
+
 	// Check admin authorization for topic creation
 	if err := s.checkAdminAuth(w, topic); err != nil {
-		s.securityLogger.LogAuthzFailure(s.getConnUsername(w), "create_topic", topic, w)
+		s.securityLogger.LogAuthzFailure(username, "create_topic", topic, w)
+		s.recordAudit(audit.EventAccessDenied, username, clientIP, topic, "create_topic", "denied", nil)
 		return err
 	}
 
@@ -1278,6 +1369,9 @@ func (s *Server) handleCreateTopic(w io.Writer, payload []byte, flags byte) erro
 			"topic":      topic,
 			"partitions": partitions,
 		})
+		s.recordAudit(audit.EventTopicCreate, username, clientIP, topic, "create_topic", "failure", map[string]string{
+			"error": err.Error(),
+		})
 		return err
 	}
 
@@ -1285,6 +1379,12 @@ func (s *Server) handleCreateTopic(w io.Writer, payload []byte, flags byte) erro
 	creator := s.getClientID(w)
 	replicationFactor := s.config.Partition.DefaultReplicationFactor
 	s.topicLogger.LogTopicCreated(topic, partitions, replicationFactor, creator)
+
+	// Record audit event for topic creation
+	s.recordAudit(audit.EventTopicCreate, username, clientIP, topic, "create_topic", "success", map[string]string{
+		"partitions":         fmt.Sprintf("%d", partitions),
+		"replication_factor": fmt.Sprintf("%d", replicationFactor),
+	})
 
 	// Always respond with binary for performance
 	resp := protocol.EncodeBinaryCreateTopicResponse(&protocol.BinaryCreateTopicResponse{Success: true})
@@ -1569,9 +1669,17 @@ func (s *Server) handleDeleteTopic(w io.Writer, payload []byte, flags byte) erro
 	}
 	topic := req.Topic
 
+	// Get connection info for audit
+	username := s.getConnUsername(w)
+	clientIP := ""
+	if conn, ok := w.(net.Conn); ok {
+		clientIP = getClientIP(conn)
+	}
+
 	// Check admin authorization for topic deletion
 	if err := s.checkAdminAuth(w, topic); err != nil {
-		s.securityLogger.LogAuthzFailure(s.getConnUsername(w), "delete_topic", topic, w)
+		s.securityLogger.LogAuthzFailure(username, "delete_topic", topic, w)
+		s.recordAudit(audit.EventAccessDenied, username, clientIP, topic, "delete_topic", "denied", nil)
 		return err
 	}
 
@@ -1582,12 +1690,20 @@ func (s *Server) handleDeleteTopic(w io.Writer, payload []byte, flags byte) erro
 		s.errorLogger.LogError(err, "delete_topic", map[string]interface{}{
 			"topic": topic,
 		})
+		s.recordAudit(audit.EventTopicDelete, username, clientIP, topic, "delete_topic", "failure", map[string]string{
+			"error": err.Error(),
+		})
 		return err
 	}
 
 	// Log topic deletion
 	deletedBy := s.getClientID(w)
 	s.topicLogger.LogTopicDeleted(topic, deletedBy, messageCount)
+
+	// Record audit event for topic deletion
+	s.recordAudit(audit.EventTopicDelete, username, clientIP, topic, "delete_topic", "success", map[string]string{
+		"message_count": fmt.Sprintf("%d", messageCount),
+	})
 
 	// Always respond with binary for performance
 	resp := protocol.EncodeBinaryDeleteTopicResponse(&protocol.BinaryDeleteTopicResponse{Success: true})
@@ -2323,10 +2439,20 @@ func (s *Server) handleAuth(w io.Writer, payload []byte) error {
 		return s.sendErrorResponse(w, fmt.Errorf("invalid auth request: %w", err))
 	}
 
+	// Get client IP for audit logging
+	clientIP := ""
+	if conn, ok := w.(net.Conn); ok {
+		clientIP = getClientIP(conn)
+	}
+
 	// Authenticate the user
 	user, err := s.authorizer.Authenticate(req.Username, req.Password)
 	if err != nil {
 		s.securityLogger.LogAuthFailure(req.Username, "invalid_credentials", w)
+		// Record audit event for failed authentication
+		s.recordAudit(audit.EventAuthFailure, req.Username, clientIP, "", "authenticate", "failure", map[string]string{
+			"reason": err.Error(),
+		})
 		resp := protocol.EncodeBinaryAuthResponse(&protocol.BinaryAuthResponse{
 			Success: false,
 			Error:   err.Error(),
@@ -2341,6 +2467,11 @@ func (s *Server) handleAuth(w io.Writer, payload []byte) error {
 
 	// Log successful authentication
 	s.securityLogger.LogAuthSuccess(req.Username, w)
+
+	// Record audit event for successful authentication
+	s.recordAudit(audit.EventAuthSuccess, req.Username, clientIP, "", "authenticate", "success", map[string]string{
+		"roles": fmt.Sprintf("%v", user.Roles),
+	})
 
 	// Get user roles for response
 	resp := protocol.EncodeBinaryAuthResponse(&protocol.BinaryAuthResponse{
@@ -2465,7 +2596,15 @@ func (s *Server) checkUserManagementAuth(w io.Writer) error {
 
 // handleUserCreate creates a new user.
 func (s *Server) handleUserCreate(w io.Writer, payload []byte) error {
+	// Get connection info for audit
+	adminUser := s.getConnUsername(w)
+	clientIP := ""
+	if conn, ok := w.(net.Conn); ok {
+		clientIP = getClientIP(conn)
+	}
+
 	if err := s.checkUserManagementAuth(w); err != nil {
+		s.recordAudit(audit.EventAccessDenied, adminUser, clientIP, "", "user_create", "denied", nil)
 		return s.sendErrorResponse(w, err)
 	}
 
@@ -2486,11 +2625,17 @@ func (s *Server) handleUserCreate(w io.Writer, payload []byte) error {
 			return s.sendErrorResponse(w, fmt.Errorf("failed to hash password: %w", err))
 		}
 		if err := s.broker.ProposeCreateUser(req.Username, passwordHash, req.Roles); err != nil {
+			s.recordAudit(audit.EventUserCreate, adminUser, clientIP, req.Username, "user_create", "failure", map[string]string{
+				"error": err.Error(),
+			})
 			return s.sendErrorResponse(w, err)
 		}
 	} else {
 		// Standalone mode - create directly
 		if err := s.authorizer.UserStore().CreateUser(req.Username, req.Password, req.Roles); err != nil {
+			s.recordAudit(audit.EventUserCreate, adminUser, clientIP, req.Username, "user_create", "failure", map[string]string{
+				"error": err.Error(),
+			})
 			return s.sendErrorResponse(w, err)
 		}
 		// Persist changes
@@ -2499,7 +2644,12 @@ func (s *Server) handleUserCreate(w io.Writer, payload []byte) error {
 		}
 	}
 
-	s.securityLogger.LogUserCreated(req.Username, s.getConnUsername(w))
+	s.securityLogger.LogUserCreated(req.Username, adminUser)
+
+	// Record audit event for user creation
+	s.recordAudit(audit.EventUserCreate, adminUser, clientIP, req.Username, "user_create", "success", map[string]string{
+		"roles": fmt.Sprintf("%v", req.Roles),
+	})
 
 	resp := protocol.EncodeBinaryUserInfo(&protocol.BinaryUserInfo{
 		Username: req.Username,
@@ -2511,7 +2661,15 @@ func (s *Server) handleUserCreate(w io.Writer, payload []byte) error {
 
 // handleUserDelete deletes a user.
 func (s *Server) handleUserDelete(w io.Writer, payload []byte) error {
+	// Get connection info for audit
+	currentUser := s.getConnUsername(w)
+	clientIP := ""
+	if conn, ok := w.(net.Conn); ok {
+		clientIP = getClientIP(conn)
+	}
+
 	if err := s.checkUserManagementAuth(w); err != nil {
+		s.recordAudit(audit.EventAccessDenied, currentUser, clientIP, "", "user_delete", "denied", nil)
 		return s.sendErrorResponse(w, err)
 	}
 
@@ -2522,7 +2680,6 @@ func (s *Server) handleUserDelete(w io.Writer, payload []byte) error {
 	username := req.Value
 
 	// Prevent deleting yourself
-	currentUser := s.getConnUsername(w)
 	if username == currentUser {
 		return s.sendErrorResponse(w, fmt.Errorf("cannot delete your own account"))
 	}
@@ -2530,11 +2687,17 @@ func (s *Server) handleUserDelete(w io.Writer, payload []byte) error {
 	// In cluster mode, route through Raft consensus
 	if s.broker.IsClusterMode() {
 		if err := s.broker.ProposeDeleteUser(username); err != nil {
+			s.recordAudit(audit.EventUserDelete, currentUser, clientIP, username, "user_delete", "failure", map[string]string{
+				"error": err.Error(),
+			})
 			return s.sendErrorResponse(w, err)
 		}
 	} else {
 		// Standalone mode - delete directly
 		if err := s.authorizer.UserStore().DeleteUser(username); err != nil {
+			s.recordAudit(audit.EventUserDelete, currentUser, clientIP, username, "user_delete", "failure", map[string]string{
+				"error": err.Error(),
+			})
 			return s.sendErrorResponse(w, err)
 		}
 		if err := s.authorizer.UserStore().Save(); err != nil {
@@ -2543,6 +2706,9 @@ func (s *Server) handleUserDelete(w io.Writer, payload []byte) error {
 	}
 
 	s.securityLogger.LogUserDeleted(username, currentUser)
+
+	// Record audit event for user deletion
+	s.recordAudit(audit.EventUserDelete, currentUser, clientIP, username, "user_delete", "success", nil)
 
 	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{
 		Success: true,
@@ -2882,6 +3048,146 @@ func (s *Server) handleClusterMetadata(w io.Writer, payload []byte) error {
 
 	resp := protocol.EncodeBinaryClusterMetadataResponse(metadata)
 	return protocol.WriteBinaryMessage(w, protocol.OpClusterMetadata, resp)
+}
+
+// ============================================================================
+// Audit Trail Handlers
+// ============================================================================
+
+// handleAuditQuery handles audit event query requests.
+// Only admin users can query audit events.
+func (s *Server) handleAuditQuery(w io.Writer, payload []byte) error {
+	// Check admin authorization
+	if err := s.checkUserManagementAuth(w); err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("admin access required for audit queries"))
+	}
+
+	// Check if audit is enabled
+	if s.auditStore == nil {
+		return s.sendErrorResponse(w, fmt.Errorf("audit trail is not enabled"))
+	}
+
+	// Decode request
+	req, err := protocol.DecodeBinaryAuditQueryRequest(payload)
+	if err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("invalid audit query request: %w", err))
+	}
+
+	// Build query filter
+	filter := &audit.QueryFilter{
+		User:     req.User,
+		Resource: req.Resource,
+		Result:   req.Result,
+		Search:   req.Search,
+		Limit:    int(req.Limit),
+		Offset:   int(req.Offset),
+	}
+
+	// Set time range if provided
+	if req.StartTime > 0 {
+		t := time.Unix(req.StartTime, 0)
+		filter.StartTime = &t
+	}
+	if req.EndTime > 0 {
+		t := time.Unix(req.EndTime, 0)
+		filter.EndTime = &t
+	}
+
+	// Convert event types
+	for _, et := range req.EventTypes {
+		filter.EventTypes = append(filter.EventTypes, audit.EventType(et))
+	}
+
+	// Execute query
+	result, err := s.auditStore.Query(filter)
+	if err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("audit query failed: %w", err))
+	}
+
+	// Convert to binary response
+	binaryEvents := make([]protocol.BinaryAuditEvent, len(result.Events))
+	for i, event := range result.Events {
+		binaryEvents[i] = protocol.BinaryAuditEvent{
+			ID:        event.ID,
+			Timestamp: event.Timestamp.UnixMilli(),
+			Type:      string(event.Type),
+			User:      event.User,
+			ClientIP:  event.ClientIP,
+			Resource:  event.Resource,
+			Action:    event.Action,
+			Result:    event.Result,
+			Details:   event.Details,
+			NodeID:    event.NodeID,
+		}
+	}
+
+	resp := protocol.EncodeBinaryAuditQueryResponse(&protocol.BinaryAuditQueryResponse{
+		Events:     binaryEvents,
+		TotalCount: int32(result.TotalCount),
+		HasMore:    result.HasMore,
+	})
+	return protocol.WriteBinaryMessage(w, protocol.OpAuditQuery, resp)
+}
+
+// handleAuditExport handles audit event export requests.
+// Only admin users can export audit events.
+func (s *Server) handleAuditExport(w io.Writer, payload []byte) error {
+	// Check admin authorization
+	if err := s.checkUserManagementAuth(w); err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("admin access required for audit export"))
+	}
+
+	// Check if audit is enabled
+	if s.auditStore == nil {
+		return s.sendErrorResponse(w, fmt.Errorf("audit trail is not enabled"))
+	}
+
+	// Decode request
+	req, err := protocol.DecodeBinaryAuditExportRequest(payload)
+	if err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("invalid audit export request: %w", err))
+	}
+
+	// Build query filter
+	filter := &audit.QueryFilter{
+		User:     req.Query.User,
+		Resource: req.Query.Resource,
+		Result:   req.Query.Result,
+		Search:   req.Query.Search,
+	}
+
+	// Set time range if provided
+	if req.Query.StartTime > 0 {
+		t := time.Unix(req.Query.StartTime, 0)
+		filter.StartTime = &t
+	}
+	if req.Query.EndTime > 0 {
+		t := time.Unix(req.Query.EndTime, 0)
+		filter.EndTime = &t
+	}
+
+	// Convert event types
+	for _, et := range req.Query.EventTypes {
+		filter.EventTypes = append(filter.EventTypes, audit.EventType(et))
+	}
+
+	// Determine export format
+	format := audit.ExportJSON
+	if req.Format == "csv" {
+		format = audit.ExportCSV
+	}
+
+	// Execute export
+	data, err := s.auditStore.Export(filter, format)
+	if err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("audit export failed: %w", err))
+	}
+
+	resp := protocol.EncodeBinaryAuditExportResponse(&protocol.BinaryAuditExportResponse{
+		Format: req.Format,
+		Data:   data,
+	})
+	return protocol.WriteBinaryMessage(w, protocol.OpAuditExport, resp)
 }
 
 // sendErrorResponse sends an error response to the client.

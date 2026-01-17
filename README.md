@@ -1,4 +1,5 @@
 # FlyMQ
+# FlyMQ
 
 ```
   _____.__           _____   ________   
@@ -75,6 +76,7 @@ and enterprise-grade security features.
 - **TLS Encryption** - Secure client-server communication with TLS 1.2+
 - **Data-at-Rest Encryption** - AES-256-GCM encryption for stored messages
 - **Mutual TLS** - Client certificate authentication support
+- **Audit Trail** - Comprehensive logging of security-relevant operations for compliance
 
 ### Operations
 - **Configurable Retention** - Time and size-based message retention policies
@@ -703,6 +705,54 @@ flymq --config /etc/flymq/flymq.json
 > **🔗 Cluster Requirement:** All nodes in a cluster **must use the same encryption key**. FlyMQ validates key consistency when nodes join the cluster and rejects nodes with mismatched keys.
 >
 > **Key Verification:** FlyMQ verifies the encryption key on startup. If the wrong key is provided, the server will refuse to start with a clear error message.
+
+### Audit Trail
+
+FlyMQ includes a comprehensive audit trail system for tracking security-relevant operations. Audit logging is **enabled by default** for compliance and security monitoring.
+
+**Tracked Events:**
+
+| Category       | Events                                         | Description              |
+|----------------|------------------------------------------------|--------------------------|
+| Authentication | `auth.success`, `auth.failure`, `auth.logout`  | User login/logout events |
+| Authorization  | `access.granted`, `access.denied`              | Resource access decisions|
+| Topics         | `topic.create`, `topic.delete`, `topic.modify` | Topic management         |
+| Users          | `user.create`, `user.delete`, `user.modify`    | User management          |
+| ACLs           | `acl.change`                                   | Access control changes   |
+| Cluster        | `cluster.join`, `cluster.leave`                | Node membership changes  |
+
+**Query Audit Events via CLI:**
+```bash
+# List recent events
+flymq-cli audit list
+
+# Query with filters
+flymq-cli audit query --user admin --type auth.success,auth.failure --start 2026-01-01T00:00:00Z
+
+# Export for compliance reporting
+flymq-cli audit export --format csv --output audit-report.csv
+```
+
+**Query via Admin API:**
+```bash
+# Query events
+curl -u admin:password "http://localhost:8080/api/v1/audit/events?user=admin&limit=50"
+
+# Export as CSV
+curl -u admin:password "http://localhost:8080/api/v1/audit/export?format=csv" > audit.csv
+```
+
+**Configuration:**
+```json
+{
+  "audit": {
+    "enabled": true,
+    "log_dir": "/var/lib/flymq/audit",
+    "max_file_size": 104857600,
+    "retention_days": 90
+  }
+}
+```
 
 ---
 

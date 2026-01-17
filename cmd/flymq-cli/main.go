@@ -153,6 +153,8 @@ func main() {
 		cmdRoles(args)
 	case "acl":
 		cmdACL(args)
+	case "audit":
+		cmdAudit(args)
 	default:
 		cli.Error("Unknown command: %s", cmd)
 		printUsage()
@@ -3024,6 +3026,19 @@ func getStringListArg(args []string, flag string) []string {
 	return nil
 }
 
+// getStringArg returns the value of a string flag, or the default if not found.
+func getStringArg(args []string, flag, defaultVal string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, flag+"=") {
+			return strings.TrimPrefix(arg, flag+"=")
+		}
+	}
+	return defaultVal
+}
+
 // ============================================================================
 // Command Help Functions
 // ============================================================================
@@ -3172,4 +3187,196 @@ func printCreateHelp() {
 	fmt.Println("  # Create topic with 4 partitions")
 	fmt.Println("  flymq-cli create orders --partitions 4")
 	fmt.Println()
+}
+
+// ============================================================================
+// Audit Trail Commands
+// ============================================================================
+
+func cmdAudit(args []string) {
+	if len(args) == 0 {
+		printAuditUsage()
+		os.Exit(1)
+	}
+
+	subcmd := args[0]
+	subargs := args[1:]
+
+	switch subcmd {
+	case "list", "query":
+		cmdAuditQuery(subargs)
+	case "export":
+		cmdAuditExport(subargs)
+	case "help", "--help", "-h":
+		printAuditUsage()
+	default:
+		cli.Error("Unknown audit subcommand: %s", subcmd)
+		printAuditUsage()
+		os.Exit(1)
+	}
+}
+
+func printAuditUsage() {
+	cli.Header("Audit Trail Commands:")
+	fmt.Println("  audit list                    List recent audit events")
+	fmt.Println("  audit query                   Query audit events with filters")
+	fmt.Println("  audit export                  Export audit events to file")
+	fmt.Println()
+	cli.Header("Query Options:")
+	fmt.Println("  --user <username>             Filter by user")
+	fmt.Println("  --resource <resource>         Filter by resource (topic, user, etc.)")
+	fmt.Println("  --type <type>                 Filter by event type (auth.success, topic.create, etc.)")
+	fmt.Println("  --result <result>             Filter by result (success, failure, denied)")
+	fmt.Println("  --start <RFC3339>             Start time (e.g., 2026-01-01T00:00:00Z)")
+	fmt.Println("  --end <RFC3339>               End time")
+	fmt.Println("  --search <text>               Full-text search")
+	fmt.Println("  --limit <n>                   Maximum events to return (default: 100)")
+	fmt.Println("  --offset <n>                  Offset for pagination")
+	fmt.Println()
+	cli.Header("Export Options:")
+	fmt.Println("  --format <json|csv>           Export format (default: json)")
+	fmt.Println("  --output <file>               Output file (default: stdout)")
+	fmt.Println()
+	cli.Header("Examples:")
+	fmt.Println("  # List recent audit events")
+	fmt.Println("  flymq-cli audit list")
+	fmt.Println()
+	fmt.Println("  # Query auth failures")
+	fmt.Println("  flymq-cli audit query --type auth.failure")
+	fmt.Println()
+	fmt.Println("  # Export events for a user")
+	fmt.Println("  flymq-cli audit export --user admin --format csv --output audit.csv")
+	fmt.Println()
+}
+
+func cmdAuditQuery(args []string) {
+	c := connectWithAuth(args)
+	defer c.Close()
+
+	// Parse filter options
+	user := getStringArg(args, "--user", "")
+	resource := getStringArg(args, "--resource", "")
+	eventType := getStringArg(args, "--type", "")
+	result := getStringArg(args, "--result", "")
+	search := getStringArg(args, "--search", "")
+	startStr := getStringArg(args, "--start", "")
+	endStr := getStringArg(args, "--end", "")
+	limitStr := getStringArg(args, "--limit", "100")
+	offsetStr := getStringArg(args, "--offset", "0")
+
+	limit, _ := strconv.Atoi(limitStr)
+	offset, _ := strconv.Atoi(offsetStr)
+
+	// Build query request
+	req := &protocol.BinaryAuditQueryRequest{
+		User:     user,
+		Resource: resource,
+		Result:   result,
+		Search:   search,
+		Limit:    int32(limit),
+		Offset:   int32(offset),
+	}
+
+	if eventType != "" {
+		req.EventTypes = strings.Split(eventType, ",")
+	}
+
+	if startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			req.StartTime = t.Unix()
+		}
+	}
+	if endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			req.EndTime = t.Unix()
+		}
+	}
+
+	// Execute query
+	events, totalCount, hasMore, err := c.QueryAuditEvents(req)
+	if err != nil {
+		cli.Error("Failed to query audit events: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Audit Events")
+	cli.KeyValue("Total Count", fmt.Sprintf("%d", totalCount))
+	cli.KeyValue("Has More", fmt.Sprintf("%v", hasMore))
+	cli.Separator()
+
+	if len(events) == 0 {
+		fmt.Println("No audit events found")
+	} else {
+		// Print events in a table format
+		fmt.Printf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
+			"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT")
+		cli.Separator()
+		for _, event := range events {
+			ts := time.UnixMilli(event.Timestamp).Format("2006-01-02 15:04:05")
+			resource := event.Resource
+			if len(resource) > 20 {
+				resource = resource[:17] + "..."
+			}
+			fmt.Printf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
+				ts, event.Type, event.User, resource, event.Action, event.Result)
+		}
+	}
+	cli.Separator()
+}
+
+func cmdAuditExport(args []string) {
+	c := connectWithAuth(args)
+	defer c.Close()
+
+	// Parse filter options
+	user := getStringArg(args, "--user", "")
+	resource := getStringArg(args, "--resource", "")
+	eventType := getStringArg(args, "--type", "")
+	result := getStringArg(args, "--result", "")
+	search := getStringArg(args, "--search", "")
+	startStr := getStringArg(args, "--start", "")
+	endStr := getStringArg(args, "--end", "")
+	format := getStringArg(args, "--format", "json")
+	output := getStringArg(args, "--output", "")
+
+	// Build query request
+	queryReq := &protocol.BinaryAuditQueryRequest{
+		User:     user,
+		Resource: resource,
+		Result:   result,
+		Search:   search,
+	}
+
+	if eventType != "" {
+		queryReq.EventTypes = strings.Split(eventType, ",")
+	}
+
+	if startStr != "" {
+		if t, err := time.Parse(time.RFC3339, startStr); err == nil {
+			queryReq.StartTime = t.Unix()
+		}
+	}
+	if endStr != "" {
+		if t, err := time.Parse(time.RFC3339, endStr); err == nil {
+			queryReq.EndTime = t.Unix()
+		}
+	}
+
+	// Execute export
+	data, err := c.ExportAuditEvents(queryReq, format)
+	if err != nil {
+		cli.Error("Failed to export audit events: %v", err)
+		os.Exit(1)
+	}
+
+	// Write output
+	if output != "" {
+		if err := os.WriteFile(output, data, 0644); err != nil {
+			cli.Error("Failed to write output file: %v", err)
+			os.Exit(1)
+		}
+		cli.Success("Exported audit events to %s", output)
+	} else {
+		fmt.Print(string(data))
+	}
 }

@@ -524,6 +524,82 @@ Prometheus metrics endpoint (also available on metrics port).
 
 ---
 
+## Audit Trail
+
+### GET /audit/events
+
+Query audit events with optional filters.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `start` | string | Start time (RFC3339 format) |
+| `end` | string | End time (RFC3339 format) |
+| `type` | string | Comma-separated event types (e.g., `auth.success,auth.failure`) |
+| `user` | string | Filter by username |
+| `resource` | string | Filter by resource (topic, user, etc.) |
+| `result` | string | Filter by result (`success`, `failure`, `denied`) |
+| `search` | string | Full-text search query |
+| `limit` | int | Maximum events to return (default: 100, max: 10000) |
+| `offset` | int | Offset for pagination |
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "id": "evt_abc123",
+      "timestamp": "2026-01-17T10:30:00Z",
+      "type": "auth.success",
+      "user": "admin",
+      "client_ip": "192.168.1.100",
+      "resource": "",
+      "action": "authenticate",
+      "result": "success",
+      "details": {
+        "method": "password"
+      },
+      "node_id": "node-1"
+    }
+  ],
+  "total_count": 150,
+  "has_more": true
+}
+```
+
+**Event Types:**
+- `auth.success` - Successful authentication
+- `auth.failure` - Failed authentication attempt
+- `auth.logout` - User logout
+- `access.granted` - Access granted to resource
+- `access.denied` - Access denied to resource
+- `topic.create` - Topic created
+- `topic.delete` - Topic deleted
+- `topic.modify` - Topic modified
+- `user.create` - User created
+- `user.delete` - User deleted
+- `user.modify` - User modified
+- `acl.change` - ACL rule changed
+- `config.change` - Configuration changed
+- `cluster.join` - Node joined cluster
+- `cluster.leave` - Node left cluster
+
+### GET /audit/export
+
+Export audit events in JSON or CSV format.
+
+**Query Parameters:**
+Same as `/audit/events` plus:
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `format` | string | Export format: `json` (default) or `csv` |
+
+**Response:**
+- `format=json`: JSON array of events
+- `format=csv`: CSV file with headers
+
+---
+
 ## Swagger UI
 
 When the Admin API is enabled, an interactive Swagger UI is available at:

@@ -191,6 +191,14 @@ type TransactionConfig struct {
 	Timeout int64 `toml:"timeout" json:"timeout"` // Transaction timeout in seconds
 }
 
+// AuditConfig holds audit trail configuration.
+type AuditConfig struct {
+	Enabled       bool   `toml:"enabled" json:"enabled"`               // Enable audit trail logging
+	LogDir        string `toml:"log_dir" json:"log_dir"`               // Directory for audit logs (default: data_dir/audit)
+	MaxFileSize   int64  `toml:"max_file_size" json:"max_file_size"`   // Maximum audit log file size in bytes (default: 100MB)
+	RetentionDays int    `toml:"retention_days" json:"retention_days"` // Days to retain audit logs (default: 90)
+}
+
 // PartitionConfig holds partition management configuration for horizontal scaling.
 //
 // IMPORTANT: This configures how partition LEADERS are distributed across cluster nodes,
@@ -394,6 +402,9 @@ type Config struct {
 	// Performance tuning
 	Performance PerformanceConfig `toml:"performance" json:"performance"`
 
+	// Audit Trail
+	Audit AuditConfig `toml:"audit" json:"audit"`
+
 	// Metadata
 	ConfigFile string `toml:"-" json:"-"`
 }
@@ -473,6 +484,11 @@ func DefaultConfig() *Config {
 			},
 		},
 		Performance: autoTunePerformance(),
+		Audit: AuditConfig{
+			Enabled:       true, // Enabled by default for security compliance
+			MaxFileSize:   100 * 1024 * 1024, // 100MB
+			RetentionDays: 90,
+		},
 	}
 }
 

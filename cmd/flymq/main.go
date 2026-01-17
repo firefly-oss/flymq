@@ -305,6 +305,10 @@ func main() {
 		if dlqManager != nil {
 			adminHandler.SetDLQManager(dlqManager)
 		}
+		// Wire audit store to admin handler for audit trail operations via REST API
+		if auditStore := srv.GetAuditStore(); auditStore != nil {
+			adminHandler.SetAuditStore(auditStore)
+		}
 		adminServer = admin.NewServer(&cfg.Observability.Admin, adminHandler)
 		// Wire authorizer to admin server for HTTP authentication
 		if authorizer != nil {

@@ -48,6 +48,7 @@ const OpenAPISpec = `{
     {"name": "ACLs", "description": "Access control list management (admin only)"},
     {"name": "Roles", "description": "Role management (admin only)"},
     {"name": "DLQ", "description": "Dead letter queue management"},
+    {"name": "Audit", "description": "Audit trail for security and compliance (admin only)"},
     {"name": "Metrics", "description": "Prometheus metrics (public)"}
   ],
   "paths": {
@@ -780,6 +781,72 @@ const OpenAPISpec = `{
           "404": {"$ref": "#/components/responses/NotFound"}
         }
       }
+    },
+    "/audit/events": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Query audit events",
+        "description": "Query audit trail events with optional filters. Returns security-relevant events such as authentication, authorization, and administrative operations. Requires admin permission.",
+        "operationId": "queryAuditEvents",
+        "security": [{"basicAuth": []}],
+        "parameters": [
+          {"name": "start", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Start time (RFC3339 format)"},
+          {"name": "end", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "End time (RFC3339 format)"},
+          {"name": "type", "in": "query", "schema": {"type": "string"}, "description": "Comma-separated event types (e.g., auth.success,auth.failure)"},
+          {"name": "user", "in": "query", "schema": {"type": "string"}, "description": "Filter by username"},
+          {"name": "resource", "in": "query", "schema": {"type": "string"}, "description": "Filter by resource (topic, user, etc.)"},
+          {"name": "result", "in": "query", "schema": {"type": "string", "enum": ["success", "failure", "denied"]}, "description": "Filter by result"},
+          {"name": "search", "in": "query", "schema": {"type": "string"}, "description": "Full-text search query"},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 100, "maximum": 10000}, "description": "Maximum events to return"},
+          {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0}, "description": "Offset for pagination"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit events",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/AuditQueryResult"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/audit/export": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Export audit events",
+        "description": "Export audit trail events in JSON or CSV format. Supports the same filters as the query endpoint. Requires admin permission.",
+        "operationId": "exportAuditEvents",
+        "security": [{"basicAuth": []}],
+        "parameters": [
+          {"name": "format", "in": "query", "schema": {"type": "string", "enum": ["json", "csv"], "default": "json"}, "description": "Export format"},
+          {"name": "start", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "Start time (RFC3339 format)"},
+          {"name": "end", "in": "query", "schema": {"type": "string", "format": "date-time"}, "description": "End time (RFC3339 format)"},
+          {"name": "type", "in": "query", "schema": {"type": "string"}, "description": "Comma-separated event types"},
+          {"name": "user", "in": "query", "schema": {"type": "string"}, "description": "Filter by username"},
+          {"name": "resource", "in": "query", "schema": {"type": "string"}, "description": "Filter by resource"},
+          {"name": "result", "in": "query", "schema": {"type": "string", "enum": ["success", "failure", "denied"]}, "description": "Filter by result"},
+          {"name": "search", "in": "query", "schema": {"type": "string"}, "description": "Full-text search query"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Exported audit events",
+            "content": {
+              "application/json": {
+                "schema": {"type": "array", "items": {"$ref": "#/components/schemas/AuditEvent"}}
+              },
+              "text/csv": {
+                "schema": {"type": "string"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
     }
   },
   "components": {
@@ -1081,6 +1148,56 @@ const OpenAPISpec = `{
           "new_leader": {"type": "string"},
           "new_replicas": {"type": "array", "items": {"type": "string"}}
         }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "description": "A single audit trail event",
+        "properties": {
+          "id": {"type": "string", "description": "Unique event identifier"},
+          "timestamp": {"type": "string", "format": "date-time", "description": "When the event occurred"},
+          "type": {"type": "string", "description": "Event type (e.g., auth.success, topic.create)"},
+          "user": {"type": "string", "description": "Username who performed the action"},
+          "client_ip": {"type": "string", "description": "Client IP address"},
+          "resource": {"type": "string", "description": "Resource affected (topic name, username, etc.)"},
+          "action": {"type": "string", "description": "Action performed"},
+          "result": {"type": "string", "enum": ["success", "failure", "denied"], "description": "Result of the action"},
+          "details": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Additional event details"},
+          "node_id": {"type": "string", "description": "Cluster node that recorded the event"}
+        }
+      },
+      "AuditQueryResult": {
+        "type": "object",
+        "description": "Result of an audit query",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AuditEvent"},
+            "description": "List of audit events"
+          },
+          "total_count": {"type": "integer", "description": "Total number of matching events"},
+          "has_more": {"type": "boolean", "description": "Whether more events are available"}
+        }
+      },
+      "AuditEventType": {
+        "type": "string",
+        "description": "Types of audit events",
+        "enum": [
+          "auth.success",
+          "auth.failure",
+          "auth.logout",
+          "access.granted",
+          "access.denied",
+          "topic.create",
+          "topic.delete",
+          "topic.modify",
+          "user.create",
+          "user.delete",
+          "user.modify",
+          "acl.change",
+          "config.change",
+          "cluster.join",
+          "cluster.leave"
+        ]
       }
     }
   }

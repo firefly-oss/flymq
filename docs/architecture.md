@@ -471,3 +471,13 @@ Determines which node is the leader for each partition (see [Partition-Level Lea
 - Key management via configuration or environment variables
 - Compatible encryption across all SDKs
 
+### Audit Trail (`internal/audit/`)
+- Comprehensive logging of security-relevant operations
+- Authentication events (success, failure, logout)
+- Authorization events (access granted, denied)
+- Administrative operations (topic/user/ACL management)
+- Cluster events (node join, leave)
+- File-based storage with JSON Lines format
+- Query API with filtering by time, type, user, resource
+- Export functionality for compliance reporting
+
