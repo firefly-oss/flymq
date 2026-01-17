@@ -1204,6 +1204,11 @@ generate_secrets_file() {
 # - Back up securely (encrypted backup recommended)
 # - Use a secrets manager in production (HashiCorp Vault, AWS Secrets Manager, etc.)
 #
+# CLUSTER REQUIREMENT:
+# - ALL nodes in a cluster MUST use the SAME encryption key
+# - Nodes with different keys will be rejected from joining
+# - Copy this file to all cluster nodes or use a secrets manager
+#
 # Usage:
 #   source $secrets_file && flymq --config $config_dir/flymq.json
 #   OR
@@ -1211,6 +1216,7 @@ generate_secrets_file() {
 
 # Encryption Key (AES-256, 64 hex characters)
 # Required when encryption_enabled=true in config
+# IMPORTANT: Must be identical across all cluster nodes!
 FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}
 EOF
 
@@ -1621,6 +1627,12 @@ print_post_install() {
         echo -e "  ${DIM}The encryption key is stored in a separate secrets file for security.${RESET}"
         echo -e "  ${DIM}Source it before starting: ${CYAN}source $config_dir/flymq.secrets${RESET}"
         echo ""
+        if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
+            echo -e "  ${YELLOW}${BOLD}CLUSTER REQUIREMENT:${RESET}"
+            echo -e "  ${DIM}All nodes in the cluster MUST use the SAME encryption key.${RESET}"
+            echo -e "  ${DIM}Copy ${CYAN}$config_dir/flymq.secrets${RESET}${DIM} to all cluster nodes.${RESET}"
+            echo ""
+        fi
         echo -e "  ${RED}${BOLD}WARNING:${RESET} ${DIM}Back up this key securely. Data cannot be recovered without it.${RESET}"
         echo ""
     fi
