@@ -1285,5 +1285,156 @@ def decode_whoami_response(data: bytes) -> BinaryWhoAmIResponse:
         pos += 2
         permissions.append(data[pos:pos+perm_len].decode("utf-8"))
         pos += perm_len
-    
+
     return BinaryWhoAmIResponse(authenticated=authenticated, username=username, roles=roles, permissions=permissions)
+
+
+# =============================================================================
+# Cluster Metadata Request/Response (for Partition Routing)
+# =============================================================================
+
+@dataclass
+class BinaryClusterMetadataRequest:
+    """Request for cluster partition metadata."""
+    topic: str = ""  # Empty = all topics
+
+
+@dataclass
+class PartitionMetadata:
+    """Metadata for a single partition."""
+    partition: int
+    leader_id: str
+    leader_addr: str
+    epoch: int
+    state: str = "online"  # Partition state: online, offline, reassigning, syncing
+    replicas: list[str] = None  # Node IDs of all replicas
+    isr: list[str] = None  # In-Sync Replicas (node IDs)
+
+    def __post_init__(self):
+        if self.replicas is None:
+            self.replicas = []
+        if self.isr is None:
+            self.isr = []
+
+
+@dataclass
+class TopicMetadata:
+    """Metadata for a topic's partitions."""
+    topic: str
+    partitions: list[PartitionMetadata]
+
+
+@dataclass
+class BinaryClusterMetadataResponse:
+    """Response containing partition-to-node mappings."""
+    cluster_id: str
+    topics: list[TopicMetadata]
+
+
+def encode_cluster_metadata_request(req: BinaryClusterMetadataRequest) -> bytes:
+    """
+    Encode cluster metadata request to binary.
+
+    Format:
+        [2B topic_len][topic]
+    """
+    topic_bytes = req.topic.encode("utf-8")
+    return struct.pack(">H", len(topic_bytes)) + topic_bytes
+
+
+def decode_cluster_metadata_response(data: bytes) -> BinaryClusterMetadataResponse:
+    """
+    Decode cluster metadata response from binary.
+
+    Format:
+        [2B cluster_id_len][cluster_id]
+        [4B topic_count]
+          [2B topic_len][topic]
+          [4B partition_count]
+            [4B partition][2B leader_id_len][leader_id][2B leader_addr_len][leader_addr][8B epoch]
+    """
+    pos = 0
+
+    # Cluster ID
+    cluster_id_len = struct.unpack(">H", data[pos:pos+2])[0]
+    pos += 2
+    cluster_id = data[pos:pos+cluster_id_len].decode("utf-8")
+    pos += cluster_id_len
+
+    # Topic count
+    topic_count = struct.unpack(">I", data[pos:pos+4])[0]
+    pos += 4
+
+    topics: list[TopicMetadata] = []
+    for _ in range(topic_count):
+        # Topic name
+        topic_len = struct.unpack(">H", data[pos:pos+2])[0]
+        pos += 2
+        topic_name = data[pos:pos+topic_len].decode("utf-8")
+        pos += topic_len
+
+        # Partition count
+        partition_count = struct.unpack(">I", data[pos:pos+4])[0]
+        pos += 4
+
+        partitions: list[PartitionMetadata] = []
+        for _ in range(partition_count):
+            # Partition number
+            partition = struct.unpack(">I", data[pos:pos+4])[0]
+            pos += 4
+
+            # Leader ID
+            leader_id_len = struct.unpack(">H", data[pos:pos+2])[0]
+            pos += 2
+            leader_id = data[pos:pos+leader_id_len].decode("utf-8")
+            pos += leader_id_len
+
+            # Leader address
+            leader_addr_len = struct.unpack(">H", data[pos:pos+2])[0]
+            pos += 2
+            leader_addr = data[pos:pos+leader_addr_len].decode("utf-8")
+            pos += leader_addr_len
+
+            # Epoch
+            epoch = struct.unpack(">Q", data[pos:pos+8])[0]
+            pos += 8
+
+            # State
+            state_len = struct.unpack(">H", data[pos:pos+2])[0]
+            pos += 2
+            state = data[pos:pos+state_len].decode("utf-8")
+            pos += state_len
+
+            # Replicas
+            replica_count = struct.unpack(">I", data[pos:pos+4])[0]
+            pos += 4
+            replicas: list[str] = []
+            for _ in range(replica_count):
+                replica_len = struct.unpack(">H", data[pos:pos+2])[0]
+                pos += 2
+                replicas.append(data[pos:pos+replica_len].decode("utf-8"))
+                pos += replica_len
+
+            # ISR
+            isr_count = struct.unpack(">I", data[pos:pos+4])[0]
+            pos += 4
+            isr: list[str] = []
+            for _ in range(isr_count):
+                isr_len = struct.unpack(">H", data[pos:pos+2])[0]
+                pos += 2
+                isr.append(data[pos:pos+isr_len].decode("utf-8"))
+                pos += isr_len
+
+            partitions.append(PartitionMetadata(
+                partition=partition,
+                leader_id=leader_id,
+                leader_addr=leader_addr,
+                epoch=epoch,
+                state=state,
+                replicas=replicas,
+                isr=isr,
+            ))
+
+        topics.append(TopicMetadata(topic=topic_name, partitions=partitions))
+
+    return BinaryClusterMetadataResponse(cluster_id=cluster_id, topics=topics)

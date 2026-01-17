@@ -274,3 +274,48 @@ class ConsumerConfig:
     # Session management
     session_timeout_ms: int = 30000
     heartbeat_interval_ms: int = 3000
+
+
+@dataclass(frozen=True)
+class PartitionInfo:
+    """Information about a partition's leader."""
+
+    partition: int
+    leader_id: str
+    leader_addr: str
+    epoch: int
+    state: str = "online"  # Partition state: online, offline, reassigning, syncing
+    replicas: tuple[str, ...] = ()  # Node IDs of all replicas (tuple for frozen dataclass)
+    isr: tuple[str, ...] = ()  # In-Sync Replicas (node IDs)
+
+
+@dataclass(frozen=True)
+class TopicPartitionInfo:
+    """Partition information for a topic."""
+
+    topic: str
+    partitions: list[PartitionInfo]
+
+
+@dataclass(frozen=True)
+class ClusterMetadata:
+    """Cluster metadata with partition-to-node mappings for smart routing."""
+
+    cluster_id: str
+    topics: list[TopicPartitionInfo]
+
+    def get_partition_leader(self, topic: str, partition: int) -> PartitionInfo | None:
+        """Get the leader info for a specific partition."""
+        for t in self.topics:
+            if t.topic == topic:
+                for p in t.partitions:
+                    if p.partition == partition:
+                        return p
+        return None
+
+    def get_topic_partitions(self, topic: str) -> list[PartitionInfo]:
+        """Get all partition info for a topic."""
+        for t in self.topics:
+            if t.topic == topic:
+                return t.partitions
+        return []

@@ -133,10 +133,17 @@ from .binary import (
     encode_auth_request,
     decode_auth_response,
     decode_whoami_response,
+    BinaryClusterMetadataRequest,
+    BinaryClusterMetadataResponse,
+    PartitionMetadata,
+    TopicMetadata,
+    encode_cluster_metadata_request,
+    decode_cluster_metadata_response,
 )
 from .types import (
     AuthResponse,
     ClientConfig,
+    ClusterMetadata,
     ConsumedMessage,
     DLQMessage,
     FetchResult,
@@ -1223,6 +1230,51 @@ class FlyMQClient:
     def cluster_leave(self) -> None:
         """Leave the cluster gracefully."""
         self._send_binary_request(OpCode.CLUSTER_LEAVE, b"")
+
+    def get_cluster_metadata(self, topic: str = "") -> ClusterMetadata:
+        """
+        Get cluster metadata with partition-to-node mappings.
+
+        This enables smart routing where clients can route requests directly
+        to partition leaders, improving throughput and reducing latency.
+
+        Args:
+            topic: Optional topic name. If empty, returns metadata for all topics.
+
+        Returns:
+            ClusterMetadata with partition leader information.
+
+        Example:
+            >>> metadata = client.get_cluster_metadata("my-topic")
+            >>> for topic_info in metadata.topics:
+            ...     for partition in topic_info.partitions:
+            ...         print(f"Partition {partition.partition} -> {partition.leader_addr}")
+        """
+        from .types import PartitionInfo, TopicPartitionInfo
+
+        req = BinaryClusterMetadataRequest(topic=topic)
+        payload = encode_cluster_metadata_request(req)
+        resp_payload = self._send_binary_request(OpCode.CLUSTER_METADATA, payload)
+        resp = decode_cluster_metadata_response(resp_payload)
+
+        # Convert to public types
+        topics = []
+        for t in resp.topics:
+            partitions = [
+                PartitionInfo(
+                    partition=p.partition,
+                    leader_id=p.leader_id,
+                    leader_addr=p.leader_addr,
+                    epoch=p.epoch,
+                    state=p.state,
+                    replicas=tuple(p.replicas),
+                    isr=tuple(p.isr),
+                )
+                for p in t.partitions
+            ]
+            topics.append(TopicPartitionInfo(topic=t.topic, partitions=partitions))
+
+        return ClusterMetadata(cluster_id=resp.cluster_id, topics=topics)
 
     # =========================================================================
     # High-Level Consumer API (Kafka-like)
