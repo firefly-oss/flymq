@@ -155,7 +155,7 @@ type SecurityConfig struct {
 
 	// Encryption Configuration
 	EncryptionEnabled bool   `toml:"encryption_enabled" json:"encryption_enabled"` // Enable data-at-rest encryption
-	EncryptionKey     string `toml:"encryption_key" json:"encryption_key"`         // AES-256 key (hex-encoded, 64 chars)
+	EncryptionKey     string `toml:"-" json:"-"`                                   // AES-256 key - MUST be set via FLYMQ_ENCRYPTION_KEY env var (never stored in config files)
 }
 
 // SchemaConfig holds schema registry configuration.
@@ -797,12 +797,21 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate encryption configuration
+	// SECURITY: Encryption key must ONLY be provided via environment variable
 	if c.Security.EncryptionEnabled {
 		if c.Security.EncryptionKey == "" {
-			return fmt.Errorf("encryption_key is required when encryption is enabled")
+			return fmt.Errorf("FLYMQ_ENCRYPTION_KEY environment variable is required when encryption is enabled.\n" +
+				"  Set it with: export FLYMQ_ENCRYPTION_KEY=<64-char-hex-key>\n" +
+				"  Generate a key with: openssl rand -hex 32")
 		}
 		if len(c.Security.EncryptionKey) != 64 {
-			return fmt.Errorf("encryption_key must be 64 hex characters (256 bits)")
+			return fmt.Errorf("FLYMQ_ENCRYPTION_KEY must be exactly 64 hex characters (256 bits), got %d characters", len(c.Security.EncryptionKey))
+		}
+		// Validate hex format
+		for i, ch := range c.Security.EncryptionKey {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				return fmt.Errorf("FLYMQ_ENCRYPTION_KEY contains invalid character '%c' at position %d (must be hex: 0-9, a-f)", ch, i)
+			}
 		}
 	}
 

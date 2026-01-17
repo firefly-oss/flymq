@@ -144,3 +144,28 @@ func ValidateKey(hexKey string) error {
 	}
 	return nil
 }
+
+// KeyVerificationMarker is the magic string used to verify encryption keys.
+// This is encrypted and stored in the data directory on first use.
+const KeyVerificationMarker = "FLYMQ_KEY_VERIFICATION_v1"
+
+// ErrWrongEncryptionKey is returned when the encryption key doesn't match.
+var ErrWrongEncryptionKey = errors.New("crypto: wrong encryption key - data was encrypted with a different key")
+
+// VerifyKeyWithMarker checks if the provided key can decrypt the marker.
+// Returns nil if the key is correct, ErrWrongEncryptionKey if wrong.
+func (e *Encryptor) VerifyKeyWithMarker(encryptedMarker []byte) error {
+	decrypted, err := e.Decrypt(encryptedMarker)
+	if err != nil {
+		return ErrWrongEncryptionKey
+	}
+	if string(decrypted) != KeyVerificationMarker {
+		return ErrWrongEncryptionKey
+	}
+	return nil
+}
+
+// CreateKeyVerificationMarker creates an encrypted marker for key verification.
+func (e *Encryptor) CreateKeyVerificationMarker() ([]byte, error) {
+	return e.Encrypt([]byte(KeyVerificationMarker))
+}
