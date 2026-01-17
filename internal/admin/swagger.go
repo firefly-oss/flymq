@@ -664,6 +664,122 @@ const OpenAPISpec = `{
           }
         }
       }
+    },
+    "/cluster/metadata": {
+      "get": {
+        "tags": ["Cluster"],
+        "summary": "Get cluster metadata",
+        "description": "Returns partition-to-node mappings for smart client routing. Optionally filter by topic.",
+        "operationId": "getClusterMetadata",
+        "parameters": [
+          {"name": "topic", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Filter to a specific topic"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Cluster metadata with partition mappings",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ClusterMetadata"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cluster/partitions": {
+      "get": {
+        "tags": ["Cluster"],
+        "summary": "Get partition assignments",
+        "description": "Returns detailed partition assignment information including replicas and ISR.",
+        "operationId": "getPartitionAssignments",
+        "parameters": [
+          {"name": "topic", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Filter to a specific topic"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Partition assignments",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assignments": {
+                      "type": "array",
+                      "items": {"$ref": "#/components/schemas/PartitionAssignment"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cluster/leaders": {
+      "get": {
+        "tags": ["Cluster"],
+        "summary": "Get leader distribution",
+        "description": "Returns the distribution of partition leaders across nodes.",
+        "operationId": "getLeaderDistribution",
+        "responses": {
+          "200": {
+            "description": "Leader distribution",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/LeaderDistribution"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cluster/rebalance": {
+      "post": {
+        "tags": ["Cluster"],
+        "summary": "Trigger partition rebalance",
+        "description": "Triggers partition leader rebalancing across the cluster. Requires admin permission.",
+        "operationId": "triggerRebalance",
+        "security": [{"basicAuth": []}],
+        "responses": {
+          "200": {
+            "description": "Rebalance result",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/RebalanceResult"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
+    "/cluster/partitions/{topic}/{partition}": {
+      "post": {
+        "tags": ["Cluster"],
+        "summary": "Reassign partition",
+        "description": "Reassigns a partition to a new leader and/or replicas. Requires admin permission.",
+        "operationId": "reassignPartition",
+        "security": [{"basicAuth": []}],
+        "parameters": [
+          {"name": "topic", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "partition", "in": "path", "required": true, "schema": {"type": "integer"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ReassignPartitionRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {"description": "Partition reassigned"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
     }
   },
   "components": {
@@ -873,6 +989,97 @@ const OpenAPISpec = `{
         "properties": {
           "name": {"type": "string", "description": "Schema name (must be unique)"},
           "schema": {"type": "string", "description": "Schema definition as JSON string"}
+        }
+      },
+      "ClusterMetadata": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {"type": "string"},
+          "topics": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/TopicPartitionMetadata"}
+          }
+        }
+      },
+      "TopicPartitionMetadata": {
+        "type": "object",
+        "properties": {
+          "topic": {"type": "string"},
+          "partitions": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/PartitionMetadata"}
+          }
+        }
+      },
+      "PartitionMetadata": {
+        "type": "object",
+        "properties": {
+          "partition": {"type": "integer"},
+          "leader_id": {"type": "string"},
+          "leader_addr": {"type": "string"},
+          "epoch": {"type": "integer"},
+          "state": {"type": "string", "enum": ["online", "offline", "reassigning", "syncing"]},
+          "replicas": {"type": "array", "items": {"type": "string"}},
+          "isr": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "PartitionAssignment": {
+        "type": "object",
+        "properties": {
+          "topic": {"type": "string"},
+          "partition": {"type": "integer"},
+          "leader": {"type": "string"},
+          "leader_addr": {"type": "string"},
+          "replicas": {"type": "array", "items": {"type": "string"}},
+          "isr": {"type": "array", "items": {"type": "string"}},
+          "epoch": {"type": "integer"},
+          "state": {"type": "string"}
+        }
+      },
+      "LeaderDistribution": {
+        "type": "object",
+        "properties": {
+          "distribution": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          },
+          "total_partitions": {"type": "integer"},
+          "imbalance_ratio": {"type": "number"}
+        }
+      },
+      "RebalanceResult": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "message": {"type": "string"},
+          "moves": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/PartitionMove"}
+          },
+          "old_leaders": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          },
+          "new_leaders": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          }
+        }
+      },
+      "PartitionMove": {
+        "type": "object",
+        "properties": {
+          "topic": {"type": "string"},
+          "partition": {"type": "integer"},
+          "from_node": {"type": "string"},
+          "to_node": {"type": "string"}
+        }
+      },
+      "ReassignPartitionRequest": {
+        "type": "object",
+        "properties": {
+          "new_leader": {"type": "string"},
+          "new_replicas": {"type": "array", "items": {"type": "string"}}
         }
       }
     }

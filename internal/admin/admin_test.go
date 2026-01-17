@@ -189,6 +189,36 @@ func (m *mockHandler) GetStats() (*StatsInfo, error) {
 	}, nil
 }
 
+// Partition management methods (horizontal scaling)
+func (m *mockHandler) GetClusterMetadata(topic string) (*ClusterMetadataInfo, error) {
+	return &ClusterMetadataInfo{
+		ClusterID: "test-cluster",
+		Topics:    []TopicPartitionMetadata{},
+	}, nil
+}
+
+func (m *mockHandler) GetPartitionAssignments(topic string) ([]PartitionAssignmentInfo, error) {
+	return []PartitionAssignmentInfo{}, nil
+}
+
+func (m *mockHandler) GetLeaderDistribution() (map[string]int, error) {
+	return map[string]int{"node-1": 3, "node-2": 3}, nil
+}
+
+func (m *mockHandler) TriggerRebalance() (*RebalanceResult, error) {
+	return &RebalanceResult{
+		Success:    true,
+		Message:    "Rebalance completed",
+		Moves:      []PartitionMove{},
+		OldLeaders: map[string]int{"node-1": 3, "node-2": 3},
+		NewLeaders: map[string]int{"node-1": 3, "node-2": 3},
+	}, nil
+}
+
+func (m *mockHandler) ReassignPartition(topic string, partition int, newLeader string, newReplicas []string) error {
+	return nil
+}
+
 func TestNewServer(t *testing.T) {
 	cfg := &config.AdminConfig{Enabled: true, Addr: ":8080"}
 	handler := &mockHandler{}

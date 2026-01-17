@@ -82,10 +82,14 @@ import (
 	"flymq/internal/broker"
 	"flymq/internal/config"
 	"flymq/internal/crypto"
+	"flymq/internal/delayed"
+	"flymq/internal/dlq"
 	"flymq/internal/logging"
 	"flymq/internal/performance"
 	"flymq/internal/protocol"
 	"flymq/internal/schema"
+	"flymq/internal/transaction"
+	"flymq/internal/ttl"
 )
 
 // Broker defines the interface for message broker operations.
@@ -109,6 +113,10 @@ type Broker interface {
 	// ProduceWithKey writes a message with a key for partition assignment.
 	// Messages with the same key are routed to the same partition.
 	ProduceWithKey(topic string, key, data []byte) (uint64, error)
+
+	// ProduceWithKeyAndPartition writes a message with a key and returns both offset and partition.
+	// This is used when the caller needs to know which partition the message was written to.
+	ProduceWithKeyAndPartition(topic string, key, data []byte) (offset uint64, partition int, err error)
 
 	// Consume reads a single message from a topic at the specified offset.
 	// Returns the message data or an error if the offset is invalid.
@@ -156,6 +164,9 @@ type Broker interface {
 	// GetTopicInfo returns lowest/highest offsets per partition.
 	GetTopicInfo(topic string) (*broker.TopicInfo, error)
 
+	// GetTopicMessageCount returns the total number of messages in a topic.
+	GetTopicMessageCount(topic string) (int64, error)
+
 	// Fetch retrieves multiple messages starting from the given offset.
 	// Returns the messages, the next offset to fetch, and any error.
 	// This is more efficient than calling Consume repeatedly.
@@ -199,6 +210,10 @@ type Broker interface {
 	// GetZeroCopyInfo returns file and position info for zero-copy reads.
 	// This allows using sendfile() to transfer data directly to network.
 	GetZeroCopyInfo(topic string, partition int, offset uint64) (*os.File, int64, int64, error)
+
+	// GetClusterMetadata returns partition-to-node mappings for smart client routing.
+	// If topic is empty, returns metadata for all topics.
+	GetClusterMetadata(topic string) (*protocol.BinaryClusterMetadataResponse, error)
 }
 
 // Server is the main TCP server that handles client connections.
@@ -271,6 +286,10 @@ type Server struct {
 	// Maps net.Conn to username string
 	connAuth sync.Map
 
+	// connConsumerGroup tracks the consumer group for each connection
+	// Maps net.Conn to consumer group string
+	connConsumerGroup sync.Map
+
 	// connStartTime tracks when each connection was established.
 	// Used for connection duration metrics and debugging.
 	// sync.Map is used for concurrent access without explicit locking.
@@ -284,6 +303,88 @@ type Server struct {
 
 	// pipeline provides high-performance message processing with compression and zero-copy
 	pipeline *performance.MessagePipeline
+
+	// delayedManager handles delayed message delivery
+	delayedManager *delayed.Manager
+
+	// ttlManager handles message TTL and expiration
+	ttlManager *ttl.Manager
+
+	// dlqManager handles dead letter queue operations
+	dlqManager *dlq.Manager
+
+	// txnCoordinator handles transaction coordination
+	txnCoordinator *transaction.Coordinator
+}
+
+// brokerMessageStore adapts the Broker interface to delayed.MessageStore.
+type brokerMessageStore struct {
+	broker Broker
+}
+
+func (s *brokerMessageStore) Produce(topic string, data []byte) (uint64, error) {
+	return s.broker.Produce(topic, data)
+}
+
+// brokerDLQStore adapts the Broker interface to dlq.MessageStore.
+type brokerDLQStore struct {
+	broker Broker
+}
+
+func (s *brokerDLQStore) Produce(topic string, data []byte) (uint64, error) {
+	return s.broker.Produce(topic, data)
+}
+
+func (s *brokerDLQStore) Fetch(topic string, partition int, offset uint64, maxMessages int) ([][]byte, uint64, error) {
+	return s.broker.Fetch(topic, partition, offset, maxMessages)
+}
+
+// brokerTxnStore adapts the Broker interface to transaction.MessageStore.
+type brokerTxnStore struct {
+	broker Broker
+}
+
+func (s *brokerTxnStore) Produce(topic string, data []byte) (uint64, error) {
+	return s.broker.Produce(topic, data)
+}
+
+func (s *brokerTxnStore) ProduceToPartition(topic string, partition int, data []byte) (uint64, error) {
+	// For now, use the default produce which handles partition selection
+	return s.broker.Produce(topic, data)
+}
+
+func (s *brokerTxnStore) CommitOffset(topic string, partition int, consumerGroup string, offset uint64) error {
+	_, err := s.broker.CommitOffset(topic, consumerGroup, partition, offset)
+	return err
+}
+
+// brokerTTLStore adapts the Broker interface to ttl.MessageStore.
+// Note: The broker doesn't currently support message deletion, so this is a no-op store
+// that allows TTL tracking but doesn't actually delete expired messages.
+type brokerTTLStore struct {
+	broker Broker
+	logger *logging.Logger
+}
+
+func (s *brokerTTLStore) DeleteMessage(topic string, partition int, offset uint64) error {
+	// The broker doesn't support message deletion yet
+	// Log the deletion request for debugging
+	s.logger.Debug("TTL message deletion requested (not implemented)", "topic", topic, "partition", partition, "offset", offset)
+	return nil
+}
+
+func (s *brokerTTLStore) GetMessageMetadata(topic string, partition int, offset uint64) (*ttl.MessageMetadata, error) {
+	// Return a placeholder metadata - actual implementation would need broker support
+	return &ttl.MessageMetadata{
+		Topic:     topic,
+		Partition: partition,
+		Offset:    offset,
+	}, nil
+}
+
+func (s *brokerTTLStore) ListMessages(topic string, partition int, startOffset, endOffset uint64) ([]uint64, error) {
+	// Return empty list - actual implementation would need broker support
+	return nil, nil
 }
 
 // NewServer creates a new Server instance with the given configuration and broker.
@@ -423,6 +524,37 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		"zero_copy", cfg.Performance.ZeroCopy,
 	)
 
+	// Initialize delayed message manager if enabled
+	var delayedManager *delayed.Manager
+	if cfg.Delayed.Enabled {
+		delayedManager = delayed.NewManager(&cfg.Delayed, &brokerMessageStore{broker})
+		delayedManager.Start()
+		baseLogger.Info("Delayed message manager initialized")
+	}
+
+	// Initialize TTL manager if TTL is configured
+	var ttlManager *ttl.Manager
+	if cfg.TTL.DefaultTTL > 0 || cfg.TTL.CleanupInterval > 0 {
+		ttlManager = ttl.NewManager(&cfg.TTL, &brokerTTLStore{broker: broker, logger: baseLogger})
+		ttlManager.Start()
+		baseLogger.Info("TTL manager initialized", "default_ttl", cfg.TTL.DefaultTTL, "cleanup_interval", cfg.TTL.CleanupInterval)
+	}
+
+	// Initialize DLQ manager if enabled
+	var dlqManager *dlq.Manager
+	if cfg.DLQ.Enabled {
+		dlqManager = dlq.NewManager(&cfg.DLQ, &brokerDLQStore{broker})
+		baseLogger.Info("DLQ manager initialized")
+	}
+
+	// Initialize transaction coordinator if enabled
+	var txnCoordinator *transaction.Coordinator
+	if cfg.Transaction.Enabled {
+		txnCoordinator = transaction.NewCoordinator(&cfg.Transaction, &brokerTxnStore{broker})
+		txnCoordinator.Start()
+		baseLogger.Info("Transaction coordinator initialized")
+	}
+
 	return &Server{
 		config:         cfg,
 		broker:         broker,
@@ -435,13 +567,17 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		perfLogger:     logging.NewPerformanceLogger(logging.NewLogger("performance")),
 		errorLogger:    logging.NewErrorLogger(logging.NewLogger("error")),
 		// Create unbuffered channel - closing broadcasts to all receivers
-		stopCh:          make(chan struct{}),
-		schemaRegistry:  registry,
-		schemaValidator: validator,
-		authorizer:      authorizer,
-		asyncIO:         asyncIO,
-		bufferPool:      bufferPool,
-		pipeline:        pipeline,
+		stopCh:           make(chan struct{}),
+		schemaRegistry:   registry,
+		schemaValidator:  validator,
+		authorizer:       authorizer,
+		asyncIO:          asyncIO,
+		bufferPool:       bufferPool,
+		pipeline:         pipeline,
+		delayedManager:   delayedManager,
+		ttlManager:       ttlManager,
+		dlqManager:       dlqManager,
+		txnCoordinator:   txnCoordinator,
 	}
 }
 
@@ -576,6 +712,24 @@ func (s *Server) Stop() error {
 	// Stop async I/O manager if it was started
 	if s.asyncIO != nil {
 		s.asyncIO.Stop()
+	}
+
+	// Stop delayed message manager if it was started
+	if s.delayedManager != nil {
+		s.delayedManager.Stop()
+		s.logger.Debug("Delayed message manager stopped")
+	}
+
+	// Stop TTL manager if it was started
+	if s.ttlManager != nil {
+		s.ttlManager.Stop()
+		s.logger.Debug("TTL manager stopped")
+	}
+
+	// Stop transaction coordinator if it was started
+	if s.txnCoordinator != nil {
+		s.txnCoordinator.Stop()
+		s.logger.Debug("Transaction coordinator stopped")
 	}
 
 	s.logger.Info("Server stopped")
@@ -844,6 +998,10 @@ func (s *Server) handleMessage(conn io.Writer, msg *protocol.Message) error {
 	case protocol.OpRoleList:
 		return s.handleRoleList(conn)
 
+	// ========== Cluster Operations ==========
+	case protocol.OpClusterMetadata:
+		return s.handleClusterMetadata(conn, msg.Payload)
+
 	default:
 		return fmt.Errorf("unknown opcode: %d", msg.Header.Op)
 	}
@@ -996,19 +1154,15 @@ func (s *Server) handleProduce(w io.Writer, payload []byte, flags byte) error {
 		return err
 	}
 
-	// Write message to broker and get assigned offset
+	// Write message to broker and get assigned offset and partition
 	// Use key-based partitioning if key is provided
-	var offset uint64
-	if len(key) > 0 {
-		offset, err = s.broker.ProduceWithKey(topic, key, data)
-	} else {
-		offset, err = s.broker.Produce(topic, data)
-	}
+	offset, partition, err := s.broker.ProduceWithKeyAndPartition(topic, key, data)
 	if err != nil {
 		s.errorLogger.LogError(err, "produce", map[string]interface{}{
-			"topic": topic,
-			"key":   len(key) > 0,
-			"size":  len(data),
+			"topic":     topic,
+			"partition": partition,
+			"key":       len(key) > 0,
+			"size":      len(data),
 		})
 		return err
 	}
@@ -1018,7 +1172,7 @@ func (s *Server) handleProduce(w io.Writer, payload []byte, flags byte) error {
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
 	// Sample 1% of messages for logging to reduce overhead
 	if offset%100 == 0 {
-		clientID := "unknown" // TODO: Extract from connection context
+		clientID := s.getClientID(w)
 		s.msgLogger.LogProduce(topic, offset, len(data), clientID, latencyMs)
 		s.perfLogger.LogLatency("produce", latencyMs, true)
 	}
@@ -1030,7 +1184,7 @@ func (s *Server) handleProduce(w io.Writer, payload []byte, flags byte) error {
 	}
 	metadata := &protocol.RecordMetadata{
 		Topic:     topic,
-		Partition: 0, // TODO: Return actual partition from partitioner
+		Partition: int32(partition),
 		Offset:    offset,
 		Timestamp: time.Now().UnixMilli(),
 		KeySize:   keySize,
@@ -1086,8 +1240,8 @@ func (s *Server) handleConsume(w io.Writer, payload []byte, flags byte) error {
 	// Calculate latency and log metrics (sample 1% for high throughput)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
 	if offset%100 == 0 {
-		clientID := "unknown"      // TODO: Extract from connection context
-		consumerGroup := "default" // TODO: Extract from consumer context
+		clientID := s.getClientID(w)
+		consumerGroup := s.getConsumerGroup(w)
 		s.msgLogger.LogConsume(topic, offset, consumerGroup, clientID, latencyMs)
 		s.perfLogger.LogLatency("consume", latencyMs, true)
 	}
@@ -1128,8 +1282,8 @@ func (s *Server) handleCreateTopic(w io.Writer, payload []byte, flags byte) erro
 	}
 
 	// Log topic creation
-	creator := "unknown"   // TODO: Extract from connection context
-	replicationFactor := 1 // TODO: Get from config
+	creator := s.getClientID(w)
+	replicationFactor := s.config.Partition.DefaultReplicationFactor
 	s.topicLogger.LogTopicCreated(topic, partitions, replicationFactor, creator)
 
 	// Always respond with binary for performance
@@ -1152,6 +1306,11 @@ func (s *Server) handleSubscribe(w io.Writer, payload []byte, flags byte) error 
 	if err := s.checkConsumeAuth(w, topic); err != nil {
 		s.securityLogger.LogAuthzFailure(s.getConnUsername(w), "subscribe", topic, w)
 		return err
+	}
+
+	// Track the consumer group for this connection
+	if conn, ok := w.(net.Conn); ok && groupID != "" {
+		s.connConsumerGroup.Store(conn, groupID)
 	}
 
 	subMode := protocol.SubscribeMode(mode)
@@ -1189,7 +1348,7 @@ func (s *Server) handleCommit(w io.Writer, payload []byte, flags byte) error {
 
 	// Only log when offset actually changes (avoid spamming logs on auto-commit)
 	if changed {
-		consumerID := "unknown" // TODO: Extract from connection context
+		consumerID := s.getClientID(w)
 		s.consumerLogger.LogCommit(consumerID, groupID, topic, partition, offset)
 	}
 
@@ -1416,6 +1575,9 @@ func (s *Server) handleDeleteTopic(w io.Writer, payload []byte, flags byte) erro
 		return err
 	}
 
+	// Get message count before deletion for logging
+	messageCount, _ := s.broker.GetTopicMessageCount(topic)
+
 	if err := s.broker.DeleteTopic(topic); err != nil {
 		s.errorLogger.LogError(err, "delete_topic", map[string]interface{}{
 			"topic": topic,
@@ -1424,8 +1586,7 @@ func (s *Server) handleDeleteTopic(w io.Writer, payload []byte, flags byte) erro
 	}
 
 	// Log topic deletion
-	deletedBy := "unknown"   // TODO: Extract from connection context
-	messageCount := int64(0) // TODO: Get from broker
+	deletedBy := s.getClientID(w)
 	s.topicLogger.LogTopicDeleted(topic, deletedBy, messageCount)
 
 	// Always respond with binary for performance
@@ -1664,13 +1825,32 @@ func (s *Server) handleProduceDelayed(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with delay queue
-	// For now, produce immediately
+
+	// Use delayed message manager if available
+	if s.delayedManager != nil {
+		delay := time.Duration(req.DelayMs) * time.Millisecond
+		messageID, err := s.delayedManager.Schedule(req.Topic, req.Data, delay, nil)
+		if err != nil {
+			return err
+		}
+		s.logger.Debug("Delayed message scheduled", "topic", req.Topic, "delay_ms", req.DelayMs, "message_id", messageID)
+		metadata := &protocol.RecordMetadata{
+			Topic:     req.Topic,
+			Partition: 0,
+			Offset:    0, // Offset will be assigned when message is delivered
+			Timestamp: time.Now().UnixMilli(),
+			KeySize:   -1,
+			ValueSize: int32(len(req.Data)),
+		}
+		return protocol.WriteBinaryMessage(w, protocol.OpProduceDelayed, protocol.EncodeRecordMetadata(metadata))
+	}
+
+	// Fallback: produce immediately if delayed manager not enabled
 	offset, err := s.broker.Produce(req.Topic, req.Data)
 	if err != nil {
 		return err
 	}
-	s.logger.Debug("Delayed message queued", "topic", req.Topic, "delay_ms", req.DelayMs)
+	s.logger.Debug("Delayed message produced immediately (delayed delivery disabled)", "topic", req.Topic, "delay_ms", req.DelayMs)
 	metadata := &protocol.RecordMetadata{
 		Topic:     req.Topic,
 		Partition: 0,
@@ -1687,13 +1867,32 @@ func (s *Server) handleProduceWithTTL(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with TTL manager
-	// For now, produce without TTL tracking
+
+	// Produce the message
 	offset, err := s.broker.Produce(req.Topic, req.Data)
 	if err != nil {
 		return err
 	}
-	s.logger.Debug("Message with TTL produced", "topic", req.Topic, "ttl_ms", req.TTLMs)
+
+	// Register message with TTL manager if available
+	if s.ttlManager != nil {
+		now := time.Now()
+		ttlSeconds := req.TTLMs / 1000
+		meta := ttl.MessageMetadata{
+			MessageID:  fmt.Sprintf("%s-%d-%d", req.Topic, 0, offset),
+			Topic:      req.Topic,
+			Partition:  0,
+			Offset:     offset,
+			CreatedAt:  now,
+			ExpiresAt:  now.Add(time.Duration(req.TTLMs) * time.Millisecond),
+			TTLSeconds: ttlSeconds,
+		}
+		s.ttlManager.RegisterMessage(meta)
+		s.logger.Debug("Message with TTL registered", "topic", req.Topic, "ttl_ms", req.TTLMs, "offset", offset)
+	} else {
+		s.logger.Debug("Message with TTL produced (TTL tracking disabled)", "topic", req.Topic, "ttl_ms", req.TTLMs)
+	}
+
 	metadata := &protocol.RecordMetadata{
 		Topic:     req.Topic,
 		Partition: 0,
@@ -1883,8 +2082,34 @@ func (s *Server) handleGetDLQMessages(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with DLQ manager
-	_ = req // suppress unused warning
+
+	// Use DLQ manager if available
+	if s.dlqManager != nil {
+		messages, _, err := s.dlqManager.GetDLQMessages(req.Topic, 0, int(req.MaxMessages))
+		if err != nil {
+			s.logger.Warn("Failed to get DLQ messages", "topic", req.Topic, "error", err)
+			// Return empty response on error
+			resp := protocol.EncodeBinaryDLQResponse(&protocol.BinaryDLQResponse{Messages: nil})
+			return protocol.WriteBinaryMessage(w, protocol.OpGetDLQMessages, resp)
+		}
+
+		// Convert DLQ messages to protocol format
+		protoMessages := make([]protocol.BinaryDLQMessage, len(messages))
+		for i, msg := range messages {
+			protoMessages[i] = protocol.BinaryDLQMessage{
+				ID:      msg.ID,
+				Data:    msg.Payload,
+				Error:   msg.ErrorMessage,
+				Retries: int32(msg.RetryCount),
+			}
+		}
+		s.logger.Debug("Retrieved DLQ messages", "topic", req.Topic, "count", len(messages))
+		resp := protocol.EncodeBinaryDLQResponse(&protocol.BinaryDLQResponse{Messages: protoMessages})
+		return protocol.WriteBinaryMessage(w, protocol.OpGetDLQMessages, resp)
+	}
+
+	// DLQ manager not enabled
+	s.logger.Debug("DLQ manager not enabled, returning empty response", "topic", req.Topic)
 	resp := protocol.EncodeBinaryDLQResponse(&protocol.BinaryDLQResponse{Messages: nil})
 	return protocol.WriteBinaryMessage(w, protocol.OpGetDLQMessages, resp)
 }
@@ -1894,9 +2119,47 @@ func (s *Server) handleReplayDLQ(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with DLQ manager
-	s.logger.Info("DLQ message replayed", "topic", req.Topic, "message_id", req.MessageID)
-	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: true, Message: "OK"})
+
+	// Use DLQ manager if available
+	if s.dlqManager != nil {
+		// Get the DLQ message by ID
+		messages, _, err := s.dlqManager.GetDLQMessages(req.Topic, 0, 1000)
+		if err != nil {
+			s.logger.Warn("Failed to get DLQ messages for replay", "topic", req.Topic, "error", err)
+			resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: err.Error()})
+			return protocol.WriteBinaryMessage(w, protocol.OpReplayDLQ, resp)
+		}
+
+		// Find the message with the matching ID
+		var targetMsg *dlq.DLQMessage
+		for _, msg := range messages {
+			if msg.ID == req.MessageID {
+				targetMsg = msg
+				break
+			}
+		}
+
+		if targetMsg == nil {
+			s.logger.Warn("DLQ message not found", "topic", req.Topic, "message_id", req.MessageID)
+			resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: "message not found"})
+			return protocol.WriteBinaryMessage(w, protocol.OpReplayDLQ, resp)
+		}
+
+		// Replay the message
+		if err := s.dlqManager.ReplayMessage(targetMsg); err != nil {
+			s.logger.Warn("Failed to replay DLQ message", "topic", req.Topic, "message_id", req.MessageID, "error", err)
+			resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: err.Error()})
+			return protocol.WriteBinaryMessage(w, protocol.OpReplayDLQ, resp)
+		}
+
+		s.logger.Info("DLQ message replayed", "topic", req.Topic, "message_id", req.MessageID)
+		resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: true, Message: "OK"})
+		return protocol.WriteBinaryMessage(w, protocol.OpReplayDLQ, resp)
+	}
+
+	// DLQ manager not enabled
+	s.logger.Debug("DLQ manager not enabled", "topic", req.Topic)
+	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: "DLQ not enabled"})
 	return protocol.WriteBinaryMessage(w, protocol.OpReplayDLQ, resp)
 }
 
@@ -1905,16 +2168,49 @@ func (s *Server) handlePurgeDLQ(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with DLQ manager
-	s.logger.Info("DLQ purged", "topic", req.Topic)
-	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: true, Message: "OK"})
+
+	// Use DLQ manager if available
+	if s.dlqManager != nil {
+		// Get the DLQ topic name
+		dlqTopic := s.dlqManager.GetDLQTopic(req.Topic)
+
+		// Delete the DLQ topic to purge all messages
+		if err := s.broker.DeleteTopic(dlqTopic); err != nil {
+			s.logger.Warn("Failed to purge DLQ", "topic", req.Topic, "dlq_topic", dlqTopic, "error", err)
+			resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: err.Error()})
+			return protocol.WriteBinaryMessage(w, protocol.OpPurgeDLQ, resp)
+		}
+
+		s.logger.Info("DLQ purged", "topic", req.Topic, "dlq_topic", dlqTopic)
+		resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: true, Message: "OK"})
+		return protocol.WriteBinaryMessage(w, protocol.OpPurgeDLQ, resp)
+	}
+
+	// DLQ manager not enabled
+	s.logger.Debug("DLQ manager not enabled", "topic", req.Topic)
+	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{Success: false, Message: "DLQ not enabled"})
 	return protocol.WriteBinaryMessage(w, protocol.OpPurgeDLQ, resp)
 }
 
 func (s *Server) handleBeginTx(w io.Writer, payload []byte) error {
-	// TODO: Integrate with transaction coordinator
+	// Use transaction coordinator if available
+	if s.txnCoordinator != nil {
+		// Use a producer ID based on connection (simplified for now)
+		producerID := fmt.Sprintf("producer-%d", time.Now().UnixNano())
+		txn, err := s.txnCoordinator.Begin(producerID)
+		if err != nil {
+			s.logger.Warn("Failed to begin transaction", "error", err)
+			resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: "", Success: false})
+			return protocol.WriteBinaryMessage(w, protocol.OpBeginTx, resp)
+		}
+		s.logger.Debug("Transaction started", "txn_id", txn.ID, "producer_id", producerID)
+		resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: txn.ID, Success: true})
+		return protocol.WriteBinaryMessage(w, protocol.OpBeginTx, resp)
+	}
+
+	// Fallback: generate a simple transaction ID
 	txnID := fmt.Sprintf("txn-%d", time.Now().UnixNano())
-	s.logger.Debug("Transaction started", "txn_id", txnID)
+	s.logger.Debug("Transaction started (coordinator disabled)", "txn_id", txnID)
 	resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: txnID, Success: true})
 	return protocol.WriteBinaryMessage(w, protocol.OpBeginTx, resp)
 }
@@ -1924,8 +2220,21 @@ func (s *Server) handleCommitTx(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with transaction coordinator
-	s.logger.Debug("Transaction committed", "txn_id", req.TxnID)
+
+	// Use transaction coordinator if available
+	if s.txnCoordinator != nil {
+		if err := s.txnCoordinator.Commit(req.TxnID); err != nil {
+			s.logger.Warn("Failed to commit transaction", "txn_id", req.TxnID, "error", err)
+			resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: false})
+			return protocol.WriteBinaryMessage(w, protocol.OpCommitTx, resp)
+		}
+		s.logger.Debug("Transaction committed", "txn_id", req.TxnID)
+		resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: true})
+		return protocol.WriteBinaryMessage(w, protocol.OpCommitTx, resp)
+	}
+
+	// Fallback: just acknowledge
+	s.logger.Debug("Transaction committed (coordinator disabled)", "txn_id", req.TxnID)
 	resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: true})
 	return protocol.WriteBinaryMessage(w, protocol.OpCommitTx, resp)
 }
@@ -1935,8 +2244,21 @@ func (s *Server) handleAbortTx(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with transaction coordinator
-	s.logger.Debug("Transaction aborted", "txn_id", req.TxnID)
+
+	// Use transaction coordinator if available
+	if s.txnCoordinator != nil {
+		if err := s.txnCoordinator.Abort(req.TxnID); err != nil {
+			s.logger.Warn("Failed to abort transaction", "txn_id", req.TxnID, "error", err)
+			resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: false})
+			return protocol.WriteBinaryMessage(w, protocol.OpAbortTx, resp)
+		}
+		s.logger.Debug("Transaction aborted", "txn_id", req.TxnID)
+		resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: true})
+		return protocol.WriteBinaryMessage(w, protocol.OpAbortTx, resp)
+	}
+
+	// Fallback: just acknowledge
+	s.logger.Debug("Transaction aborted (coordinator disabled)", "txn_id", req.TxnID)
 	resp := protocol.EncodeBinaryTxnResponse(&protocol.BinaryTxnResponse{TxnID: req.TxnID, Success: true})
 	return protocol.WriteBinaryMessage(w, protocol.OpAbortTx, resp)
 }
@@ -1946,13 +2268,37 @@ func (s *Server) handleProduceTx(w io.Writer, payload []byte) error {
 	if err != nil {
 		return err
 	}
-	// TODO: Integrate with transaction coordinator
-	// For now, produce immediately
+
+	// Use transaction coordinator if available
+	if s.txnCoordinator != nil {
+		// Add the produce operation to the transaction
+		op := transaction.Operation{
+			Type:    transaction.OpProduce,
+			Topic:   req.Topic,
+			Payload: req.Data,
+		}
+		if err := s.txnCoordinator.AddOperation(req.TxnID, op); err != nil {
+			s.logger.Warn("Failed to add operation to transaction", "txn_id", req.TxnID, "error", err)
+			return err
+		}
+		s.logger.Debug("Transactional message added", "txn_id", req.TxnID, "topic", req.Topic)
+		metadata := &protocol.RecordMetadata{
+			Topic:     req.Topic,
+			Partition: 0,
+			Offset:    0, // Offset will be assigned on commit
+			Timestamp: time.Now().UnixMilli(),
+			KeySize:   -1,
+			ValueSize: int32(len(req.Data)),
+		}
+		return protocol.WriteBinaryMessage(w, protocol.OpProduceTx, protocol.EncodeRecordMetadata(metadata))
+	}
+
+	// Fallback: produce immediately
 	offset, err := s.broker.Produce(req.Topic, req.Data)
 	if err != nil {
 		return err
 	}
-	s.logger.Debug("Transactional message produced", "txn_id", req.TxnID, "topic", req.Topic)
+	s.logger.Debug("Transactional message produced (coordinator disabled)", "txn_id", req.TxnID, "topic", req.Topic)
 	metadata := &protocol.RecordMetadata{
 		Topic:     req.Topic,
 		Partition: 0,
@@ -2050,6 +2396,31 @@ func (s *Server) getConnUsername(w io.Writer) string {
 		}
 	}
 	return ""
+}
+
+// getClientID returns a client identifier for a connection.
+// Uses the authenticated username if available, otherwise uses the remote address.
+func (s *Server) getClientID(w io.Writer) string {
+	// First try to get the authenticated username
+	if username := s.getConnUsername(w); username != "" {
+		return username
+	}
+	// Fall back to remote address
+	if conn, ok := w.(net.Conn); ok {
+		return conn.RemoteAddr().String()
+	}
+	return "unknown"
+}
+
+// getConsumerGroup returns the consumer group for a connection.
+// Returns "default" if no consumer group is associated with the connection.
+func (s *Server) getConsumerGroup(w io.Writer) string {
+	if conn, ok := w.(net.Conn); ok {
+		if group, exists := s.connConsumerGroup.Load(conn); exists {
+			return group.(string)
+		}
+	}
+	return "default"
 }
 
 // checkProduceAuth checks if the connection is authorized to produce to a topic.
@@ -2494,6 +2865,23 @@ func (s *Server) handleRoleList(w io.Writer) error {
 
 	resp := protocol.EncodeBinaryRoleListResponse(&protocol.BinaryRoleListResponse{Roles: roleList})
 	return protocol.WriteBinaryMessage(w, protocol.OpRoleList, resp)
+}
+
+// handleClusterMetadata returns partition-to-node mappings for smart client routing.
+// This enables clients to route requests directly to partition leaders.
+func (s *Server) handleClusterMetadata(w io.Writer, payload []byte) error {
+	req, err := protocol.DecodeBinaryClusterMetadataRequest(payload)
+	if err != nil {
+		return s.sendErrorResponse(w, fmt.Errorf("invalid request: %w", err))
+	}
+
+	metadata, err := s.broker.GetClusterMetadata(req.Topic)
+	if err != nil {
+		return s.sendErrorResponse(w, err)
+	}
+
+	resp := protocol.EncodeBinaryClusterMetadataResponse(metadata)
+	return protocol.WriteBinaryMessage(w, protocol.OpClusterMetadata, resp)
 }
 
 // sendErrorResponse sends an error response to the client.

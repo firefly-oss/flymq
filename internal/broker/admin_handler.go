@@ -877,3 +877,145 @@ func (h *AdminHandler) GetStats() (*admin.StatsInfo, error) {
 		System:         systemStats,
 	}, nil
 }
+
+// ============================================================================
+// Partition Management Methods (Horizontal Scaling)
+// ============================================================================
+
+// GetClusterMetadata returns partition-to-node mappings for smart client routing.
+func (h *AdminHandler) GetClusterMetadata(topic string) (*admin.ClusterMetadataInfo, error) {
+	metadata, err := h.broker.GetClusterMetadata(topic)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert protocol types to admin types
+	topics := make([]admin.TopicPartitionMetadata, 0, len(metadata.Topics))
+	for _, t := range metadata.Topics {
+		partitions := make([]admin.PartitionMetadataInfo, 0, len(t.Partitions))
+		for _, p := range t.Partitions {
+			partitions = append(partitions, admin.PartitionMetadataInfo{
+				Partition:  int(p.Partition),
+				LeaderID:   p.LeaderID,
+				LeaderAddr: p.LeaderAddr,
+				Epoch:      p.Epoch,
+				State:      p.State,
+				Replicas:   p.Replicas,
+				ISR:        p.ISR,
+			})
+		}
+		topics = append(topics, admin.TopicPartitionMetadata{
+			Topic:      t.Topic,
+			Partitions: partitions,
+		})
+	}
+
+	return &admin.ClusterMetadataInfo{
+		ClusterID: metadata.ClusterID,
+		Topics:    topics,
+	}, nil
+}
+
+// GetPartitionAssignments returns detailed partition assignment information.
+func (h *AdminHandler) GetPartitionAssignments(topic string) ([]admin.PartitionAssignmentInfo, error) {
+	metadata, err := h.broker.GetClusterMetadata(topic)
+	if err != nil {
+		return nil, err
+	}
+
+	var assignments []admin.PartitionAssignmentInfo
+	for _, t := range metadata.Topics {
+		for _, p := range t.Partitions {
+			assignments = append(assignments, admin.PartitionAssignmentInfo{
+				Topic:      t.Topic,
+				Partition:  int(p.Partition),
+				Leader:     p.LeaderID,
+				LeaderAddr: p.LeaderAddr,
+				Replicas:   p.Replicas,
+				ISR:        p.ISR,
+				Epoch:      p.Epoch,
+				State:      p.State,
+			})
+		}
+	}
+
+	return assignments, nil
+}
+
+// GetLeaderDistribution returns the distribution of partition leaders across nodes.
+func (h *AdminHandler) GetLeaderDistribution() (map[string]int, error) {
+	metadata, err := h.broker.GetClusterMetadata("")
+	if err != nil {
+		return nil, err
+	}
+
+	distribution := make(map[string]int)
+	for _, t := range metadata.Topics {
+		for _, p := range t.Partitions {
+			if p.LeaderID != "" {
+				distribution[p.LeaderID]++
+			}
+		}
+	}
+
+	return distribution, nil
+}
+
+// TriggerRebalance triggers a partition rebalance to distribute leaders evenly.
+func (h *AdminHandler) TriggerRebalance() (*admin.RebalanceResult, error) {
+	// Get the distribution before rebalancing
+	oldDistribution, err := h.GetLeaderDistribution()
+	if err != nil {
+		return nil, err
+	}
+
+	// Trigger the rebalance through the broker
+	if err := h.broker.TriggerRebalance(); err != nil {
+		return &admin.RebalanceResult{
+			Success:    false,
+			Message:    err.Error(),
+			Moves:      []admin.PartitionMove{},
+			OldLeaders: oldDistribution,
+			NewLeaders: oldDistribution,
+		}, nil
+	}
+
+	// Get the distribution after rebalancing
+	newDistribution, err := h.GetLeaderDistribution()
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate the moves that were made
+	moves := []admin.PartitionMove{}
+	// Note: Detailed move tracking would require comparing partition assignments before/after
+	// For now, we report success based on distribution change
+
+	message := "Rebalance completed successfully."
+	if len(oldDistribution) == len(newDistribution) {
+		// Check if distribution actually changed
+		changed := false
+		for node, count := range oldDistribution {
+			if newDistribution[node] != count {
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			message = "Rebalance completed. No moves were required."
+		}
+	}
+
+	return &admin.RebalanceResult{
+		Success:    true,
+		Message:    message,
+		Moves:      moves,
+		OldLeaders: oldDistribution,
+		NewLeaders: newDistribution,
+	}, nil
+}
+
+// ReassignPartition reassigns a partition to a new leader and/or replicas.
+func (h *AdminHandler) ReassignPartition(topic string, partition int, newLeader string, newReplicas []string) error {
+	return h.broker.ReassignPartition(topic, partition, newLeader, newReplicas)
+}

@@ -24,6 +24,14 @@ Cluster:
 	GET  /api/v1/cluster       - Get cluster info
 	GET  /api/v1/nodes         - List nodes
 
+Partition Management (Horizontal Scaling):
+
+	GET  /api/v1/cluster/metadata              - Get partition-to-node mappings for smart routing
+	GET  /api/v1/cluster/partitions            - List all partition assignments
+	POST /api/v1/cluster/partitions/{topic}/{partition} - Reassign partition to new leader
+	GET  /api/v1/cluster/leaders               - Get leader distribution across nodes
+	POST /api/v1/cluster/rebalance             - Trigger partition rebalance
+
 Topics:
 
 	GET  /api/v1/topics        - List topics
@@ -130,6 +138,13 @@ type AdminHandler interface {
 	// Metrics operations
 	GetMetrics() (string, error)      // Prometheus format
 	GetStats() (*StatsInfo, error)    // Rich JSON format
+
+	// Partition management operations (for horizontal scaling)
+	GetClusterMetadata(topic string) (*ClusterMetadataInfo, error)
+	GetPartitionAssignments(topic string) ([]PartitionAssignmentInfo, error)
+	GetLeaderDistribution() (map[string]int, error)
+	TriggerRebalance() (*RebalanceResult, error)
+	ReassignPartition(topic string, partition int, newLeader string, newReplicas []string) error
 }
 
 // ClusterInfo represents cluster information.
@@ -281,6 +296,68 @@ type DLQMessage struct {
 	Error     string `json:"error"`
 	Retries   int    `json:"retries"`
 	Timestamp string `json:"timestamp"`
+}
+
+// ============================================================================
+// Partition Management Types (for Horizontal Scaling)
+// ============================================================================
+
+// ClusterMetadataInfo contains partition-to-node mappings for smart routing.
+type ClusterMetadataInfo struct {
+	ClusterID string                    `json:"cluster_id"`
+	Topics    []TopicPartitionMetadata  `json:"topics"`
+}
+
+// TopicPartitionMetadata contains partition metadata for a topic.
+type TopicPartitionMetadata struct {
+	Topic      string                  `json:"topic"`
+	Partitions []PartitionMetadataInfo `json:"partitions"`
+}
+
+// PartitionMetadataInfo contains routing info for a single partition.
+type PartitionMetadataInfo struct {
+	Partition  int      `json:"partition"`
+	LeaderID   string   `json:"leader_id"`
+	LeaderAddr string   `json:"leader_addr"`
+	Epoch      uint64   `json:"epoch"`
+	State      string   `json:"state"`
+	Replicas   []string `json:"replicas"`
+	ISR        []string `json:"isr"`
+}
+
+// PartitionAssignmentInfo contains detailed partition assignment information.
+type PartitionAssignmentInfo struct {
+	Topic      string   `json:"topic"`
+	Partition  int      `json:"partition"`
+	Leader     string   `json:"leader"`
+	LeaderAddr string   `json:"leader_addr"`
+	Replicas   []string `json:"replicas"`
+	ISR        []string `json:"isr"`
+	Epoch      uint64   `json:"epoch"`
+	State      string   `json:"state"`
+}
+
+// RebalanceResult contains the result of a partition rebalance operation.
+type RebalanceResult struct {
+	Success     bool                      `json:"success"`
+	Message     string                    `json:"message"`
+	Moves       []PartitionMove           `json:"moves"`
+	OldLeaders  map[string]int            `json:"old_leaders"`
+	NewLeaders  map[string]int            `json:"new_leaders"`
+}
+
+// PartitionMove represents a single partition leadership change.
+type PartitionMove struct {
+	Topic       string `json:"topic"`
+	Partition   int    `json:"partition"`
+	FromNode    string `json:"from_node"`
+	ToNode      string `json:"to_node"`
+}
+
+// ReassignPartitionRequest represents a request to reassign a partition.
+type ReassignPartitionRequest struct {
+	NewLeader   string   `json:"new_leader"`
+	NewReplicas []string `json:"new_replicas,omitempty"`
 }
 
 // MetricsResponse represents metrics in Prometheus format.
@@ -577,6 +654,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// DLQ routes - read for GET, admin for replay/purge
 	mux.HandleFunc("/api/v1/dlq/", s.handleDLQWithAuth)
+
+	// Partition management routes (for horizontal scaling)
+	mux.HandleFunc("/api/v1/cluster/metadata", wrap(PermissionRead, s.handleClusterMetadata))
+	mux.HandleFunc("/api/v1/cluster/partitions", wrap(PermissionRead, s.handlePartitionAssignments))
+	mux.HandleFunc("/api/v1/cluster/partitions/", wrap(PermissionAdmin, s.handlePartitionReassign))
+	mux.HandleFunc("/api/v1/cluster/leaders", wrap(PermissionRead, s.handleLeaderDistribution))
+	mux.HandleFunc("/api/v1/cluster/rebalance", wrap(PermissionAdmin, s.handleRebalance))
 
 	// Keep the helper variable to silence unused warning
 	_ = wrapAdminOrSelf
@@ -1297,3 +1381,163 @@ const swaggerUIHTML = `<!DOCTYPE html>
     </script>
 </body>
 </html>`
+
+// ============================================================================
+// Partition Management Handlers (for Horizontal Scaling)
+// ============================================================================
+
+// handleClusterMetadata handles GET /api/v1/cluster/metadata
+// Returns partition-to-node mappings for smart client routing.
+func (s *Server) handleClusterMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Optional topic filter
+	topic := r.URL.Query().Get("topic")
+
+	metadata, err := s.handler.GetClusterMetadata(topic)
+	if err != nil {
+		s.logger.Error("Failed to get cluster metadata", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.writeJSON(w, metadata)
+}
+
+// handlePartitionAssignments handles GET /api/v1/cluster/partitions
+// Returns detailed partition assignment information.
+func (s *Server) handlePartitionAssignments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Optional topic filter
+	topic := r.URL.Query().Get("topic")
+
+	assignments, err := s.handler.GetPartitionAssignments(topic)
+	if err != nil {
+		s.logger.Error("Failed to get partition assignments", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"assignments": assignments,
+		"count":       len(assignments),
+	})
+}
+
+// handlePartitionReassign handles POST /api/v1/cluster/partitions/{topic}/{partition}
+// Reassigns a partition to a new leader and/or replicas.
+func (s *Server) handlePartitionReassign(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse path: /api/v1/cluster/partitions/{topic}/{partition}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/cluster/partitions/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid path: expected /api/v1/cluster/partitions/{topic}/{partition}", http.StatusBadRequest)
+		return
+	}
+
+	topic := parts[0]
+	partition, err := strconv.Atoi(parts[1])
+	if err != nil {
+		http.Error(w, "Invalid partition number", http.StatusBadRequest)
+		return
+	}
+
+	var req ReassignPartitionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.NewLeader == "" {
+		http.Error(w, "new_leader is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.handler.ReassignPartition(topic, partition, req.NewLeader, req.NewReplicas); err != nil {
+		s.logger.Error("Failed to reassign partition", "topic", topic, "partition", partition, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"success":   true,
+		"message":   "Partition reassignment initiated",
+		"topic":     topic,
+		"partition": partition,
+		"new_leader": req.NewLeader,
+	})
+}
+
+// handleLeaderDistribution handles GET /api/v1/cluster/leaders
+// Returns the distribution of partition leaders across nodes.
+func (s *Server) handleLeaderDistribution(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	distribution, err := s.handler.GetLeaderDistribution()
+	if err != nil {
+		s.logger.Error("Failed to get leader distribution", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Calculate balance metrics
+	total := 0
+	max := 0
+	min := -1
+	for _, count := range distribution {
+		total += count
+		if count > max {
+			max = count
+		}
+		if min == -1 || count < min {
+			min = count
+		}
+	}
+
+	balanced := true
+	if len(distribution) > 0 && max-min > 1 {
+		balanced = false
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"distribution":    distribution,
+		"total_leaders":   total,
+		"node_count":      len(distribution),
+		"max_per_node":    max,
+		"min_per_node":    min,
+		"balanced":        balanced,
+	})
+}
+
+// handleRebalance handles POST /api/v1/cluster/rebalance
+// Triggers a partition rebalance to distribute leaders evenly.
+func (s *Server) handleRebalance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	result, err := s.handler.TriggerRebalance()
+	if err != nil {
+		s.logger.Error("Failed to trigger rebalance", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.writeJSON(w, result)
+}

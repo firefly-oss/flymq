@@ -56,16 +56,22 @@ func (b *MockBroker) Produce(topic string, data []byte) (uint64, error) {
 }
 
 func (b *MockBroker) ProduceWithKey(topic string, key, data []byte) (uint64, error) {
+	offset, _, err := b.ProduceWithKeyAndPartition(topic, key, data)
+	return offset, err
+}
+
+func (b *MockBroker) ProduceWithKeyAndPartition(topic string, key, data []byte) (uint64, int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if _, ok := b.topics[topic]; !ok {
-		return 0, fmt.Errorf("topic not found: %s", topic)
+		return 0, -1, fmt.Errorf("topic not found: %s", topic)
 	}
 
 	offset := uint64(len(b.topics[topic]))
 	b.topics[topic] = append(b.topics[topic], Message{Data: data, Offset: offset})
-	return offset, nil
+	// Mock always uses partition 0
+	return offset, 0, nil
 }
 
 func (b *MockBroker) Consume(topic string, offset uint64) ([]byte, error) {
@@ -248,13 +254,25 @@ func (b *MockBroker) GetTopicInfo(topic string) (*broker.TopicInfo, error) {
 		return nil, fmt.Errorf("topic not found: %s", topic)
 	}
 	var high uint64
+	var msgCount uint64
 	if len(msgs) > 0 {
 		high = uint64(len(msgs) - 1)
-	} else {
-		high = 0
+		msgCount = uint64(len(msgs))
 	}
-	info := &broker.TopicInfo{Name: topic, Partitions: []broker.PartitionInfo{{ID: 0, LowestOffset: 0, HighestOffset: high}}}
+	info := &broker.TopicInfo{Name: topic, Partitions: []broker.PartitionInfo{{ID: 0, LowestOffset: 0, HighestOffset: high, MessageCount: msgCount}}}
 	return info, nil
+}
+
+func (b *MockBroker) GetTopicMessageCount(topic string) (int64, error) {
+	info, err := b.GetTopicInfo(topic)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, p := range info.Partitions {
+		total += int64(p.MessageCount)
+	}
+	return total, nil
 }
 
 func (b *MockBroker) ConsumeWithKey(topic string, offset uint64) (key []byte, value []byte, err error) {
@@ -343,6 +361,14 @@ func (b *MockBroker) ProposeDeleteACL(topic string) error {
 func (b *MockBroker) GetZeroCopyInfo(topic string, partition int, offset uint64) (*os.File, int64, int64, error) {
 	// Mock implementation - zero-copy not supported in tests
 	return nil, 0, 0, fmt.Errorf("zero-copy not supported in mock")
+}
+
+func (b *MockBroker) GetClusterMetadata(topic string) (*protocol.BinaryClusterMetadataResponse, error) {
+	// Mock implementation - return empty metadata
+	return &protocol.BinaryClusterMetadataResponse{
+		ClusterID: "mock-cluster",
+		Topics:    []protocol.TopicMetadata{},
+	}, nil
 }
 
 func TestNewServer(t *testing.T) {
