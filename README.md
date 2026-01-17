@@ -504,8 +504,8 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
     "tls_enabled": true,
     "tls_cert_file": "/etc/flymq/server.crt",
     "tls_key_file": "/etc/flymq/server.key",
-    "encryption_enabled": true,
-    "encryption_key": "your-64-char-hex-key"
+    "encryption_enabled": true
+    // Note: encryption_key is set via FLYMQ_ENCRYPTION_KEY env var (never in config)
   },
 
   "auth": {
@@ -578,6 +578,7 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
 | `FLYMQ_LOG_JSON` | Output logs in JSON format | `true` |
 | `FLYMQ_TLS_ENABLED` | Enable TLS | `false` |
 | `FLYMQ_ENCRYPTION_ENABLED` | Enable data encryption | `false` |
+| `FLYMQ_ENCRYPTION_KEY` | AES-256 encryption key (64 hex chars) | - |
 | `FLYMQ_AUTH_ENABLED` | Enable authentication | `false` |
 | `FLYMQ_USERNAME` | Default username for CLI | - |
 | `FLYMQ_PASSWORD` | Default password for CLI | - |
@@ -667,22 +668,39 @@ openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key -out server.
 
 ### Data-at-Rest Encryption
 
-Generate an encryption key:
+FlyMQ encrypts stored messages using AES-256-GCM. For security, the encryption key is **never stored in configuration files** and must be provided via environment variable.
+
+**Step 1: Generate an encryption key**
 
 ```bash
-openssl rand -hex 32
+openssl rand -hex 32 > /etc/flymq/encryption.key
+chmod 600 /etc/flymq/encryption.key
 ```
 
-Add to configuration:
+**Step 2: Enable encryption in configuration**
 
 ```json
 {
   "security": {
-    "encryption_enabled": true,
-    "encryption_key": "your-generated-64-char-hex-key"
+    "encryption_enabled": true
   }
 }
 ```
+
+**Step 3: Set the encryption key environment variable**
+
+```bash
+export FLYMQ_ENCRYPTION_KEY=$(cat /etc/flymq/encryption.key)
+flymq --config /etc/flymq/flymq.json
+```
+
+> **⚠️ Security Best Practices:**
+> - Store the key in a secrets manager (HashiCorp Vault, AWS Secrets Manager, etc.)
+> - Use restricted file permissions (600) for any file containing the key
+> - Never commit encryption keys to version control
+> - Back up the key securely - **data cannot be recovered without it**
+>
+> **Key Verification:** FlyMQ verifies the encryption key on startup. If the wrong key is provided, the server will refuse to start with a clear error message.
 
 ---
 

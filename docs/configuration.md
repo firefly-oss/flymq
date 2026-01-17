@@ -80,7 +80,37 @@ flymq -quiet -human-readable
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
 | `encryption.enabled` | `FLYMQ_ENCRYPTION_ENABLED` | `false` | Enable message encryption |
-| `encryption.key` | `FLYMQ_ENCRYPTION_KEY` | `""` | 32-byte AES-256 encryption key (hex) |
+| - | `FLYMQ_ENCRYPTION_KEY` | - | 32-byte AES-256 encryption key (64 hex chars) |
+
+> **⚠️ Security Notice: Encryption Key Handling**
+>
+> The encryption key is **never stored in configuration files** for security reasons.
+> It must be provided via the `FLYMQ_ENCRYPTION_KEY` environment variable.
+>
+> **Best Practices:**
+> - Generate a secure key: `openssl rand -hex 32`
+> - Store in a secrets manager (HashiCorp Vault, AWS Secrets Manager, etc.)
+> - Use restricted file permissions (600) for any file containing the key
+> - Never commit encryption keys to version control
+> - Back up the key securely - data cannot be recovered without it
+>
+> **Key Verification:**
+> On first startup with encryption enabled, FlyMQ creates a `.encryption_marker` file
+> in the data directory. On subsequent startups, this marker is used to verify the
+> correct key is provided. If the wrong key is used, FlyMQ will refuse to start with
+> a clear error message.
+>
+> **Example Usage:**
+> ```bash
+> # Set the encryption key
+> export FLYMQ_ENCRYPTION_KEY=$(cat /path/to/secrets/flymq.key)
+>
+> # Or source from a secrets file
+> source /etc/flymq/flymq.secrets
+>
+> # Start FlyMQ
+> flymq --config /etc/flymq/flymq.json
+> ```
 
 ### Authentication & RBAC
 
