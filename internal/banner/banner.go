@@ -395,6 +395,9 @@ func printSecurityInfo(w io.Writer, cfg *config.Config) {
 			col2 = fmtKV("Anonymous", "denied")
 		}
 		col3 := fmtKV("Public Topics", fmt.Sprintf("%v", cfg.Auth.DefaultPublic))
+		if cfg.Auth.AllowAnonymous && !cfg.Auth.DefaultPublic {
+			col3 += " " + AnsiYellow + "(Anonymous cannot access private topics)" + AnsiReset
+		}
 		printRow3(w, col1, col2, col3)
 	}
 }
