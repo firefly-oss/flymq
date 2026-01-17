@@ -432,8 +432,40 @@ func printFeaturesInfo(w io.Writer, cfg *config.Config) {
 		disabled = append(disabled, "Transactions")
 	}
 
+	if cfg.Audit.Enabled {
+		enabled = append(enabled, "Audit")
+	} else {
+		disabled = append(disabled, "Audit")
+	}
+
+	if cfg.Observability.Tracing.Enabled {
+		enabled = append(enabled, "Tracing")
+	} else {
+		disabled = append(disabled, "Tracing")
+	}
+
+	if cfg.Observability.Metrics.Enabled {
+		enabled = append(enabled, "Metrics")
+	} else {
+		disabled = append(disabled, "Metrics")
+	}
+
+	if cfg.Observability.Health.Enabled {
+		enabled = append(enabled, "Health")
+	} else {
+		disabled = append(disabled, "Health")
+	}
+
+	if cfg.Observability.Admin.Enabled {
+		enabled = append(enabled, "Admin")
+	} else {
+		disabled = append(disabled, "Admin")
+	}
+
 	if cfg.Discovery.Enabled {
 		enabled = append(enabled, "mDNS")
+	} else {
+		disabled = append(disabled, "mDNS")
 	}
 
 	// Print enabled features

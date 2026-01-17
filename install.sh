@@ -1565,6 +1565,8 @@ print_post_install() {
     [[ "$CFG_DLQ_ENABLED" == "true" ]] && enabled_features+="DLQ "
     [[ "$CFG_DELAYED_ENABLED" == "true" ]] && enabled_features+="Delayed "
     [[ "$CFG_TXN_ENABLED" == "true" ]] && enabled_features+="Transactions "
+    [[ "$CFG_DISCOVERY_ENABLED" == "true" ]] && enabled_features+="mDNS "
+    [[ "$CFG_TRACING_ENABLED" == "true" ]] && enabled_features+="Tracing "
     [[ "$CFG_AUDIT_ENABLED" == "true" ]] && enabled_features+="Audit "
 
     if [[ -n "$enabled_features" ]]; then
@@ -1576,32 +1578,34 @@ print_post_install() {
     echo -e "  ${CYAN}${BOLD}QUICK START${RESET}"
     echo ""
 
-    # Show start command with encryption key sourcing if needed
-    local start_prefix=""
+    # Show start command with instructions to export encryption key
     if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
-        start_prefix="source $config_dir/flymq.secrets && "
+        echo -e "  ${YELLOW}${BOLD}⚠ ENCRYPTION KEY REQUIRED${RESET}"
+        echo -e "  ${DIM}Export the key before starting FlyMQ:${RESET}"
+        echo -e "  ${CYAN}export FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}${RESET}"
+        echo ""
     fi
 
     if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
         if [[ -z "$CFG_CLUSTER_PEERS" ]]; then
             echo -e "  ${DIM}# Start bootstrap node (JSON logs by default)${RESET}"
-            echo -e "  ${start_prefix}flymq --config $config_dir/flymq.json"
+            echo -e "  flymq --config $config_dir/flymq.json"
             echo ""
             echo -e "  ${DIM}# Other nodes join with:${RESET} ${CYAN}${CFG_ADVERTISE_CLUSTER}${RESET}"
         else
             echo -e "  ${DIM}# Start this node (will auto-join cluster)${RESET}"
-            echo -e "  ${start_prefix}flymq --config $config_dir/flymq.json"
+            echo -e "  flymq --config $config_dir/flymq.json"
         fi
     else
         echo -e "  ${DIM}# Start server (JSON logs by default)${RESET}"
-        echo -e "  ${start_prefix}flymq --config $config_dir/flymq.json"
+        echo -e "  flymq --config $config_dir/flymq.json"
     fi
     echo ""
     echo -e "  ${DIM}# Start with human-readable logs (for development)${RESET}"
-    echo -e "  ${start_prefix}flymq --config $config_dir/flymq.json -human-readable"
+    echo -e "  flymq --config $config_dir/flymq.json -human-readable"
     echo ""
     echo -e "  ${DIM}# Start in quiet mode (logs only, no banner)${RESET}"
-    echo -e "  ${start_prefix}flymq --config $config_dir/flymq.json -quiet"
+    echo -e "  flymq --config $config_dir/flymq.json -quiet"
     echo ""
     echo -e "  ${DIM}# Send a message${RESET}"
     echo -e "  flymq-cli produce my-topic \"Hello World\""
@@ -1638,16 +1642,14 @@ print_post_install() {
     if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
         echo -e "  ${YELLOW}${BOLD}⚠ ENCRYPTION KEY - KEEP SECURE${RESET}"
         echo ""
-        echo -e "  ${DIM}Secrets file:${RESET}  ${CYAN}$config_dir/flymq.secrets${RESET} ${DIM}(mode 600)${RESET}"
         echo -e "  ${DIM}Key:${RESET}           ${DIM}${CFG_ENCRYPTION_KEY}${RESET}"
         echo ""
-        echo -e "  ${DIM}The encryption key is stored in a separate secrets file for security.${RESET}"
-        echo -e "  ${DIM}Source it before starting: ${CYAN}source $config_dir/flymq.secrets${RESET}"
+        echo -e "  ${DIM}IMPORTANT: You must export this key as an environment variable before starting FlyMQ:${RESET}"
+        echo -e "  ${CYAN}export FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}${RESET}"
         echo ""
         if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
             echo -e "  ${YELLOW}${BOLD}CLUSTER REQUIREMENT:${RESET}"
             echo -e "  ${DIM}All nodes in the cluster MUST use the SAME encryption key.${RESET}"
-            echo -e "  ${DIM}Copy ${CYAN}$config_dir/flymq.secrets${RESET}${DIM} to all cluster nodes.${RESET}"
             echo ""
         fi
         echo -e "  ${RED}${BOLD}WARNING:${RESET} ${DIM}Back up this key securely. Data cannot be recovered without it.${RESET}"

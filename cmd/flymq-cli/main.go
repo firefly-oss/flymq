@@ -70,6 +70,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -180,12 +183,12 @@ func extractCommandAndArgs(args []string) (string, []string) {
 		"--cert": true, "--tls-cert": true,
 		"--key": true, "--tls-key": true,
 		// Admin API options
-		"--admin-addr": true,
-		"--admin-user": true,
-		"--admin-pass": true,
+		"--admin-addr":    true,
+		"--admin-user":    true,
+		"--admin-pass":    true,
 		"--admin-ca-cert": true,
 		// Health endpoint options
-		"--health-addr": true,
+		"--health-addr":    true,
 		"--health-ca-cert": true,
 	}
 
@@ -195,10 +198,10 @@ func extractCommandAndArgs(args []string) (string, []string) {
 		"-T": true, "--tls": true,
 		"-k": true, "--insecure": true, "--tls-insecure": true,
 		// Admin API TLS
-		"--admin-tls": true,
+		"--admin-tls":      true,
 		"--admin-insecure": true,
 		// Health endpoint TLS
-		"--health-tls": true,
+		"--health-tls":      true,
 		"--health-insecure": true,
 	}
 
@@ -261,7 +264,7 @@ func extractSubcommand(args []string) (string, []string) {
 		"--from": true, "-f": true,
 		"--offset": true, "-o": true,
 		"--count": true, "-n": true,
-		"--partition": true,
+		"--partition":  true,
 		"--partitions": true,
 	}
 
@@ -386,6 +389,44 @@ func getAddr(args []string) string {
 	return defaultAddr
 }
 
+func getConfigDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".flymq"
+	}
+	return filepath.Join(home, ".flymq")
+}
+
+func saveCredentials(username, password string) error {
+	dir := getConfigDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+
+	configPath := filepath.Join(dir, "credentials")
+	content := fmt.Sprintf("FLYMQ_USERNAME=%s\nFLYMQ_PASSWORD=%s\n", username, password)
+	return os.WriteFile(configPath, []byte(content), 0600)
+}
+
+func loadCredentials() (string, string) {
+	configPath := filepath.Join(getConfigDir(), "credentials")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", ""
+	}
+
+	var username, password string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "FLYMQ_USERNAME=") {
+			username = strings.TrimPrefix(line, "FLYMQ_USERNAME=")
+		} else if strings.HasPrefix(line, "FLYMQ_PASSWORD=") {
+			password = strings.TrimPrefix(line, "FLYMQ_PASSWORD=")
+		}
+	}
+	return username, password
+}
+
 func getUsername(args []string) string {
 	for i, arg := range args {
 		if (arg == "-u" || arg == "--username") && i+1 < len(args) {
@@ -398,7 +439,8 @@ func getUsername(args []string) string {
 	if username := os.Getenv("FLYMQ_USERNAME"); username != "" {
 		return username
 	}
-	return ""
+	u, _ := loadCredentials()
+	return u
 }
 
 func getPassword(args []string) string {
@@ -413,7 +455,8 @@ func getPassword(args []string) string {
 	if password := os.Getenv("FLYMQ_PASSWORD"); password != "" {
 		return password
 	}
-	return ""
+	_, p := loadCredentials()
+	return p
 }
 
 // getTLSEnabled checks if TLS is enabled via flag or environment variable.
@@ -2493,6 +2536,10 @@ func cmdAuth(args []string) {
 		os.Exit(1)
 	}
 
+	if err := saveCredentials(username, password); err != nil {
+		cli.Warning("Failed to persist credentials: %v", err)
+	}
+
 	cli.Success("Authenticated as '%s'", username)
 
 	// Get additional info via WhoAmI
@@ -3205,6 +3252,8 @@ func cmdAudit(args []string) {
 	switch subcmd {
 	case "list", "query":
 		cmdAuditQuery(subargs)
+	case "tail":
+		runAuditTail(subargs, "", "", "", "", "")
 	case "export":
 		cmdAuditExport(subargs)
 	case "help", "--help", "-h":
@@ -3220,6 +3269,7 @@ func printAuditUsage() {
 	cli.Header("Audit Trail Commands:")
 	fmt.Println("  audit list                    List recent audit events")
 	fmt.Println("  audit query                   Query audit events with filters")
+	fmt.Println("  audit tail                    Tail audit events in real-time")
 	fmt.Println("  audit export                  Export audit events to file")
 	fmt.Println()
 	cli.Header("Query Options:")
@@ -3232,6 +3282,7 @@ func printAuditUsage() {
 	fmt.Println("  --search <text>               Full-text search")
 	fmt.Println("  --limit <n>                   Maximum events to return (default: 100)")
 	fmt.Println("  --offset <n>                  Offset for pagination")
+	fmt.Println("  -f, --follow                  Follow/tail audit events")
 	fmt.Println()
 	cli.Header("Export Options:")
 	fmt.Println("  --format <json|csv>           Export format (default: json)")
@@ -3250,9 +3301,6 @@ func printAuditUsage() {
 }
 
 func cmdAuditQuery(args []string) {
-	c := connectWithAuth(args)
-	defer c.Close()
-
 	// Parse filter options
 	user := getStringArg(args, "--user", "")
 	resource := getStringArg(args, "--resource", "")
@@ -3263,9 +3311,18 @@ func cmdAuditQuery(args []string) {
 	endStr := getStringArg(args, "--end", "")
 	limitStr := getStringArg(args, "--limit", "100")
 	offsetStr := getStringArg(args, "--offset", "0")
+	follow := hasFlag(args, "--follow") || hasFlag(args, "-f")
 
 	limit, _ := strconv.Atoi(limitStr)
 	offset, _ := strconv.Atoi(offsetStr)
+
+	if follow {
+		runAuditTail(args, user, resource, eventType, result, search)
+		return
+	}
+
+	c := connectWithAuth(args)
+	defer c.Close()
 
 	// Build query request
 	req := &protocol.BinaryAuditQueryRequest{
@@ -3299,6 +3356,21 @@ func cmdAuditQuery(args []string) {
 		os.Exit(1)
 	}
 
+	if len(events) > 20 && isTerminal() {
+		displayAuditEventsPager(events, totalCount)
+	} else {
+		displayAuditEventsTable(events, totalCount, hasMore)
+	}
+}
+
+func isTerminal() bool {
+	if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) != 0 {
+		return true
+	}
+	return false
+}
+
+func displayAuditEventsTable(events []protocol.BinaryAuditEvent, totalCount int32, hasMore bool) {
 	cli.Header("Audit Events")
 	cli.KeyValue("Total Count", fmt.Sprintf("%d", totalCount))
 	cli.KeyValue("Has More", fmt.Sprintf("%v", hasMore))
@@ -3322,6 +3394,87 @@ func cmdAuditQuery(args []string) {
 		}
 	}
 	cli.Separator()
+}
+
+func displayAuditEventsPager(events []protocol.BinaryAuditEvent, totalCount int32) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Audit Events (Total: %d)\n", totalCount))
+	sb.WriteString("──────────────────────────────────────────────────────────────────────────────────────────────────\n")
+	sb.WriteString(fmt.Sprintf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
+		"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT"))
+	sb.WriteString("──────────────────────────────────────────────────────────────────────────────────────────────────\n")
+
+	for _, event := range events {
+		ts := time.UnixMilli(event.Timestamp).Format("2006-01-02 15:04:05")
+		resource := event.Resource
+		if len(resource) > 20 {
+			resource = resource[:17] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
+			ts, event.Type, event.User, resource, event.Action, event.Result))
+	}
+
+	pager := os.Getenv("PAGER")
+	if pager == "" {
+		if runtime.GOOS == "windows" {
+			pager = "more"
+		} else {
+			pager = "less -R -S"
+		}
+	}
+
+	parts := strings.Fields(pager)
+	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd.Stdin = strings.NewReader(sb.String())
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		// Fallback to table if pager fails
+		displayAuditEventsTable(events, totalCount, false)
+	}
+}
+
+func runAuditTail(args []string, user, resource, eventType, result, search string) {
+	c := connectWithAuth(args)
+	defer c.Close()
+
+	cli.Header("Tailing Audit Events (Ctrl+C to stop)")
+	cli.Separator()
+
+	lastTimestamp := time.Now().UnixMilli()
+
+	for {
+		req := &protocol.BinaryAuditQueryRequest{
+			User:      user,
+			Resource:  resource,
+			Result:    result,
+			Search:    search,
+			StartTime: lastTimestamp + 1,
+			Limit:     50,
+		}
+		if eventType != "" {
+			req.EventTypes = strings.Split(eventType, ",")
+		}
+
+		events, _, _, err := c.QueryAuditEvents(req)
+		if err != nil {
+			cli.Warning("Error fetching audit events: %v", err)
+		} else {
+			for _, event := range events {
+				ts := time.UnixMilli(event.Timestamp).Format("15:04:05")
+				res := event.Resource
+				if len(res) > 20 {
+					res = res[:17] + "..."
+				}
+				fmt.Printf("[%s] %-15s %-10s %-20s %-10s %-10s\n",
+					ts, event.Type, event.User, res, event.Action, event.Result)
+				lastTimestamp = event.Timestamp
+			}
+		}
+
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func cmdAuditExport(args []string) {
