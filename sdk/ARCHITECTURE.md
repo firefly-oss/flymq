@@ -594,6 +594,18 @@ raise FlyMQError.authentication_failed("alice")
 3. **Encryption**: ~0.5-2ms per message
 4. **Disk I/O**: ~1-10ms (SSD), ~5-20ms (HDD)
 
+### Server-Side Zero-Copy I/O
+
+FlyMQ uses platform-specific zero-copy optimizations for large message transfers (≥64KB):
+
+| Platform | Optimization | Benefit |
+|----------|--------------|---------|
+| **Linux** | `sendfile()` + `splice()` | Full zero-copy, ~30% less CPU |
+| **macOS** | `sendfile()` | Zero-copy reads, ~20% less CPU |
+| **Windows** | Buffered I/O | Graceful fallback |
+
+These optimizations are automatic and transparent to SDK clients. Large message consumers benefit from reduced server CPU usage and lower latency.
+
 ### Optimization Strategies
 
 **Python - Using HighLevelProducer:**
