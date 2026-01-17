@@ -11,6 +11,7 @@ Provides high-level consumer abstractions similar to Kafka:
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from .exceptions import ConsumerError
 from .protocol import SubscribeMode
 from .types import ConsumedMessage, ConsumerConfig, FetchResult
+from .matcher import is_pattern, match_pattern
 
 if TYPE_CHECKING:
     from .client import FlyMQClient
@@ -116,12 +118,14 @@ class Consumer:
                 self._partition,
                 self._offset,
                 max_records,
+                filter=self._config.message_filter or "",
             )
 
-            if result.messages:
+            messages = result.messages
+            if messages:
                 self._offset = result.next_offset
 
-            return result.messages
+            return messages
 
     def consume(self, timeout_ms: int = 1000) -> ConsumedMessage | None:
         """
@@ -309,15 +313,50 @@ class ConsumerGroup:
 
         self._running = True
 
-        # Create consumers for each topic
+        # Resolve patterns
+        resolved_topics = []
+        try:
+            all_topics = self._client.list_topics()
+            for t in self._topics:
+                if is_pattern(t):
+                    for at in all_topics:
+                        if match_pattern(t, at):
+                            resolved_topics.append(at)
+                else:
+                    resolved_topics.append(t)
+        except Exception:
+            resolved_topics = self._topics
+        
+        self._topics = list(set(resolved_topics))
+
+        # Create consumers for each topic and partition
         for topic in self._topics:
-            consumer = Consumer(
-                self._client,
-                topic,
-                group_id=self._group_id,
-                config=self._config,
-            )
-            self._consumers.append(consumer)
+            try:
+                meta = self._client.get_cluster_metadata(topic)
+                partitions = meta.get_topic_partitions(topic)
+            except Exception:
+                partitions = []
+
+            if not partitions:
+                # Fallback to partition 0
+                consumer = Consumer(
+                    self._client,
+                    topic,
+                    partition=0,
+                    group_id=self._group_id,
+                    config=self._config,
+                )
+                self._consumers.append(consumer)
+            else:
+                for p in partitions:
+                    consumer = Consumer(
+                        self._client,
+                        topic,
+                        partition=p.partition,
+                        group_id=self._group_id,
+                        config=self._config,
+                    )
+                    self._consumers.append(consumer)
 
         # Start background thread
         self._thread = threading.Thread(target=self._consume_loop, daemon=True)
@@ -392,29 +431,45 @@ class ConsumerGroup:
 
     def get_lag(self) -> dict[str, int]:
         """
-        Get consumer lag for all subscribed topics.
+        Get consumer lag for all subscribed topics and partitions.
 
         Returns:
-            Dictionary mapping topic names to their lag values.
+            Dictionary mapping topic names to their total lag across all partitions.
         """
         lag_info = {}
-        for topic in self._topics:
-            try:
-                result = self._client.get_lag(topic, self._group_id, 0)
-                lag_info[topic] = result.get("lag", 0)
-            except Exception:
-                lag_info[topic] = -1  # Unknown
+        with self._lock:
+            # Group consumers by topic
+            topic_consumers: dict[str, list[Consumer]] = {}
+            for c in self._consumers:
+                if c.topic not in topic_consumers:
+                    topic_consumers[c.topic] = []
+                topic_consumers[c.topic].append(c)
+            
+            for topic, consumers in topic_consumers.items():
+                total_lag = 0
+                for c in consumers:
+                    try:
+                        # Use partition from individual consumer
+                        result = self._client.get_lag(topic, self._group_id, c._partition)
+                        total_lag += result.get("lag", 0)
+                    except Exception:
+                        pass
+                lag_info[topic] = total_lag
         return lag_info
 
     def reset_offsets(self, mode: str = "earliest") -> None:
         """
-        Reset offsets for all subscribed topics.
+        Reset offsets for all subscribed topics and partitions.
 
         Args:
             mode: Reset mode ("earliest" or "latest").
         """
-        for topic in self._topics:
-            self._client.reset_offset(topic, self._group_id, 0, mode)
+        with self._lock:
+            for c in self._consumers:
+                try:
+                    self._client.reset_offset(c.topic, self._group_id, c._partition, mode)
+                except Exception:
+                    pass
 
     def reset_offsets_to_earliest(self) -> None:
         """Reset offsets to the earliest position for all topics."""

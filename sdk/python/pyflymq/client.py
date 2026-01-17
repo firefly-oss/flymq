@@ -59,6 +59,8 @@ from .exceptions import (
     TransactionNotActiveError,
 )
 from .protocol import OpCode, Header, MAGIC_BYTE, PROTOCOL_VERSION, read_message, write_message
+from .serde import BytesSerializer, BytesDeserializer, Serializer, Deserializer
+from .matcher import is_pattern, match_pattern
 from .binary import (
     FLAG_BINARY,
     RecordMetadata,
@@ -464,6 +466,50 @@ class FlyMQClient:
     # Core Operations
     # =========================================================================
 
+    def set_serializer(self, serializer: Serializer) -> None:
+        """Set default serializer for values."""
+        self._config.value_serializer = serializer
+
+    def set_deserializer(self, deserializer: Deserializer) -> None:
+        """Set default deserializer for values."""
+        self._config.value_deserializer = deserializer
+
+    def produce_object(
+        self,
+        topic: str,
+        value: Any,
+        serializer: Serializer | None = None,
+    ) -> RecordMetadata:
+        """
+        Produce an object using a serializer.
+        
+        Args:
+            topic: Topic name.
+            value: Object to produce.
+            serializer: Serializer to use. If None, uses default from config.
+        """
+        ser = serializer or self._config.value_serializer or BytesSerializer()
+        data = ser.serialize(topic, value)
+        return self.produce(topic, data)
+
+    def consume_object(
+        self,
+        topic: str,
+        offset: int,
+        deserializer: Deserializer | None = None,
+    ) -> Any:
+        """
+        Consume a message and decode it using a deserializer.
+        
+        Args:
+            topic: Topic name.
+            offset: Message offset.
+            deserializer: Deserializer to use. If None, uses default from config.
+        """
+        data = self.consume(topic, offset)
+        deser = deserializer or self._config.value_deserializer or BytesDeserializer()
+        return deser.deserialize(topic, data)
+
     def produce(
         self,
         topic: str,
@@ -624,6 +670,7 @@ class FlyMQClient:
         partition: int = 0,
         offset: int = 0,
         max_messages: int = 10,
+        filter: str = "",
     ) -> FetchResult:
         """
         Fetch multiple messages from a topic.
@@ -633,6 +680,7 @@ class FlyMQClient:
             partition: Partition to fetch from.
             offset: Starting offset.
             max_messages: Maximum messages to fetch.
+            filter: Optional regex filter to apply server-side.
 
         Returns:
             FetchResult with messages and next offset.
@@ -643,6 +691,7 @@ class FlyMQClient:
             partition=partition,
             offset=offset,
             max_messages=max_messages,
+            filter=filter,
         )
         response_bytes = self._send_binary_request(OpCode.FETCH, encode_fetch_request(req))
         response = decode_fetch_response(response_bytes)

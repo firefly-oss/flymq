@@ -23,6 +23,8 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * High-level consumer with Kafka-like API for consuming messages from FlyMQ.
@@ -120,7 +122,7 @@ public class Consumer implements AutoCloseable {
         // Auto-commit if enabled
         maybeAutoCommit();
 
-        FetchResult result = client.fetch(topic, partition, currentOffset.get(), config.maxPollRecords());
+        FetchResult result = client.fetch(topic, partition, currentOffset.get(), config.maxPollRecords(), config.messageFilter());
         currentOffset.set(result.nextOffset());
 
         return result.messages();
