@@ -19,6 +19,7 @@ import com.firefly.flymq.config.ClientConfig;
 import com.firefly.flymq.exception.FlyMQException;
 import com.firefly.flymq.exception.ProtocolException;
 import com.firefly.flymq.protocol.BinaryProtocol;
+import com.firefly.flymq.protocol.ClusterMetadata;
 import com.firefly.flymq.protocol.OpCode;
 import com.firefly.flymq.protocol.Protocol;
 import com.firefly.flymq.protocol.Records.*;
@@ -1060,6 +1061,32 @@ public class FlyMQClient implements AutoCloseable {
      */
     public void clusterLeave() throws FlyMQException {
         sendBinaryRequest(OpCode.CLUSTER_LEAVE, new byte[0]);
+    }
+
+    /**
+     * Gets cluster metadata with partition-to-node mappings.
+     *
+     * <p>This enables smart routing where clients can route requests directly
+     * to partition leaders, improving throughput and reducing latency.
+     *
+     * @param topic optional topic name; if null or empty, returns metadata for all topics
+     * @return cluster metadata with partition leader information
+     * @throws FlyMQException if the operation fails
+     */
+    public ClusterMetadata getClusterMetadata(String topic) throws FlyMQException {
+        byte[] payload = BinaryProtocol.encodeClusterMetadataRequest(topic);
+        byte[] response = sendBinaryRequest(OpCode.CLUSTER_METADATA, payload);
+        return BinaryProtocol.decodeClusterMetadataResponse(response);
+    }
+
+    /**
+     * Gets cluster metadata for all topics.
+     *
+     * @return cluster metadata with partition leader information
+     * @throws FlyMQException if the operation fails
+     */
+    public ClusterMetadata getClusterMetadata() throws FlyMQException {
+        return getClusterMetadata(null);
     }
 
     /**

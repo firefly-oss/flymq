@@ -1143,4 +1143,70 @@ public final class BinaryProtocol {
     }
 
     public record SuccessResult(boolean success, String message) {}
+
+    // =========================================================================
+    // Cluster Metadata (for Partition Routing)
+    // =========================================================================
+
+    /**
+     * Encodes a cluster metadata request.
+     * Format: [2B topic_len][topic]
+     */
+    public static byte[] encodeClusterMetadataRequest(String topic) {
+        return encodeString(topic != null ? topic : "");
+    }
+
+    /**
+     * Decodes a cluster metadata response.
+     * Format:
+     *   [2B cluster_id_len][cluster_id]
+     *   [4B topic_count]
+     *     [2B topic_len][topic]
+     *     [4B partition_count]
+     *       [4B partition][2B leader_id_len][leader_id][2B leader_addr_len][leader_addr][8B epoch]
+     */
+    public static ClusterMetadata decodeClusterMetadataResponse(byte[] payload) {
+        ByteBuffer buf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+
+        String clusterId = decodeString(buf);
+        int topicCount = buf.getInt();
+
+        List<ClusterMetadata.TopicMetadata> topics = new ArrayList<>(topicCount);
+        for (int i = 0; i < topicCount; i++) {
+            String topicName = decodeString(buf);
+            int partitionCount = buf.getInt();
+
+            List<ClusterMetadata.PartitionMetadata> partitions = new ArrayList<>(partitionCount);
+            for (int j = 0; j < partitionCount; j++) {
+                int partition = buf.getInt();
+                String leaderId = decodeString(buf);
+                String leaderAddr = decodeString(buf);
+                long epoch = buf.getLong();
+
+                // State
+                String state = decodeString(buf);
+
+                // Replicas
+                int replicaCount = buf.getInt();
+                List<String> replicas = new ArrayList<>(replicaCount);
+                for (int k = 0; k < replicaCount; k++) {
+                    replicas.add(decodeString(buf));
+                }
+
+                // ISR
+                int isrCount = buf.getInt();
+                List<String> isr = new ArrayList<>(isrCount);
+                for (int k = 0; k < isrCount; k++) {
+                    isr.add(decodeString(buf));
+                }
+
+                partitions.add(new ClusterMetadata.PartitionMetadata(
+                    partition, leaderId, leaderAddr, epoch, state, replicas, isr));
+            }
+
+            topics.add(new ClusterMetadata.TopicMetadata(topicName, partitions));
+        }
+
+        return new ClusterMetadata(clusterId, topics);
+    }
 }

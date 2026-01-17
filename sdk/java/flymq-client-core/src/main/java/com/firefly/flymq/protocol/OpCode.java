@@ -61,6 +61,7 @@ public enum OpCode {
     CLUSTER_JOIN(0x50),
     CLUSTER_LEAVE(0x51),
     CLUSTER_STATUS(0x52),
+    CLUSTER_METADATA(0x53),  // Get partition-to-node mappings for smart routing
 
     // ========== Consumer Group Operations (0x60-0x6F) ==========
     GET_OFFSET(0x60),
