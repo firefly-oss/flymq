@@ -121,6 +121,7 @@ All benchmarks run in Docker containers with identical resource limits for fair 
 - **Better Cluster Scaling**: Performance advantage increases with cluster size (1.48x → 1.96x)
 - **Binary Protocol**: Go client uses efficient binary encoding (~30% less overhead than JSON)
 - **Memory Efficiency**: Buffer pooling and reduced allocations under load
+- **Zero-Copy I/O**: Platform-specific optimizations (Linux: `sendfile`+`splice`, macOS: `sendfile`)
 
 > **Test Environment**: Apple M3 Pro, 12 cores, 36GB RAM, NVMe SSD (January 16, 2026)
 > Results may vary based on hardware. See [benchmarks/](benchmarks/) for full benchmark suite and reproduction instructions.
@@ -1201,7 +1202,7 @@ flymq/
 │   ├── health/             # Health check endpoints
 │   ├── logging/            # Structured logging
 │   ├── metrics/            # Prometheus metrics
-│   ├── performance/        # Zero-copy, compression, async I/O
+│   ├── performance/        # Zero-copy (Linux/macOS), compression, async I/O
 │   ├── protocol/           # Wire protocol (binary)
 │   ├── schema/             # Schema registry and validation
 │   ├── server/             # TCP server
