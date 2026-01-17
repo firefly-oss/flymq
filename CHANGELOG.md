@@ -9,6 +9,33 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ### Added
 
+#### Encryption Key Security Enhancements
+- **Environment Variable Only** - Encryption key must be set via `FLYMQ_ENCRYPTION_KEY` environment variable
+  - Removed support for encryption key in config files (security best practice)
+  - Key never written to disk or logged
+  - Clear error messages guide users to set the environment variable
+- **Startup Verification** - Server verifies encryption key on startup
+  - Validates key is present when encryption is enabled
+  - Validates key format and length requirements
+  - Fails fast with clear error if key is invalid
+- **Separate Secrets File** - Installer stores encryption key in dedicated secrets file
+  - `/etc/flymq/secrets.env` with restricted permissions (600)
+  - Sourced by systemd service before starting FlyMQ
+  - Keeps secrets separate from main configuration
+
+#### Cluster Encryption Key Validation
+- **Cross-Node Validation** - All cluster nodes must use the same encryption key
+  - Validates encryption enabled/disabled matches across nodes
+  - Validates encryption key fingerprint matches (SHA-256 hash of key)
+  - Prevents data corruption from mismatched encryption settings
+- **Raft-Level Validation** - Encryption validated on every heartbeat
+  - `AppendEntriesRequest/Response` includes encryption metadata
+  - Continuous validation, not just at node join time
+  - Clear error logs when encryption mismatch detected
+- **Membership Validation** - New nodes validated before joining cluster
+  - `ErrEncryptionMismatch` error for mismatched encryption settings
+  - Prevents nodes with wrong key from joining cluster
+
 #### Partition-Level Leadership for Horizontal Scaling
 - **Partition Leader Distribution** - Each partition can have a different leader node
   - Enables horizontal write scaling across cluster nodes (like Kafka)
@@ -64,9 +91,16 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
   - `ProposeAssignPartition()`, `TriggerRebalance()`, `ReassignPartition()`
 - **Swagger/OpenAPI** - Added cluster metadata and partition endpoints to API spec
 - **Installer** - Enhanced with mDNS discovery integration for cluster setup
+  - Displays platform-specific zero-copy I/O status during installation
+  - Improved git clone error handling and cleanup
+  - Simplified source detection and dependency checks
+  - Clones repository automatically when running via curl
 - **Zero-Copy Architecture** - Refactored to platform-specific implementations
   - Moved from single `zerocopy.go` to platform-specific files
   - Improved cross-compilation support for all target platforms
+- **Encryption Configuration** - Encryption key now required via environment variable only
+  - Removed `encryption.key` from config file support
+  - Added `encryption.key_fingerprint` for cluster validation
 
 ---
 

@@ -29,6 +29,8 @@ The following features are implemented and available:
 - ✅ User management via CLI and API (create, update, delete, list)
 - ✅ Auth replication across cluster nodes via Raft consensus
 - ✅ Mutual TLS (mTLS) support for client certificate authentication
+- ✅ **Encryption Key Security** - Key via environment variable only (never in config files)
+- ✅ **Cluster Encryption Validation** - All nodes must use same encryption key
 
 ### Clustering & High Availability
 - ✅ Raft consensus for leader election
