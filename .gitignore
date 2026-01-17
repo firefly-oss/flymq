@@ -1,6 +1,7 @@
 # Binaries
 /flymq
 /flymq-cli
+/flymq-discover
 /benchmarks/benchmark
 /benchmarks/*.json
 *.exe

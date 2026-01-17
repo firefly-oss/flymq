@@ -390,8 +390,126 @@ Get cluster status.
 }
 ```
 
+#### GET /cluster/metadata
+Get partition-to-node mappings for smart client routing. Optionally filter by topic.
+
+**Query Parameters:**
+- `topic` (optional): Filter to a specific topic
+
+**Response:**
+```json
+{
+  "cluster_id": "flymq-prod-1",
+  "topics": [
+    {
+      "topic": "orders",
+      "partitions": [
+        {
+          "partition": 0,
+          "leader_id": "node-1",
+          "leader_addr": "10.0.1.1:9092",
+          "epoch": 5,
+          "state": "online"
+        },
+        {
+          "partition": 1,
+          "leader_id": "node-2",
+          "leader_addr": "10.0.1.2:9092",
+          "epoch": 3,
+          "state": "online"
+        },
+        {
+          "partition": 2,
+          "leader_id": "node-3",
+          "leader_addr": "10.0.1.3:9092",
+          "epoch": 4,
+          "state": "online"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### GET /cluster/leaders
+Get the distribution of partition leaders across nodes.
+
+**Response:**
+```json
+{
+  "distribution": {
+    "node-1": 12,
+    "node-2": 11,
+    "node-3": 13
+  },
+  "total_partitions": 36,
+  "imbalance_ratio": 0.08
+}
+```
+
+#### GET /cluster/partitions
+Get detailed partition assignment information.
+
+**Query Parameters:**
+- `topic` (optional): Filter to a specific topic
+
+**Response:**
+```json
+{
+  "assignments": [
+    {
+      "topic": "orders",
+      "partition": 0,
+      "leader": "node-1",
+      "leader_addr": "10.0.1.1:9092",
+      "replicas": ["node-1", "node-2", "node-3"],
+      "isr": ["node-1", "node-2", "node-3"],
+      "epoch": 5,
+      "state": "online"
+    }
+  ]
+}
+```
+
 #### POST /cluster/rebalance
-Trigger partition rebalancing across the cluster.
+Trigger partition leader rebalancing across the cluster.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Rebalance completed successfully",
+  "moves": [
+    {
+      "topic": "orders",
+      "partition": 2,
+      "from_node": "node-1",
+      "to_node": "node-3"
+    }
+  ],
+  "old_leaders": {
+    "node-1": 15,
+    "node-2": 11,
+    "node-3": 10
+  },
+  "new_leaders": {
+    "node-1": 12,
+    "node-2": 12,
+    "node-3": 12
+  }
+}
+```
+
+#### POST /cluster/partitions/{topic}/{partition}
+Reassign a partition to a new leader and/or replicas.
+
+**Request Body:**
+```json
+{
+  "new_leader": "node-2",
+  "new_replicas": ["node-2", "node-1", "node-3"]
+}
+```
 
 **Response:** `202 Accepted`
 

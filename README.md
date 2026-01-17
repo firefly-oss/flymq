@@ -139,8 +139,11 @@ cd flymq
 # Install
 ./install.sh
 
-# Start the server
+# Start the server (JSON logs by default)
 ./bin/flymq
+
+# Or with human-readable logs for development
+./bin/flymq -human-readable
 
 # In another terminal, produce a message
 ./bin/flymq-cli produce my-topic "Hello, FlyMQ!"
@@ -571,11 +574,21 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
 | `FLYMQ_DATA_DIR` | Data storage directory | `~/.local/share/flymq` |
 | `FLYMQ_NODE_ID` | Unique node identifier | hostname |
 | `FLYMQ_LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
+| `FLYMQ_LOG_JSON` | Output logs in JSON format | `true` |
 | `FLYMQ_TLS_ENABLED` | Enable TLS | `false` |
 | `FLYMQ_ENCRYPTION_ENABLED` | Enable data encryption | `false` |
 | `FLYMQ_AUTH_ENABLED` | Enable authentication | `false` |
 | `FLYMQ_USERNAME` | Default username for CLI | - |
 | `FLYMQ_PASSWORD` | Default password for CLI | - |
+
+**Command-Line Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `-config` | Path to configuration file (JSON format) |
+| `-human-readable` | Use human-readable log format instead of JSON |
+| `-quiet` | Skip banner and config display, output logs only |
+| `-version` | Show version information |
 
 **Docker/Kubernetes Environment Variables:**
 

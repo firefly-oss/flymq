@@ -68,6 +68,44 @@ Topics are divided into partitions, with each partition being the unit of parall
 
 ---
 
+## 3a. Partition-Level Leadership (Horizontal Scaling)
+
+### Decision
+Each partition has its own leader, allowing different partitions of the same topic to be led by different nodes. This is separate from message partitioning (key-based or round-robin).
+
+### Rationale
+- **True horizontal scaling**: Write load is distributed across all nodes, not just the cluster leader
+- **Kafka compatibility**: Matches Kafka's partition leadership model
+- **Smart client routing**: Clients can route directly to partition leaders, avoiding proxy overhead
+- **Fault isolation**: A slow node only affects its partitions, not the entire cluster
+
+### Two Distinct Concepts
+
+| Concept | Purpose | Mechanism |
+|---------|---------|-----------|
+| **Message Partitioning** | Determine which partition a message goes to | Key-based (FNV-1a hash) or round-robin |
+| **Leader Distribution** | Determine which node leads each partition | Configurable strategy (round-robin, least-loaded, rack-aware) |
+
+### Leader Distribution Strategies
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `round-robin` | Distribute leaders evenly in order | Simple clusters, predictable distribution |
+| `least-loaded` | Assign to node with fewest leaders | Dynamic workloads, uneven topic creation |
+| `rack-aware` | Consider rack placement | Multi-rack/AZ deployments for fault tolerance |
+
+### Trade-offs
+- **Complexity**: More complex than single-leader architecture
+- **Metadata overhead**: Clients need partition-to-node mappings
+- **Rebalancing cost**: Moving partition leaders requires coordination
+
+### Alternatives Considered
+- Single leader for all writes (simpler but doesn't scale horizontally)
+- Consistent hashing for partition assignment (more complex, less predictable)
+- Raft per partition (too much overhead for many partitions)
+
+---
+
 ## 4. Pull-Based Consumption
 
 ### Decision

@@ -124,6 +124,7 @@ Distributed coordination using Raft consensus and SWIM-based gossip.
 **Key features:**
 - Raft consensus for leader election and log replication
 - SWIM gossip protocol for membership management
+- **Partition-level leadership** for horizontal scaling (see below)
 - Partition assignment and rebalancing
 - Automatic failover on node failure
 - Stats exchange via Raft heartbeats for cluster-wide monitoring
@@ -132,15 +133,102 @@ Distributed coordination using Raft consensus and SWIM-based gossip.
 **Files:**
 - `raft.go` - Raft consensus implementation with leader tracking and stats collection
 - `membership.go` - SWIM-based cluster membership
-- `partition.go` - Partition assignment management
+- `partition.go` - Partition assignment management with leader addresses
+- `distributor.go` - Partition distribution strategies (round-robin, least-loaded, rack-aware)
 - `replication.go` - Log replication between nodes
 - `transport.go` - TCP transport for Raft RPC with per-request connections
+- `discovery.go` - mDNS/DNS-SD service discovery for automatic node detection
 - `cluster.go` - Main cluster coordinator
+
+**Service Discovery (mDNS):**
+
+FlyMQ supports automatic node discovery using mDNS (Bonjour/Avahi). When enabled:
+- Nodes advertise themselves as `_flymq._tcp.local.` with metadata (node ID, cluster address, version)
+- New nodes can discover existing cluster members without manual configuration
+- The `flymq-discover` CLI tool can scan for nodes on the local network
+- Cluster ID filtering prevents cross-cluster discovery when multiple clusters exist
 
 **Raft Protocol Extensions:**
 - `AppendEntriesResponse` includes `NodeStats` for distributed monitoring
 - Leader tracks peer stats from heartbeat responses
 - `StatsCollector` callback provides local node metrics
+- Partition metadata commands for leader updates and ISR management
+
+#### Partition-Level Leadership (Horizontal Scaling)
+
+Unlike simple leader-follower architectures where one node handles all writes, FlyMQ supports **partition-level leadership** similar to Apache Kafka. This enables true horizontal scaling:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FlyMQ Cluster (3 Nodes)                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Node 1                Node 2                Node 3             │
+│  ┌─────────────┐       ┌─────────────┐       ┌─────────────┐    │
+│  │ Topic A     │       │ Topic A     │       │ Topic A     │    │
+│  │ P0: LEADER  │◄─────►│ P0: Replica │       │ P0: Replica │    │
+│  │ P1: Replica │       │ P1: LEADER  │◄─────►│ P1: Replica │    │
+│  │ P2: Replica │       │ P2: Replica │       │ P2: LEADER  │    │
+│  └─────────────┘       └─────────────┘       └─────────────┘    │
+│                                                                 │
+│  Write to P0 ──────────► Node 1 (direct)                        │
+│  Write to P1 ──────────► Node 2 (direct)                        │
+│  Write to P2 ──────────► Node 3 (direct)                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key concepts:**
+
+1. **Each partition has its own leader**: Different partitions of the same topic can have different leaders, spreading write load across the cluster.
+
+2. **Smart client routing**: Clients can query cluster metadata to discover partition leaders and route requests directly, avoiding proxy overhead.
+
+3. **Message partitioning strategies**:
+   - **Key-based (FNV-1a hash)**: Messages with the same key always go to the same partition, ensuring ordering for related messages
+   - **Round-robin**: When no key is provided, messages are distributed evenly across partitions
+
+4. **Leader distribution strategies** (configurable):
+   - **round-robin**: Distribute partition leaders evenly in order (default)
+   - **least-loaded**: Assign new partitions to the node with fewest leaders
+   - **rack-aware**: Consider rack placement for fault tolerance
+
+5. **Automatic rebalancing**: When nodes join or leave, partition leaders can be redistributed to maintain balance.
+
+**Configuration:**
+```json
+{
+  "partition": {
+    "distribution_strategy": "round-robin",
+    "default_replication_factor": 3,
+    "default_partitions": 6,
+    "auto_rebalance_enabled": true,
+    "auto_rebalance_interval": 300,
+    "rebalance_threshold": 0.2
+  }
+}
+```
+
+**Admin API endpoints:**
+- `GET /api/v1/cluster/metadata` - Get partition-to-node mappings
+- `GET /api/v1/cluster/leaders` - View leader distribution
+- `POST /api/v1/cluster/rebalance` - Trigger manual rebalance
+- `POST /api/v1/cluster/partitions/{topic}/{partition}` - Reassign partition
+
+**CLI commands:**
+```bash
+# View partition leader distribution
+flymq-cli cluster leaders
+
+# Get partition-to-node mappings for a topic
+flymq-cli cluster metadata --topic my-topic
+
+# Trigger rebalance
+flymq-cli cluster rebalance
+
+# Reassign a partition to a new leader
+flymq-cli cluster reassign my-topic 0 --leader node-2
+```
 
 ### 6. Config (`internal/config/`)
 
@@ -316,10 +404,15 @@ FlyMQ is designed for concurrent access:
 - **Storage**: Segmented log provides concurrent read/write safety
 - **Raft**: Careful lock ordering to prevent deadlocks (lock released before stats collection)
 
-## Key-Based Partitioning
+## Partitioning Strategies
 
-FlyMQ uses FNV-1a hashing for consistent key-based partition assignment:
+FlyMQ has two distinct partitioning concepts:
 
+### 1. Message Partitioning (Client-Side)
+
+Determines which partition a message is written to:
+
+**Key-Based Partitioning (Recommended)**
 ```
 Message Key → FNV-1a Hash → Partition = hash % numPartitions
 ```
@@ -330,10 +423,23 @@ Message Key → FNV-1a Hash → Partition = hash % numPartitions
 - Deterministic: same key always maps to same partition
 - Consistent across all SDKs (Go, Python, Java)
 
+**Round-Robin Partitioning**
+When no key is provided, messages are distributed evenly across partitions using round-robin.
+
 **Ordering Guarantees:**
 - Messages with the same key are always sent to the same partition
 - Within a partition, messages maintain strict ordering
 - This enables ordered processing of related events (e.g., all events for user-123)
+
+### 2. Leader Distribution (Cluster-Side)
+
+Determines which node is the leader for each partition (see [Partition-Level Leadership](#partition-level-leadership-horizontal-scaling) above):
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `round-robin` | Distribute leaders evenly in order | Default, simple clusters |
+| `least-loaded` | Assign to node with fewest leaders | Dynamic workloads |
+| `rack-aware` | Consider rack placement | Multi-rack deployments |
 
 ## Network Ports
 

@@ -20,10 +20,50 @@ FlyMQ loads configuration from multiple sources with the following precedence (h
 | `bind_addr` | `FLYMQ_BIND_ADDR` | `:9092` | TCP listen address for client connections |
 | `data_dir` | `FLYMQ_DATA_DIR` | `./data` | Directory for persistent storage |
 | `log_level` | `FLYMQ_LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
+| `log_json` | `FLYMQ_LOG_JSON` | `true` | Output logs in JSON format (default for production) |
 | `default_partitions` | `FLYMQ_DEFAULT_PARTITIONS` | `3` | Default partitions for new topics |
 | `retention_bytes` | `FLYMQ_RETENTION_BYTES` | `1073741824` | Max bytes per partition (1GB) |
 | `retention_ms` | `FLYMQ_RETENTION_MS` | `604800000` | Message retention time (7 days) |
 | `segment_bytes` | `FLYMQ_SEGMENT_BYTES` | `1073741824` | Max segment file size (1GB) |
+
+### Command-Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `-config` | Path to configuration file (JSON format) |
+| `-human-readable` | Use human-readable log format instead of JSON |
+| `-quiet` | Skip banner and config display, output logs only |
+| `-version` | Show version information |
+| `-help`, `-h` | Show help message |
+
+### Logging
+
+FlyMQ outputs logs in **JSON format by default**, which is ideal for production environments and log aggregators (ELK, Loki, Datadog, etc.).
+
+**JSON log format:**
+```json
+{"ts":"2026-01-16T10:30:00.123456789Z","level":"INFO","logger":"server","msg":"Server started","addr":":9092"}
+```
+
+**Human-readable format** (use `-human-readable` flag):
+```
+2026-01-16T10:30:00.123Z INFO  [server] Server started addr=:9092
+```
+
+**Examples:**
+```bash
+# Default: JSON logs with banner
+flymq
+
+# Human-readable logs for development
+flymq -human-readable
+
+# Quiet mode: JSON logs only, no banner (ideal for containers)
+flymq -quiet
+
+# Combine: human-readable without banner
+flymq -quiet -human-readable
+```
 
 ### TLS Configuration
 
@@ -107,6 +147,96 @@ For manual override (e.g., behind NAT):
 ```bash
 export FLYMQ_ADVERTISE_CLUSTER=<external-ip>:9093
 ```
+
+### Partition Management (Horizontal Scaling)
+
+These settings control how partition leaders are distributed across cluster nodes for horizontal scaling. This is separate from message partitioning (key-based or round-robin), which determines which partition a message is written to.
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `partition.distribution_strategy` | `FLYMQ_PARTITION_DISTRIBUTION_STRATEGY` | `round-robin` | How partition leaders are distributed across nodes |
+| `partition.default_replication_factor` | `FLYMQ_PARTITION_DEFAULT_REPLICATION_FACTOR` | `3` | Default replicas for new topics |
+| `partition.default_partitions` | `FLYMQ_PARTITION_DEFAULT_PARTITIONS` | `6` | Default partitions for new topics |
+| `partition.auto_rebalance_enabled` | `FLYMQ_PARTITION_AUTO_REBALANCE_ENABLED` | `true` | Auto-rebalance when nodes join/leave |
+| `partition.auto_rebalance_interval` | `FLYMQ_PARTITION_AUTO_REBALANCE_INTERVAL` | `300` | Seconds between rebalance checks |
+| `partition.rebalance_threshold` | `FLYMQ_PARTITION_REBALANCE_THRESHOLD` | `0.2` | Max imbalance ratio before rebalance |
+
+**Distribution Strategies:**
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `round-robin` | Distribute leaders evenly in order | Simple clusters, predictable distribution |
+| `least-loaded` | Assign to node with fewest leaders | Dynamic workloads, uneven topic creation |
+| `rack-aware` | Consider rack placement for fault tolerance | Multi-rack/AZ deployments |
+
+**Example Configuration:**
+```json
+{
+  "partition": {
+    "distribution_strategy": "least-loaded",
+    "default_replication_factor": 3,
+    "default_partitions": 12,
+    "auto_rebalance_enabled": true,
+    "auto_rebalance_interval": 300,
+    "rebalance_threshold": 0.15
+  }
+}
+```
+
+**Message Partitioning vs Leader Distribution:**
+
+| Concept | What It Does | Configured By |
+|---------|--------------|---------------|
+| **Message Partitioning** | Determines which partition a message goes to | Message key (FNV-1a hash) or round-robin |
+| **Leader Distribution** | Determines which node is leader for each partition | `partition.distribution_strategy` |
+
+### Service Discovery (mDNS)
+
+FlyMQ supports automatic node discovery using mDNS (Bonjour/Avahi). When enabled, nodes advertise themselves on the local network and can automatically discover other FlyMQ nodes.
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `discovery.enabled` | `FLYMQ_DISCOVERY_ENABLED` | `false` | Enable mDNS service discovery |
+| `discovery.cluster_id` | `FLYMQ_DISCOVERY_CLUSTER_ID` | `""` | Cluster identifier for filtering (optional) |
+
+**How It Works:**
+
+1. **Service Advertisement**: Each node advertises itself as `_flymq._tcp.local.` with metadata including node ID, cluster address, and version.
+2. **Node Discovery**: Nodes can discover other FlyMQ instances on the same network segment.
+3. **Cluster Filtering**: Use `cluster_id` to filter discovery to specific clusters when multiple FlyMQ clusters exist on the same network.
+
+**Example Configuration:**
+```json
+{
+  "discovery": {
+    "enabled": true,
+    "cluster_id": "production-cluster"
+  }
+}
+```
+
+**Discovery Tool:**
+
+FlyMQ includes a standalone discovery tool for finding nodes:
+
+```bash
+# Discover FlyMQ nodes on the network
+flymq-discover
+
+# With custom timeout
+flymq-discover --timeout 10
+
+# JSON output for scripting
+flymq-discover --json
+
+# Just addresses (for scripting)
+flymq-discover --quiet
+```
+
+**Network Requirements:**
+- mDNS uses UDP port 5353 (multicast)
+- Nodes must be on the same network segment or have multicast routing enabled
+- Firewalls must allow mDNS traffic
 
 ## Schema Registry Configuration
 

@@ -448,6 +448,88 @@ type NodeStats struct {
 
 The leader collects stats from followers during heartbeats, enabling cluster-wide monitoring.
 
+### Partition-Level Leadership
+
+FlyMQ implements partition-level leadership for horizontal scaling, similar to Apache Kafka. Each partition has its own leader, allowing write load to be distributed across all cluster nodes.
+
+**Key Concepts:**
+
+1. **Message Partitioning** (client-side): Determines which partition a message goes to
+   - Key-based: `partition = FNV1a(key) % numPartitions`
+   - Round-robin: When no key is provided
+
+2. **Leader Distribution** (cluster-side): Determines which node leads each partition
+   - Configurable via `partition.distribution_strategy`
+
+**Leader Distribution Strategies:**
+
+```go
+// internal/cluster/distributor.go
+
+type PartitionDistributor interface {
+    AssignLeader(topic string, partition int, nodes []string) string
+    RebalanceLeaders(assignments map[string][]PartitionInfo) map[string][]PartitionMove
+}
+
+// Round-robin: Distribute evenly in order
+type RoundRobinDistributor struct{}
+
+func (d *RoundRobinDistributor) AssignLeader(topic string, partition int, nodes []string) string {
+    return nodes[partition % len(nodes)]
+}
+
+// Least-loaded: Assign to node with fewest leaders
+type LeastLoadedDistributor struct {
+    leaderCounts map[string]int
+}
+
+func (d *LeastLoadedDistributor) AssignLeader(topic string, partition int, nodes []string) string {
+    minCount := math.MaxInt
+    var minNode string
+    for _, node := range nodes {
+        if d.leaderCounts[node] < minCount {
+            minCount = d.leaderCounts[node]
+            minNode = node
+        }
+    }
+    d.leaderCounts[minNode]++
+    return minNode
+}
+```
+
+**Partition Metadata:**
+
+```go
+// internal/cluster/partition.go
+
+type PartitionInfo struct {
+    Topic      string
+    Partition  int
+    LeaderID   string
+    LeaderAddr string  // Client-facing address for direct routing
+    Replicas   []string
+    ISR        []string
+    Epoch      uint64
+}
+
+type PartitionManager struct {
+    mu          sync.RWMutex
+    assignments map[string][]PartitionInfo  // topic -> partitions
+    distributor PartitionDistributor
+}
+
+func (pm *PartitionManager) GetLeaderAddr(topic string, partition int) (string, error) {
+    pm.mu.RLock()
+    defer pm.mu.RUnlock()
+
+    partitions, ok := pm.assignments[topic]
+    if !ok || partition >= len(partitions) {
+        return "", ErrPartitionNotFound
+    }
+    return partitions[partition].LeaderAddr, nil
+}
+```
+
 ### Partition Replication
 
 Partitions are replicated across nodes for fault tolerance:

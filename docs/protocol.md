@@ -157,6 +157,43 @@ All payloads use consistent binary encoding:
 | `0x50` | CLUSTER_JOIN | Join a cluster |
 | `0x51` | CLUSTER_LEAVE | Leave cluster gracefully |
 | `0x52` | CLUSTER_STATUS | Get cluster status |
+| `0x53` | CLUSTER_METADATA | Get partition-to-node mappings for smart routing |
+
+**CLUSTER_METADATA Request:**
+```
+[uint16] topic length (0 = all topics)
+[bytes]  topic name (UTF-8, optional)
+```
+
+**CLUSTER_METADATA Response:**
+```
+[uint16] cluster_id length
+[bytes]  cluster_id (UTF-8)
+[uint32] topic count
+For each topic:
+  [uint16] topic length
+  [bytes]  topic name (UTF-8)
+  [uint32] partition count
+  For each partition:
+    [int32]  partition id
+    [uint16] leader_id length
+    [bytes]  leader_id (UTF-8)
+    [uint16] leader_addr length
+    [bytes]  leader_addr (UTF-8, e.g., "10.0.1.1:9092")
+    [uint64] epoch
+    [uint16] state length
+    [bytes]  state (UTF-8: "online", "offline", "reassigning", "syncing")
+    [uint32] replica count
+    For each replica:
+      [uint16] replica_id length
+      [bytes]  replica_id (UTF-8)
+    [uint32] isr count
+    For each ISR member:
+      [uint16] isr_id length
+      [bytes]  isr_id (UTF-8)
+```
+
+This enables smart clients to route produce/consume requests directly to partition leaders, avoiding proxy overhead and enabling true horizontal scaling.
 
 ### Consumer Group Operations (0x60-0x6F)
 

@@ -197,8 +197,14 @@ flymq-cli --version
 #### Standalone
 
 ```bash
-# Linux/macOS
+# Linux/macOS (JSON logs by default)
 flymq --config ~/.config/flymq/flymq.conf
+
+# With human-readable logs (for development)
+flymq --config ~/.config/flymq/flymq.conf -human-readable
+
+# Quiet mode: logs only, no banner (ideal for containers)
+flymq --config ~/.config/flymq/flymq.conf -quiet
 
 # Windows
 flymq --config %LOCALAPPDATA%\FlyMQ\config\flymq.conf

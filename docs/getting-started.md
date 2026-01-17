@@ -96,6 +96,29 @@ func main() {
 }
 ```
 
+### Interactive Installation (Recommended)
+
+The interactive installer provides a guided setup experience:
+
+```bash
+git clone https://github.com/firefly-oss/flymq
+cd flymq
+./install.sh
+```
+
+The installer will:
+1. Ask for deployment mode (standalone or cluster)
+2. For cluster mode: discover existing nodes via mDNS or accept manual peer entry
+3. Show a configuration summary with all settings
+4. Allow iterative modification of any section
+5. Build, install, and configure the system service
+
+**Quick install with defaults:**
+
+```bash
+./install.sh --yes
+```
+
 ### Standalone Server Mode
 
 For production deployments, run FlyMQ as a standalone server.
@@ -103,7 +126,14 @@ For production deployments, run FlyMQ as a standalone server.
 **Start the server:**
 
 ```bash
+# Default: JSON logs (ideal for production/log aggregators)
 flymq --config /etc/flymq/flymq.json
+
+# Human-readable logs (for development)
+flymq --config /etc/flymq/flymq.json -human-readable
+
+# Quiet mode: logs only, no banner (ideal for containers)
+flymq --config /etc/flymq/flymq.json -quiet
 ```
 
 **Example flymq.json:**
@@ -244,6 +274,79 @@ for {
     }
 }
 ```
+
+## Advanced Features
+
+FlyMQ supports several advanced messaging patterns out of the box.
+
+### Delayed Messages
+
+Schedule messages for future delivery:
+
+```bash
+# CLI: Deliver message after 5 seconds
+flymq-cli produce-delayed my-topic "Delayed message" 5000
+```
+
+```go
+// Go client
+offset, err := client.ProduceDelayed("my-topic", []byte("message"), 5000)
+```
+
+### Message TTL
+
+Set expiration time for messages:
+
+```bash
+# CLI: Message expires after 60 seconds
+flymq-cli produce-ttl my-topic "Expiring message" 60000
+```
+
+```go
+// Go client
+offset, err := client.ProduceWithTTL("my-topic", []byte("message"), 60000)
+```
+
+### Dead Letter Queue
+
+Handle failed messages:
+
+```bash
+# List DLQ messages
+flymq-cli dlq list my-topic
+
+# Replay a failed message
+flymq-cli dlq replay my-topic <message-id>
+
+# Purge all DLQ messages
+flymq-cli dlq purge my-topic
+```
+
+```go
+// Go client
+messages, err := client.FetchDLQ("my-topic", 100)
+err = client.ReplayDLQ("my-topic", messageID)
+err = client.PurgeDLQ("my-topic")
+```
+
+### Transactions
+
+Atomic multi-message operations:
+
+```bash
+# CLI: Produce multiple messages atomically
+flymq-cli txn my-topic "message1" "message2" "message3"
+```
+
+```go
+// Go client
+txn, err := client.BeginTransaction()
+txn.Produce("topic1", []byte("msg1"))
+txn.Produce("topic2", []byte("msg2"))
+err = txn.Commit()  // or txn.Rollback()
+```
+
+See the [API Reference](./api-reference.md) for complete documentation of these features.
 
 ## Next Steps
 

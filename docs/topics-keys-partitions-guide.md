@@ -69,6 +69,15 @@ An **offset** is a unique, sequential identifier for each message within a parti
 
 ## Partitioning Strategies
 
+FlyMQ has two distinct partitioning concepts:
+
+| Concept | Purpose | Where It Happens |
+|---------|---------|------------------|
+| **Message Partitioning** | Determines which partition a message goes to | Client-side |
+| **Leader Distribution** | Determines which node leads each partition | Cluster-side |
+
+This section covers **message partitioning**. For leader distribution (horizontal scaling), see the [Architecture documentation](architecture.md#partition-level-leadership-horizontal-scaling).
+
 ### 1. Key-Based Partitioning (Recommended)
 
 Use message keys when you need ordering guarantees for related messages.
@@ -80,8 +89,14 @@ Use message keys when you need ordering guarantees for related messages.
 
 **How it works:**
 ```
-partition = hash(key) % number_of_partitions
+partition = FNV1a_hash(key) % number_of_partitions
 ```
+
+FlyMQ uses FNV-1a hashing for consistent key-based partition assignment:
+- Fast computation with minimal CPU overhead
+- Good distribution properties for typical key patterns
+- Deterministic: same key always maps to same partition
+- Consistent across all SDKs (Go, Python, Java)
 
 ### 2. Explicit Partition Selection
 

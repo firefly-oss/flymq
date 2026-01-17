@@ -368,6 +368,77 @@ For each role:
 [bytes]  error message
 ```
 
+### CLUSTER_METADATA (0x53)
+
+Get partition-to-node mappings for smart client routing. This enables clients to route requests directly to partition leaders for optimal performance.
+
+**Request:**
+```
+[uint16] topic length (0 = all topics)
+[bytes]  topic name (UTF-8, optional)
+```
+
+**Response:**
+```
+[uint16] cluster_id length
+[bytes]  cluster_id (UTF-8)
+[uint32] topic count
+For each topic:
+  [uint16] topic length
+  [bytes]  topic name (UTF-8)
+  [uint32] partition count
+  For each partition:
+    [int32]  partition id
+    [uint16] leader_id length
+    [bytes]  leader_id (UTF-8)
+    [uint16] leader_addr length
+    [bytes]  leader_addr (UTF-8, e.g., "10.0.1.1:9092")
+    [uint64] epoch
+    [uint16] state length
+    [bytes]  state (UTF-8: "online", "offline", "reassigning", "syncing")
+    [uint32] replica count
+    For each replica:
+      [uint16] replica_id length
+      [bytes]  replica_id (UTF-8)
+    [uint32] isr count
+    For each ISR member:
+      [uint16] isr_id length
+      [bytes]  isr_id (UTF-8)
+```
+
+**Smart Client Routing:**
+
+SDKs should implement smart routing to send requests directly to partition leaders:
+
+1. **Fetch metadata** on startup and cache it
+2. **Determine partition** using key-based hashing (FNV-1a) or round-robin
+3. **Route to leader** using the cached partition-to-node mapping
+4. **Refresh metadata** on errors or periodically
+
+```python
+class SmartClient:
+    def __init__(self, bootstrap_servers):
+        self.metadata = {}
+        self.connections = {}
+        self._refresh_metadata()
+
+    def _refresh_metadata(self):
+        # Fetch CLUSTER_METADATA from any server
+        response = self._send_to_any(0x53, b"")
+        self.metadata = decode_cluster_metadata(response)
+
+    def produce(self, topic, key, value):
+        # Determine partition using FNV-1a hash
+        partition = fnv1a_hash(key) % len(self.metadata[topic])
+
+        # Get leader address for this partition
+        leader_addr = self.metadata[topic][partition]["leader_addr"]
+
+        # Send directly to leader
+        return self._send_to(leader_addr, 0x01,
+            encode_produce_request(topic, key, value, partition))
+```
+
 ## Encryption
 
 FlyMQ supports AES-256-GCM encryption for data-in-motion (client-side) that is compatible with server-side data-at-rest encryption.

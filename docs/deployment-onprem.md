@@ -77,12 +77,27 @@ cd flymq
 ./install.sh
 ```
 
-The installer prompts for:
-- Deployment mode (standalone or cluster)
-- Network settings (bind address, cluster address)
-- Storage configuration (data directory, segment size)
-- Security options (TLS, encryption, authentication)
-- Observability settings (metrics, health checks)
+**Installation Flow:**
+
+1. **Deployment Mode Selection** - Choose standalone or cluster mode first
+2. **Cluster Configuration** (if cluster mode):
+   - Bootstrap new cluster or join existing
+   - Automatic node discovery via mDNS (Bonjour/Avahi)
+   - Manual peer entry if discovery unavailable
+   - Connectivity validation to peer nodes
+3. **Configuration Summary** - Review all settings with iterative modification
+4. **Section Customization** - Modify any section (Deployment, Security, Advanced, Observability, Performance)
+5. **Installation** - Build, install, and configure systemd/launchd service
+
+**Configuration Sections:**
+
+| Section | Settings |
+|---------|----------|
+| **Deployment** | Mode, bind address, cluster address, peers, replication factor |
+| **Security** | TLS, encryption at rest, authentication, admin credentials |
+| **Advanced** | Schema validation, DLQ, TTL, delayed delivery, transactions |
+| **Observability** | Prometheus metrics, OpenTelemetry, health checks, Admin API |
+| **Performance** | Acks mode, segment size, log level |
 
 ### Cluster Setup with Installer
 
@@ -90,17 +105,51 @@ The installer prompts for:
 
 ```bash
 ./install.sh
-# Select: Cluster mode → Bootstrap (first node)
-# Note the cluster address (e.g., 192.168.1.100:9093)
+# 1. Select: Cluster mode
+# 2. Select: Bootstrap new cluster (first node)
+# 3. Configure cluster address (e.g., 192.168.1.100:9093)
+# 4. Enable service discovery (recommended)
+# 5. Review and confirm configuration
 ```
 
 **On additional nodes:**
 
 ```bash
 ./install.sh
-# Select: Cluster mode → Join existing cluster
-# Enter the bootstrap node address: 192.168.1.100:9093
+# 1. Select: Cluster mode
+# 2. Select: Join existing cluster
+# 3. Automatic discovery will find existing nodes (if mDNS enabled)
+#    OR manually enter peer address: 192.168.1.100:9093
+# 4. Connectivity validation runs automatically
+# 5. Review and confirm configuration
 ```
+
+### Automatic Node Discovery
+
+FlyMQ includes mDNS-based service discovery for automatic cluster node detection:
+
+```bash
+# Discover FlyMQ nodes on the network
+flymq-discover
+
+# Example output:
+# Found 2 FlyMQ node(s):
+#
+#   [1] node-1
+#       Cluster Address: 192.168.1.100:9093
+#       Client Address:  192.168.1.100:9092
+#       Cluster ID:      production
+#       Version:         1.0.0
+#
+#   [2] node-2
+#       Cluster Address: 192.168.1.101:9093
+#       Client Address:  192.168.1.101:9092
+```
+
+The installer uses this tool automatically when joining a cluster. If no nodes are found:
+- Ensure existing nodes have discovery enabled (`discovery.enabled: true`)
+- Check that mDNS/Bonjour is not blocked by firewall (UDP port 5353)
+- Fall back to manual peer entry
 
 ### Quick Install (Non-Interactive)
 
