@@ -1547,32 +1547,42 @@ print_post_install() {
     echo -e "  ${BOLD}FlyMQ v${FLYMQ_VERSION}${RESET} is ready to use!"
     echo ""
 
-    # Installation paths - compact
+    # Installation paths
+    echo -e "  ${CYAN}${BOLD}PATHS${RESET}"
     echo -e "  ${DIM}Binaries${RESET}       ${CYAN}$bin_dir${RESET}"
     echo -e "  ${DIM}Config${RESET}         ${CYAN}$config_dir/flymq.json${RESET}"
     echo -e "  ${DIM}Data${RESET}           ${CYAN}$CFG_DATA_DIR${RESET}"
     echo ""
 
-    # Features - only show enabled ones in a compact format
-    local enabled_features=""
-    [[ "$CFG_TLS_ENABLED" == "true" ]] && enabled_features+="TLS "
-    [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && enabled_features+="Encryption "
-    [[ "$CFG_AUTH_ENABLED" == "true" ]] && enabled_features+="Auth "
-    [[ "$CFG_METRICS_ENABLED" == "true" ]] && enabled_features+="Metrics "
-    [[ "$CFG_HEALTH_ENABLED" == "true" ]] && enabled_features+="Health "
-    [[ "$CFG_ADMIN_ENABLED" == "true" ]] && enabled_features+="Admin "
-    [[ "$CFG_SCHEMA_ENABLED" == "true" ]] && enabled_features+="Schema "
-    [[ "$CFG_DLQ_ENABLED" == "true" ]] && enabled_features+="DLQ "
-    [[ "$CFG_DELAYED_ENABLED" == "true" ]] && enabled_features+="Delayed "
-    [[ "$CFG_TXN_ENABLED" == "true" ]] && enabled_features+="Transactions "
-    [[ "$CFG_DISCOVERY_ENABLED" == "true" ]] && enabled_features+="mDNS "
-    [[ "$CFG_TRACING_ENABLED" == "true" ]] && enabled_features+="Tracing "
-    [[ "$CFG_AUDIT_ENABLED" == "true" ]] && enabled_features+="Audit "
+    # Features - Grouped
+    echo -e "  ${CYAN}${BOLD}ENABLED FEATURES${RESET}"
 
-    if [[ -n "$enabled_features" ]]; then
-        echo -e "  ${DIM}Features${RESET}       ${GREEN}${enabled_features}${RESET}"
-        echo ""
-    fi
+    local messaging=""
+    [[ "$CFG_SCHEMA_ENABLED" == "true" ]] && messaging+="Schema(Validation) "
+    [[ "$CFG_DLQ_ENABLED" == "true" ]] && messaging+="DLQ "
+    [[ "$CFG_DELAYED_ENABLED" == "true" ]] && messaging+="Delayed "
+    [[ "$CFG_TXN_ENABLED" == "true" ]] && messaging+="Transactions "
+
+    local observability=""
+    [[ "$CFG_METRICS_ENABLED" == "true" ]] && observability+="Metrics(Prometheus) "
+    [[ "$CFG_HEALTH_ENABLED" == "true" ]] && observability+="Health "
+    [[ "$CFG_ADMIN_ENABLED" == "true" ]] && observability+="Admin(API) "
+    [[ "$CFG_TRACING_ENABLED" == "true" ]] && observability+="Tracing "
+    [[ "$CFG_AUDIT_ENABLED" == "true" ]] && observability+="Audit "
+
+    local security=""
+    [[ "$CFG_TLS_ENABLED" == "true" ]] && security+="TLS(Encrypted) "
+    [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && security+="Encryption(At-Rest) "
+    [[ "$CFG_AUTH_ENABLED" == "true" ]] && security+="Auth(RBAC) "
+
+    local discovery=""
+    [[ "$CFG_DISCOVERY_ENABLED" == "true" ]] && discovery+="mDNS(Discovery) "
+
+    [[ -n "$messaging" ]] && echo -e "  ${DIM}Messaging${RESET}      ${GREEN}${messaging}${RESET}"
+    [[ -n "$observability" ]] && echo -e "  ${DIM}Observability${RESET}  ${GREEN}${observability}${RESET}"
+    [[ -n "$security" ]] && echo -e "  ${DIM}Security${RESET}       ${GREEN}${security}${RESET}"
+    [[ -n "$discovery" ]] && echo -e "  ${DIM}Discovery${RESET}      ${GREEN}${discovery}${RESET}"
+    echo ""
 
     # Quick Start
     echo -e "  ${CYAN}${BOLD}QUICK START${RESET}"
@@ -1614,10 +1624,8 @@ print_post_install() {
     echo -e "  flymq-cli subscribe my-topic"
     echo ""
 
-    # Endpoints - compact
-    local has_endpoints=false
+    # Endpoints
     if [[ "$CFG_METRICS_ENABLED" == "true" ]] || [[ "$CFG_HEALTH_ENABLED" == "true" ]] || [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
-        has_endpoints=true
         echo -e "  ${CYAN}${BOLD}ENDPOINTS${RESET}"
         echo ""
         echo -e "  ${DIM}Client${RESET}         localhost${CFG_BIND_ADDR}"
@@ -1627,7 +1635,7 @@ print_post_install() {
         echo ""
     fi
 
-    # Credentials - important, highlighted
+    # Credentials
     if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
         echo -e "  ${YELLOW}${BOLD}⚠ SAVE THESE CREDENTIALS${RESET}"
         echo ""

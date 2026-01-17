@@ -357,14 +357,14 @@ func printSecurityInfo(w io.Writer, cfg *config.Config) {
 
 	// TLS
 	if cfg.Security.TLSEnabled {
-		items = append(items, fmtEnabled("TLS", true))
+		items = append(items, fmtEnabled("TLS (Encrypted Transport)", true))
 	} else {
-		items = append(items, fmtKV("TLS", AnsiYellow+"off"+AnsiReset))
+		items = append(items, fmtKV("TLS", AnsiYellow+"off"+AnsiReset+" (Unencrypted)"))
 	}
 
 	// Encryption
 	if cfg.Security.EncryptionEnabled {
-		items = append(items, fmtEnabled("Encryption", true))
+		items = append(items, fmtEnabled("Data-at-Rest Encryption", true))
 	} else {
 		items = append(items, fmtDisabled("Encryption"))
 	}
@@ -373,11 +373,11 @@ func printSecurityInfo(w io.Writer, cfg *config.Config) {
 	if cfg.Auth.Enabled {
 		authStr := "Auth"
 		if cfg.Auth.RBACEnabled {
-			authStr = "Auth+RBAC"
+			authStr = "Auth+RBAC (Access Control)"
 		}
 		items = append(items, fmtEnabled(authStr, true))
 	} else {
-		items = append(items, fmtKV("Auth", AnsiYellow+"off"+AnsiReset))
+		items = append(items, fmtKV("Auth", AnsiYellow+"off"+AnsiReset+" (Public Access)"))
 	}
 
 	// Print in columns
@@ -390,93 +390,79 @@ func printSecurityInfo(w io.Writer, cfg *config.Config) {
 		col1 := fmtKV("Admin", cfg.Auth.AdminUsername)
 		var col2 string
 		if cfg.Auth.AllowAnonymous {
-			col2 = fmtKV("Anonymous", AnsiYellow+"allowed"+AnsiReset)
+			col2 = fmtKV("Anonymous", AnsiYellow+"allowed"+AnsiReset+" (Read-only)")
 		} else {
 			col2 = fmtKV("Anonymous", "denied")
 		}
 		col3 := fmtKV("Public Topics", fmt.Sprintf("%v", cfg.Auth.DefaultPublic))
 		if cfg.Auth.AllowAnonymous && !cfg.Auth.DefaultPublic {
 			col3 += " " + AnsiYellow + "(Anonymous cannot access private topics)" + AnsiReset
+		} else if cfg.Auth.DefaultPublic {
+			col3 += " " + AnsiYellow + "(Available to everyone by default)" + AnsiReset
 		}
 		printRow3(w, col1, col2, col3)
 	}
 }
 
 func printFeaturesInfo(w io.Writer, cfg *config.Config) {
-	// Build feature list as compact items
-	var enabled []string
+	// Group features for better organization
+	type feature struct {
+		name    string
+		enabled bool
+		desc    string
+	}
+
+	messaging := []feature{
+		{"Schema", cfg.Schema.Enabled, "Validation"},
+		{"DLQ", cfg.DLQ.Enabled, fmt.Sprintf("%d retries", cfg.DLQ.MaxRetries)},
+		{"TTL", cfg.TTL.DefaultTTL > 0, fmt.Sprintf("%ds expiry", cfg.TTL.DefaultTTL)},
+		{"Delayed", cfg.Delayed.Enabled, "Scheduling"},
+		{"Transactions", cfg.Transaction.Enabled, "ACID"},
+	}
+
+	observability := []feature{
+		{"Audit", cfg.Audit.Enabled, "Security Logs"},
+		{"Tracing", cfg.Observability.Tracing.Enabled, "OpenTelemetry"},
+		{"Metrics", cfg.Observability.Metrics.Enabled, "Prometheus"},
+		{"Health", cfg.Observability.Health.Enabled, "Liveness/Readiness"},
+		{"Admin", cfg.Observability.Admin.Enabled, "API/Management"},
+	}
+
+	discovery := []feature{
+		{"mDNS", cfg.Discovery.Enabled, "Auto-discovery"},
+	}
+
+	printFeatureGroup := func(title string, features []feature) {
+		var enabledStrs []string
+		for _, f := range features {
+			if f.enabled {
+				enabledStrs = append(enabledStrs, fmt.Sprintf("%s (%s)", f.name, f.desc))
+			}
+		}
+
+		if len(enabledStrs) > 0 {
+			fmt.Fprintf(w, "  %-14s %s%s%s\n",
+				AnsiDim+title+":"+AnsiReset,
+				AnsiGreen, strings.Join(enabledStrs, ", "), AnsiReset)
+		}
+	}
+
+	printFeatureGroup("Messaging", messaging)
+	printFeatureGroup("Observability", observability)
+	printFeatureGroup("Discovery", discovery)
+
+	// Print disabled features compactly at the end
 	var disabled []string
-
-	if cfg.Schema.Enabled {
-		enabled = append(enabled, "Schema")
-	} else {
-		disabled = append(disabled, "Schema")
+	allFeatures := append(messaging, observability...)
+	allFeatures = append(allFeatures, discovery...)
+	for _, f := range allFeatures {
+		if !f.enabled {
+			disabled = append(disabled, f.name)
+		}
 	}
 
-	if cfg.DLQ.Enabled {
-		enabled = append(enabled, fmt.Sprintf("DLQ(%d retries)", cfg.DLQ.MaxRetries))
-	} else {
-		disabled = append(disabled, "DLQ")
-	}
-
-	if cfg.TTL.DefaultTTL > 0 {
-		enabled = append(enabled, fmt.Sprintf("TTL(%ds)", cfg.TTL.DefaultTTL))
-	}
-
-	if cfg.Delayed.Enabled {
-		enabled = append(enabled, "Delayed")
-	} else {
-		disabled = append(disabled, "Delayed")
-	}
-
-	if cfg.Transaction.Enabled {
-		enabled = append(enabled, "Transactions")
-	} else {
-		disabled = append(disabled, "Transactions")
-	}
-
-	if cfg.Audit.Enabled {
-		enabled = append(enabled, "Audit")
-	} else {
-		disabled = append(disabled, "Audit")
-	}
-
-	if cfg.Observability.Tracing.Enabled {
-		enabled = append(enabled, "Tracing")
-	} else {
-		disabled = append(disabled, "Tracing")
-	}
-
-	if cfg.Observability.Metrics.Enabled {
-		enabled = append(enabled, "Metrics")
-	} else {
-		disabled = append(disabled, "Metrics")
-	}
-
-	if cfg.Observability.Health.Enabled {
-		enabled = append(enabled, "Health")
-	} else {
-		disabled = append(disabled, "Health")
-	}
-
-	if cfg.Observability.Admin.Enabled {
-		enabled = append(enabled, "Admin")
-	} else {
-		disabled = append(disabled, "Admin")
-	}
-
-	if cfg.Discovery.Enabled {
-		enabled = append(enabled, "mDNS")
-	} else {
-		disabled = append(disabled, "mDNS")
-	}
-
-	// Print enabled features
-	if len(enabled) > 0 {
-		fmt.Fprintf(w, "  %sEnabled:%s  %s%s%s\n", AnsiDim, AnsiReset, AnsiGreen, strings.Join(enabled, ", "), AnsiReset)
-	}
 	if len(disabled) > 0 {
-		fmt.Fprintf(w, "  %sDisabled:%s %s\n", AnsiDim, AnsiReset, AnsiDim+strings.Join(disabled, ", ")+AnsiReset)
+		fmt.Fprintf(w, "  %-14s %s\n", AnsiDim+"Disabled:"+AnsiReset, AnsiDim+strings.Join(disabled, ", ")+AnsiReset)
 	}
 }
 
@@ -522,37 +508,37 @@ func printPerformanceInfo(w io.Writer, cfg *config.Config) {
 	acksStr := cfg.Performance.Acks
 	switch cfg.Performance.Acks {
 	case "all":
-		acksStr = "all (safest)"
+		acksStr = AnsiGreen + "all (safest)" + AnsiReset
 	case "leader":
-		acksStr = "leader (balanced)"
+		acksStr = AnsiGreen + "leader (balanced)" + AnsiReset
 	case "none":
-		acksStr = "none (fastest)"
+		acksStr = AnsiYellow + "none (fastest)" + AnsiReset
 	}
 	col1 := fmtKV("Acks", acksStr)
-	col2 := fmtKV("Sync", fmt.Sprintf("%dms/%d msgs", cfg.Performance.SyncIntervalMs, cfg.Performance.SyncBatchSize))
-	col3 := fmtKV("Workers", fmt.Sprintf("%d", cfg.Performance.NumIOWorkers))
+	col2 := fmtKV("Storage", fmt.Sprintf("%dms sync / %d msgs batch", cfg.Performance.SyncIntervalMs, cfg.Performance.SyncBatchSize))
+	col3 := fmtKV("I/O Workers", fmt.Sprintf("%d", cfg.Performance.NumIOWorkers))
 	printRow3(w, col1, col2, col3)
 
 	// Row 2: I/O features
 	var ioFeatures []string
 	if cfg.Performance.AsyncIO {
-		ioFeatures = append(ioFeatures, "AsyncIO")
+		ioFeatures = append(ioFeatures, AnsiGreen+"AsyncIO"+AnsiReset)
 	}
 	if cfg.Performance.ZeroCopy {
-		ioFeatures = append(ioFeatures, "ZeroCopy")
+		ioFeatures = append(ioFeatures, AnsiGreen+"ZeroCopy"+AnsiReset)
 	}
 	if cfg.Performance.BinaryProtocol {
-		ioFeatures = append(ioFeatures, "Binary")
+		ioFeatures = append(ioFeatures, AnsiGreen+"Binary"+AnsiReset)
 	}
 
-	col1 = fmtKV("I/O", strings.Join(ioFeatures, "+"))
-	col2 = fmtKV("Buffer", formatBytes(int64(cfg.Performance.WriteBufferSize)))
+	col1 = fmtKV("Optimizations", strings.Join(ioFeatures, "+"))
+	col2 = fmtKV("Write Buffer", formatBytes(int64(cfg.Performance.WriteBufferSize)))
 
 	// Compression
 	if cfg.Performance.Compression != "" && cfg.Performance.Compression != "none" {
-		col3 = fmtKV("Compress", fmt.Sprintf("%s(L%d)", strings.ToUpper(cfg.Performance.Compression), cfg.Performance.CompressionLevel))
+		col3 = fmtKV("Compression", fmt.Sprintf("%s%s (L%d)%s", AnsiGreen, strings.ToUpper(cfg.Performance.Compression), cfg.Performance.CompressionLevel, AnsiReset))
 	} else {
-		col3 = fmtKV("Compress", AnsiDim+"off"+AnsiReset)
+		col3 = fmtKV("Compression", AnsiDim+"off"+AnsiReset)
 	}
 	printRow3(w, col1, col2, col3)
 
