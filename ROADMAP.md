@@ -2,7 +2,7 @@
 
 This document outlines the planned features and improvements for FlyMQ.
 
-## Current Status (v1.26.9)
+## Current Status (v1.26.10)
 
 The following features are implemented and available:
 
@@ -21,6 +21,9 @@ The following features are implemented and available:
 - ✅ Batch fetch for efficient message consumption
 - ✅ Key-based message partitioning (Kafka-style)
 - ✅ **Kafka-style RecordMetadata** - All produce operations return complete metadata
+- ✅ **Best-in-Class Topic Filtering** - Pattern-based subscriptions (MQTT-style: `+`, `#`)
+- ✅ **Server-Side Filtering** - Content-based message filtering on the broker
+- ✅ **Interactive Topic Explorer** - Dashboard for cluster/topic inspection
 
 ### Authentication & Security
 - ✅ Username/password authentication with bcrypt hashing
@@ -57,6 +60,7 @@ The following features are implemented and available:
 - ✅ Message TTL and expiration
 - ✅ Delayed message delivery
 - ✅ Transaction support (exactly-once semantics)
+- ✅ **Typed SerDe System** - Pluggable encoders/decoders for multiple payload formats
 
 ### Observability
 - ✅ Prometheus metrics endpoint
@@ -70,10 +74,14 @@ The following features are implemented and available:
 - ✅ Python SDK (`pyflymq`) with authentication, consumer groups, and encryption
 - ✅ Java SDK with Spring Boot and WebFlux integration
 - ✅ **High-Level APIs** - Kafka-like `producer()` and `consumer()` patterns
+- ✅ **Multi-Partition Aware** - High-level consumers automatically discover and consume from all partitions
 - ✅ **RecordMetadata** - Complete metadata returned from all produce operations
 - ✅ **connect() Factory** - One-liner connection in Python and Java
 - ✅ **Enhanced Exceptions** - Errors with hints and actionable suggestions
 - ✅ **Cluster Metadata API** - `get_cluster_metadata()` for smart partition routing
+- ✅ **Server-Side Filtering Support** - Content filters in all SDK consumers
+- ✅ **Advanced SerDe Support** - Typed objects with JSON/String/Binary encoders
+- ✅ **Java ConsumerGroup** - High-level pattern subscription support with multi-partition awareness
 
 ### Deployment & Operations
 - ✅ Interactive installer for Linux, macOS, Windows

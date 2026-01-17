@@ -5,6 +5,43 @@ All notable changes to FlyMQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January 2026, Patch 1).
 
+## [1.26.10] - 2026-01-17
+
+### Added
+
+#### Best-in-Class Topic & Message Filtering
+- **Trie-based Topic Matcher** - Highly efficient MQTT-style wildcard matching (`+`, `#`) for topic subscriptions.
+- **Server-Side Filtering** - Broker now performs efficient message content filtering before transmission, reducing network overhead.
+- **Multi-Partition High-Level Consumers** - Go, Java, and Python SDKs now support automatic partition discovery and consumption for all topic partitions.
+- **Management API Support** - `getLag()` and `resetOffsets()` now work across all partitions in Java and Python high-level consumers.
+- **SDK Support** - All official SDKs updated to support topic patterns, multi-partition high-level consumers, and server-side filters.
+- **CLI Flags** - Added `--filter` flag to `consume` and `subscribe` commands for content-based message filtering.
+
+#### Enhanced SerDe (Serializer/Deserializer) System
+- **Plug-and-Play SerDes** - Unified system for handling multiple payload formats (JSON, String, Binary).
+- **Built-in Encoders/Decoders** - Ready-to-use support for common data types in all SDKs.
+- **Centralized Default** - `DefaultSerDe` now configurable at the server level, defaulting to `binary` for performance.
+- **CLI Integration** - New `--encoder` and `--decoder` flags for `produce` and `consume` operations.
+- **Pretty-Printed JSON in Explorer** - Interactive explorer now supports JSON decoding and pretty-printing of message payloads.
+
+#### Interactive Topic Explorer
+- **`flymq-cli explore`** - New interactive dashboard for cluster and topic inspection.
+- **Message Browser** - Navigate through messages with offset jumping, partition selection, and live filtering.
+- **SerDe Integration** - Explorer honors `--decoder` flag for rich message display (e.g., pretty JSON).
+- **Live Tail** - Real-time message streaming with interactive controls and multi-partition support.
+- **Manual Management** - Inspect partition metadata and manually commit offsets for consumer groups.
+
+#### SDK Enhancements
+- **Java ConsumerGroup** - High-level `ConsumerGroup` class for multi-topic pattern subscriptions.
+- **Python High-Level API** - Improved `connect()` and high-level producers/consumers with SerDe support.
+- **Go Client Extensions** - Added `ProduceObject` and `SetSerde` for typed message handling.
+
+### Changed
+- **Installation Defaults** - Updated `install.sh` to include best-in-class default configurations for new features.
+- **Protocol Optimization** - Fetch requests now include optional filter fields for server-side processing.
+
+---
+
 ## [1.26.9] - 2026-01-17
 
 ### Added
@@ -445,6 +482,7 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ---
 
+[1.26.10]: https://github.com/firefly-oss/flymq/compare/v1.26.9...v1.26.10
 [1.26.9]: https://github.com/firefly-oss/flymq/compare/v1.26.8...v1.26.9
 [1.26.8]: https://github.com/firefly-oss/flymq/compare/v1.26.7...v1.26.8
 [1.26.7]: https://github.com/firefly-oss/flymq/compare/v1.26.6...v1.26.7

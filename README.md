@@ -55,6 +55,9 @@ and enterprise-grade security features.
 - **Partition Reassignment** - Dynamic load balancing across nodes
 
 ### Advanced Messaging
+- **Best-in-Class Topic Filtering** - Pattern-based subscriptions using Trie-based matching (MQTT-style: `+`, `#`)
+- **Typed SerDe System** - Efficiently handle multiple payload formats (JSON, String, Binary) with built-in Encoders/Decoders
+- **Interactive Topic Explorer** - Powerful CLI tool to browse topics, navigate messages, and manage offsets interactively
 - **Message Schemas** - JSON Schema, Avro, and Protobuf validation
 - **Dead Letter Queues** - Failed message routing with retry policies
 - **Message TTL** - Time-based message expiration
@@ -847,13 +850,14 @@ flymq-cli create <topic> [--partitions N]
 flymq-cli delete <topic>
 flymq-cli topics                    # List all topics
 flymq-cli info <topic>              # Topic details
+flymq-cli explore                   # Interactive topic explorer (Metadata, Messages, Filter, Commit)
 
 # Producing messages
-flymq-cli produce <topic> <message> [--key KEY]
+flymq-cli produce <topic> <message> [--key KEY] [--encoder json|string|binary]
 
 # Consuming messages
-flymq-cli consume <topic> [--offset N] [--count N] [--show-key]
-flymq-cli subscribe <topic> [--group GROUP] [--from earliest|latest] [--show-key]
+flymq-cli consume <topic> [--offset N] [--count N] [--show-key] [--decoder json|string|binary] [--filter PATTERN]
+flymq-cli subscribe <topic> [--group GROUP] [--from earliest|latest] [--show-key] [--filter PATTERN]
 
 # Consumer groups
 flymq-cli groups list               # List all groups
@@ -955,6 +959,27 @@ for _, m := range messages {
     fmt.Printf("Offset %d: key=%s value=%s\n", m.Offset, m.Key, m.Value)
 }
 
+// Best-in-Class Topic Filtering (MQTT-style)
+// Subscribe to a pattern: 'sensors/+/temp' or 'logs/#'
+consumer := c.Consumer([]string{"sensors/+/temp"}, client.DefaultConsumerConfig("temp-mon"))
+
+// Server-Side Content Filtering
+// Only fetch messages containing "ERROR" (regex supported)
+config := client.DefaultConsumerConfig("error-mon")
+config.Filter = "ERROR"
+consumerWithFilter := c.Consumer([]string{"app-logs"}, config)
+
+// Typed SerDe System
+type User struct {
+    ID   int    `json:"id"`
+    Name string `json:"name"`
+}
+c.SetSerde("json")
+meta, err = c.ProduceObject("users", User{ID: 1, Name: "Alice"})
+// On consumer side:
+// var user User
+// err = consumer.Decode(msg.Value, &user)
+
 // With authentication and encryption
 c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
     Username:      "admin",
@@ -993,6 +1018,24 @@ with client.producer(batch_size=100) as producer:
 with client.consumer("events", "my-group") as consumer:
     for msg in consumer:
         print(f"Key: {msg.key}, Value: {msg.decode()}")
+
+# Best-in-Class Topic Filtering
+# Subscribe to patterns: 'sensors/+/temp' or 'logs/#'
+with client.consumer(["sensors/+/temp"], "temp-mon") as consumer:
+    for msg in consumer:
+        print(f"Topic: {msg.topic}, Temp: {msg.decode()}")
+
+# Server-Side Content Filtering
+with client.consumer("app-logs", "error-mon", filter="ERROR") as consumer:
+    for msg in consumer:
+        print(f"Error Log: {msg.decode()}")
+
+# Typed SerDe System
+from pyflymq.serde import JSONSerializer, JSONDeserializer
+client.set_serde("json")
+client.produce("users", {"id": 1, "name": "Alice"})
+# On consumer side:
+# user = msg.decode() # returns dict automatically if serde is json
 
 client.close()
 ```
@@ -1111,6 +1154,28 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
             System.out.println("Key: " + msg.keyAsString() + ", Value: " + msg.dataAsString());
         }
     }
+
+    // Best-in-Class Topic Filtering
+    // Subscribe to patterns: 'sensors/+/temp' or 'logs/#'
+    try (var cg = client.consumerGroup(List.of("sensors/+/temp"), "temp-mon")) {
+        for (var msg : cg.poll(Duration.ofSeconds(1))) {
+            System.out.println("Topic: " + msg.topic() + ", Temp: " + msg.dataAsString());
+        }
+    }
+
+    // Server-Side Content Filtering
+    var config = new ConsumerConfig().filter("ERROR");
+    try (var consumer = client.consumer(List.of("app-logs"), "error-mon", config)) {
+        for (var msg : consumer.poll(Duration.ofSeconds(1))) {
+            System.out.println("Error: " + msg.dataAsString());
+        }
+    }
+
+    // Typed SerDe System
+    client.setSerde(Serdes.JSON);
+    client.produce("users", new User(1, "Alice"));
+    // On consumer side:
+    // User user = msg.decode(User.class);
 }
 ```
 
