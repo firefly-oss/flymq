@@ -766,3 +766,237 @@ func TestACLCommandEncodeDecode(t *testing.T) {
 func boolPtr(b bool) *bool {
 	return &b
 }
+
+// ============================================================================
+// Partition Distribution Tests
+// ============================================================================
+
+func TestPartitionDistributor_ComputeDistribution(t *testing.T) {
+	// Create a partition manager
+	pm, err := NewPartitionManager("test-node", t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create partition manager: %v", err)
+	}
+
+	distributor := NewPartitionDistributor(pm)
+
+	tests := []struct {
+		name              string
+		topic             string
+		numPartitions     int
+		nodes             []string
+		replicationFactor int
+		wantLeaders       map[string]int // expected leader count per node
+	}{
+		{
+			name:              "3 partitions across 3 nodes",
+			topic:             "test-topic",
+			numPartitions:     3,
+			nodes:             []string{"node1", "node2", "node3"},
+			replicationFactor: 3,
+			wantLeaders:       map[string]int{"node1": 1, "node2": 1, "node3": 1},
+		},
+		{
+			name:              "6 partitions across 3 nodes",
+			topic:             "test-topic",
+			numPartitions:     6,
+			nodes:             []string{"node1", "node2", "node3"},
+			replicationFactor: 3,
+			wantLeaders:       map[string]int{"node1": 2, "node2": 2, "node3": 2},
+		},
+		{
+			name:              "5 partitions across 3 nodes (uneven)",
+			topic:             "test-topic",
+			numPartitions:     5,
+			nodes:             []string{"node1", "node2", "node3"},
+			replicationFactor: 2,
+			wantLeaders:       map[string]int{"node1": 2, "node2": 2, "node3": 1},
+		},
+		{
+			name:              "single node cluster",
+			topic:             "test-topic",
+			numPartitions:     3,
+			nodes:             []string{"node1"},
+			replicationFactor: 1,
+			wantLeaders:       map[string]int{"node1": 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := distributor.ComputeDistribution(tt.topic, tt.numPartitions, tt.nodes, tt.replicationFactor)
+
+			if len(plan.Assignments) != tt.numPartitions {
+				t.Errorf("Got %d assignments, want %d", len(plan.Assignments), tt.numPartitions)
+			}
+
+			// Count leaders per node
+			leaderCounts := make(map[string]int)
+			for _, assignment := range plan.Assignments {
+				leaderCounts[assignment.Leader]++
+
+				// Verify replicas include leader
+				hasLeader := false
+				for _, replica := range assignment.Replicas {
+					if replica == assignment.Leader {
+						hasLeader = true
+						break
+					}
+				}
+				if !hasLeader {
+					t.Errorf("Partition %d replicas don't include leader %s", assignment.Partition, assignment.Leader)
+				}
+
+				// Verify replication factor
+				expectedRF := tt.replicationFactor
+				if expectedRF > len(tt.nodes) {
+					expectedRF = len(tt.nodes)
+				}
+				if len(assignment.Replicas) != expectedRF {
+					t.Errorf("Partition %d has %d replicas, want %d", assignment.Partition, len(assignment.Replicas), expectedRF)
+				}
+			}
+
+			// Verify leader distribution
+			for node, wantCount := range tt.wantLeaders {
+				if leaderCounts[node] != wantCount {
+					t.Errorf("Node %s has %d leaders, want %d", node, leaderCounts[node], wantCount)
+				}
+			}
+		})
+	}
+}
+
+func TestPartitionDistributor_IsBalanced(t *testing.T) {
+	pm, err := NewPartitionManager("test-node", t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create partition manager: %v", err)
+	}
+
+	// Create some assignments
+	_ = pm.CreateAssignment("topic1", 0, "node1", []string{"node1", "node2"})
+	_ = pm.CreateAssignment("topic1", 1, "node2", []string{"node2", "node3"})
+	_ = pm.CreateAssignment("topic1", 2, "node3", []string{"node3", "node1"})
+
+	distributor := NewPartitionDistributor(pm)
+
+	// Should be balanced with 3 nodes (1 leader each)
+	if !distributor.IsBalanced([]string{"node1", "node2", "node3"}) {
+		t.Error("Expected balanced distribution")
+	}
+
+	// Add another partition to node1 (now unbalanced)
+	_ = pm.CreateAssignment("topic1", 3, "node1", []string{"node1", "node2"})
+
+	// Still balanced because 4/3 = 1 with remainder 1, so max is 2
+	if !distributor.IsBalanced([]string{"node1", "node2", "node3"}) {
+		t.Error("Expected balanced distribution with 4 partitions across 3 nodes")
+	}
+
+	// Add two more to node1 (now definitely unbalanced)
+	_ = pm.CreateAssignment("topic1", 4, "node1", []string{"node1", "node2"})
+	_ = pm.CreateAssignment("topic1", 5, "node1", []string{"node1", "node2"})
+
+	// Now node1 has 4, others have 1 each - unbalanced
+	if distributor.IsBalanced([]string{"node1", "node2", "node3"}) {
+		t.Error("Expected unbalanced distribution")
+	}
+}
+
+func TestPartitionDistributor_GetLeaderDistribution(t *testing.T) {
+	pm, err := NewPartitionManager("test-node", t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create partition manager: %v", err)
+	}
+
+	// Create assignments
+	_ = pm.CreateAssignment("topic1", 0, "node1", []string{"node1"})
+	_ = pm.CreateAssignment("topic1", 1, "node1", []string{"node1"})
+	_ = pm.CreateAssignment("topic1", 2, "node2", []string{"node2"})
+	_ = pm.CreateAssignment("topic2", 0, "node3", []string{"node3"})
+
+	distributor := NewPartitionDistributor(pm)
+	distribution := distributor.GetLeaderDistribution()
+
+	if distribution["node1"] != 2 {
+		t.Errorf("node1 has %d leaders, want 2", distribution["node1"])
+	}
+	if distribution["node2"] != 1 {
+		t.Errorf("node2 has %d leaders, want 1", distribution["node2"])
+	}
+	if distribution["node3"] != 1 {
+		t.Errorf("node3 has %d leaders, want 1", distribution["node3"])
+	}
+}
+
+func TestPartitionManager_GetPartitionLeader(t *testing.T) {
+	pm, err := NewPartitionManager("test-node", t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create partition manager: %v", err)
+	}
+
+	// Create an assignment with address
+	err = pm.CreateAssignmentWithAddr("test-topic", 0, "leader-node", "localhost:9092",
+		[]string{"leader-node", "replica1"}, map[string]string{"replica1": "localhost:9093"})
+	if err != nil {
+		t.Fatalf("Failed to create assignment: %v", err)
+	}
+
+	// Get the leader info
+	info, ok := pm.GetPartitionLeader("test-topic", 0)
+	if !ok {
+		t.Fatal("Expected to find partition leader")
+	}
+
+	if info.LeaderID != "leader-node" {
+		t.Errorf("LeaderID = %s, want leader-node", info.LeaderID)
+	}
+	if info.LeaderAddr != "localhost:9092" {
+		t.Errorf("LeaderAddr = %s, want localhost:9092", info.LeaderAddr)
+	}
+	if info.Topic != "test-topic" {
+		t.Errorf("Topic = %s, want test-topic", info.Topic)
+	}
+	if info.Partition != 0 {
+		t.Errorf("Partition = %d, want 0", info.Partition)
+	}
+
+	// Test non-existent partition
+	_, ok = pm.GetPartitionLeader("test-topic", 99)
+	if ok {
+		t.Error("Expected not to find non-existent partition")
+	}
+}
+
+func TestPartitionManager_UpdateLeader(t *testing.T) {
+	pm, err := NewPartitionManager("test-node", t.TempDir())
+	if err != nil {
+		t.Fatalf("Failed to create partition manager: %v", err)
+	}
+
+	// Create initial assignment
+	err = pm.CreateAssignmentWithAddr("test-topic", 0, "node1", "localhost:9092",
+		[]string{"node1", "node2"}, map[string]string{"node2": "localhost:9093"})
+	if err != nil {
+		t.Fatalf("Failed to create assignment: %v", err)
+	}
+
+	// Update leader with address
+	err = pm.UpdateLeaderWithAddr("test-topic", 0, "node2", "localhost:9093")
+	if err != nil {
+		t.Fatalf("Failed to update leader: %v", err)
+	}
+
+	// Verify the update
+	info, ok := pm.GetPartitionLeader("test-topic", 0)
+	if !ok {
+		t.Fatal("Expected to find partition leader")
+	}
+
+	if info.LeaderID != "node2" {
+		t.Errorf("LeaderID = %s, want node2", info.LeaderID)
+	}
+	if info.LeaderAddr != "localhost:9093" {
+		t.Errorf("LeaderAddr = %s, want localhost:9093", info.LeaderAddr)
+	}
+}

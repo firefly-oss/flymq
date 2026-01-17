@@ -3695,3 +3695,315 @@ func DecodeBinaryClusterJoinRequest(data []byte) (*BinaryClusterJoinRequest, err
 	return &BinaryClusterJoinRequest{Peer: req.Value}, nil
 }
 
+// ============================================================================
+// Cluster Metadata Protocol for Partition Routing (Horizontal Scaling)
+// ============================================================================
+
+// BinaryClusterMetadataRequest requests partition-to-node mappings.
+// If Topic is empty, returns metadata for all topics.
+type BinaryClusterMetadataRequest struct {
+	Topic string // Optional: specific topic, or empty for all topics
+}
+
+// PartitionMetadata contains routing info for a single partition.
+type PartitionMetadata struct {
+	Partition  int32    // Partition number
+	LeaderID   string   // Node ID of the partition leader
+	LeaderAddr string   // Client-facing address of the leader (host:port)
+	Epoch      uint64   // Leader epoch for fencing stale requests
+	State      string   // Partition state: "online", "offline", "reassigning", "syncing"
+	Replicas   []string // Node IDs of all replicas (including leader)
+	ISR        []string // In-Sync Replicas (node IDs)
+}
+
+// TopicMetadata contains partition metadata for a topic.
+type TopicMetadata struct {
+	Topic      string
+	Partitions []PartitionMetadata
+}
+
+// BinaryClusterMetadataResponse contains partition-to-node mappings.
+type BinaryClusterMetadataResponse struct {
+	ClusterID string          // Cluster identifier
+	Topics    []TopicMetadata // Partition metadata per topic
+}
+
+// EncodeBinaryClusterMetadataRequest encodes a cluster metadata request.
+func EncodeBinaryClusterMetadataRequest(req *BinaryClusterMetadataRequest) []byte {
+	return EncodeBinaryStringRequest(req.Topic)
+}
+
+// DecodeBinaryClusterMetadataRequest decodes a cluster metadata request.
+func DecodeBinaryClusterMetadataRequest(data []byte) (*BinaryClusterMetadataRequest, error) {
+	// Empty data means request all topics
+	if len(data) == 0 {
+		return &BinaryClusterMetadataRequest{Topic: ""}, nil
+	}
+	req, err := DecodeBinaryStringRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	return &BinaryClusterMetadataRequest{Topic: req.Value}, nil
+}
+
+// EncodeBinaryClusterMetadataResponse encodes a cluster metadata response.
+// Format:
+//
+//	[2B cluster_id_len][cluster_id]
+//	[4B topic_count]
+//	  [2B topic_len][topic]
+//	  [4B partition_count]
+//	    [4B partition][2B leader_id_len][leader_id][2B leader_addr_len][leader_addr][8B epoch]
+//	    [2B state_len][state][4B replica_count][replicas...][4B isr_count][isr...]
+func EncodeBinaryClusterMetadataResponse(resp *BinaryClusterMetadataResponse) []byte {
+	// Calculate size
+	size := 2 + len(resp.ClusterID) + 4 // cluster_id + topic_count
+	for _, topic := range resp.Topics {
+		size += 2 + len(topic.Topic) + 4 // topic_name + partition_count
+		for _, p := range topic.Partitions {
+			size += 4 + 2 + len(p.LeaderID) + 2 + len(p.LeaderAddr) + 8 // partition, leader_id, leader_addr, epoch
+			size += 2 + len(p.State)                                    // state
+			size += 4                                                   // replica_count
+			for _, r := range p.Replicas {
+				size += 2 + len(r) // replica_id
+			}
+			size += 4 // isr_count
+			for _, i := range p.ISR {
+				size += 2 + len(i) // isr_id
+			}
+		}
+	}
+
+	buf := make([]byte, size)
+	offset := 0
+
+	// Cluster ID
+	binary.BigEndian.PutUint16(buf[offset:], uint16(len(resp.ClusterID)))
+	offset += 2
+	copy(buf[offset:], resp.ClusterID)
+	offset += len(resp.ClusterID)
+
+	// Topic count
+	binary.BigEndian.PutUint32(buf[offset:], uint32(len(resp.Topics)))
+	offset += 4
+
+	// Topics
+	for _, topic := range resp.Topics {
+		// Topic name
+		binary.BigEndian.PutUint16(buf[offset:], uint16(len(topic.Topic)))
+		offset += 2
+		copy(buf[offset:], topic.Topic)
+		offset += len(topic.Topic)
+
+		// Partition count
+		binary.BigEndian.PutUint32(buf[offset:], uint32(len(topic.Partitions)))
+		offset += 4
+
+		// Partitions
+		for _, p := range topic.Partitions {
+			binary.BigEndian.PutUint32(buf[offset:], uint32(p.Partition))
+			offset += 4
+
+			binary.BigEndian.PutUint16(buf[offset:], uint16(len(p.LeaderID)))
+			offset += 2
+			copy(buf[offset:], p.LeaderID)
+			offset += len(p.LeaderID)
+
+			binary.BigEndian.PutUint16(buf[offset:], uint16(len(p.LeaderAddr)))
+			offset += 2
+			copy(buf[offset:], p.LeaderAddr)
+			offset += len(p.LeaderAddr)
+
+			binary.BigEndian.PutUint64(buf[offset:], p.Epoch)
+			offset += 8
+
+			// State
+			binary.BigEndian.PutUint16(buf[offset:], uint16(len(p.State)))
+			offset += 2
+			copy(buf[offset:], p.State)
+			offset += len(p.State)
+
+			// Replicas
+			binary.BigEndian.PutUint32(buf[offset:], uint32(len(p.Replicas)))
+			offset += 4
+			for _, r := range p.Replicas {
+				binary.BigEndian.PutUint16(buf[offset:], uint16(len(r)))
+				offset += 2
+				copy(buf[offset:], r)
+				offset += len(r)
+			}
+
+			// ISR
+			binary.BigEndian.PutUint32(buf[offset:], uint32(len(p.ISR)))
+			offset += 4
+			for _, i := range p.ISR {
+				binary.BigEndian.PutUint16(buf[offset:], uint16(len(i)))
+				offset += 2
+				copy(buf[offset:], i)
+				offset += len(i)
+			}
+		}
+	}
+
+	return buf
+}
+
+// DecodeBinaryClusterMetadataResponse decodes a cluster metadata response.
+func DecodeBinaryClusterMetadataResponse(data []byte) (*BinaryClusterMetadataResponse, error) {
+	if len(data) < 6 {
+		return nil, errors.New("cluster metadata response too short")
+	}
+
+	offset := 0
+
+	// Cluster ID
+	clusterIDLen := int(binary.BigEndian.Uint16(data[offset:]))
+	offset += 2
+	if offset+clusterIDLen > len(data) {
+		return nil, errors.New("invalid cluster ID length")
+	}
+	clusterID := string(data[offset : offset+clusterIDLen])
+	offset += clusterIDLen
+
+	// Topic count
+	if offset+4 > len(data) {
+		return nil, errors.New("missing topic count")
+	}
+	topicCount := int(binary.BigEndian.Uint32(data[offset:]))
+	offset += 4
+
+	topics := make([]TopicMetadata, 0, topicCount)
+	for i := 0; i < topicCount; i++ {
+		// Topic name
+		if offset+2 > len(data) {
+			return nil, errors.New("missing topic name length")
+		}
+		topicLen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+topicLen > len(data) {
+			return nil, errors.New("invalid topic name length")
+		}
+		topicName := string(data[offset : offset+topicLen])
+		offset += topicLen
+
+		// Partition count
+		if offset+4 > len(data) {
+			return nil, errors.New("missing partition count")
+		}
+		partitionCount := int(binary.BigEndian.Uint32(data[offset:]))
+		offset += 4
+
+		partitions := make([]PartitionMetadata, 0, partitionCount)
+		for j := 0; j < partitionCount; j++ {
+			if offset+4 > len(data) {
+				return nil, errors.New("missing partition number")
+			}
+			partition := int32(binary.BigEndian.Uint32(data[offset:]))
+			offset += 4
+
+			// Leader ID
+			if offset+2 > len(data) {
+				return nil, errors.New("missing leader ID length")
+			}
+			leaderIDLen := int(binary.BigEndian.Uint16(data[offset:]))
+			offset += 2
+			if offset+leaderIDLen > len(data) {
+				return nil, errors.New("invalid leader ID length")
+			}
+			leaderID := string(data[offset : offset+leaderIDLen])
+			offset += leaderIDLen
+
+			// Leader address
+			if offset+2 > len(data) {
+				return nil, errors.New("missing leader address length")
+			}
+			leaderAddrLen := int(binary.BigEndian.Uint16(data[offset:]))
+			offset += 2
+			if offset+leaderAddrLen > len(data) {
+				return nil, errors.New("invalid leader address length")
+			}
+			leaderAddr := string(data[offset : offset+leaderAddrLen])
+			offset += leaderAddrLen
+
+			// Epoch
+			if offset+8 > len(data) {
+				return nil, errors.New("missing epoch")
+			}
+			epoch := binary.BigEndian.Uint64(data[offset:])
+			offset += 8
+
+			// State
+			if offset+2 > len(data) {
+				return nil, errors.New("missing state length")
+			}
+			stateLen := int(binary.BigEndian.Uint16(data[offset:]))
+			offset += 2
+			if offset+stateLen > len(data) {
+				return nil, errors.New("invalid state length")
+			}
+			state := string(data[offset : offset+stateLen])
+			offset += stateLen
+
+			// Replicas
+			if offset+4 > len(data) {
+				return nil, errors.New("missing replica count")
+			}
+			replicaCount := int(binary.BigEndian.Uint32(data[offset:]))
+			offset += 4
+			replicas := make([]string, 0, replicaCount)
+			for k := 0; k < replicaCount; k++ {
+				if offset+2 > len(data) {
+					return nil, errors.New("missing replica ID length")
+				}
+				replicaLen := int(binary.BigEndian.Uint16(data[offset:]))
+				offset += 2
+				if offset+replicaLen > len(data) {
+					return nil, errors.New("invalid replica ID length")
+				}
+				replicas = append(replicas, string(data[offset:offset+replicaLen]))
+				offset += replicaLen
+			}
+
+			// ISR
+			if offset+4 > len(data) {
+				return nil, errors.New("missing ISR count")
+			}
+			isrCount := int(binary.BigEndian.Uint32(data[offset:]))
+			offset += 4
+			isr := make([]string, 0, isrCount)
+			for k := 0; k < isrCount; k++ {
+				if offset+2 > len(data) {
+					return nil, errors.New("missing ISR ID length")
+				}
+				isrLen := int(binary.BigEndian.Uint16(data[offset:]))
+				offset += 2
+				if offset+isrLen > len(data) {
+					return nil, errors.New("invalid ISR ID length")
+				}
+				isr = append(isr, string(data[offset:offset+isrLen]))
+				offset += isrLen
+			}
+
+			partitions = append(partitions, PartitionMetadata{
+				Partition:  partition,
+				LeaderID:   leaderID,
+				LeaderAddr: leaderAddr,
+				Epoch:      epoch,
+				State:      state,
+				Replicas:   replicas,
+				ISR:        isr,
+			})
+		}
+
+		topics = append(topics, TopicMetadata{
+			Topic:      topicName,
+			Partitions: partitions,
+		})
+	}
+
+	return &BinaryClusterMetadataResponse{
+		ClusterID: clusterID,
+		Topics:    topics,
+	}, nil
+}
+

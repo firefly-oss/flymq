@@ -84,6 +84,12 @@ const (
 	// ACL management commands for cluster replication
 	CmdSetACL    CommandType = "set_acl"
 	CmdDeleteACL CommandType = "delete_acl"
+
+	// Partition assignment commands for horizontal scaling
+	// These commands manage partition-level leadership distribution
+	CmdAssignPartition       CommandType = "assign_partition"        // Assign partition to a node
+	CmdUpdatePartitionLeader CommandType = "update_partition_leader" // Change partition leader
+	CmdUpdatePartitionISR    CommandType = "update_partition_isr"    // Update in-sync replicas
 )
 
 // Command represents a cluster operation to be replicated via Raft.
@@ -164,6 +170,38 @@ type SetACLPayload struct {
 // DeleteACLPayload contains data for deleting an ACL.
 type DeleteACLPayload struct {
 	Topic string `json:"topic"`
+}
+
+// ============================================================================
+// Partition Assignment Payloads for Horizontal Scaling
+// ============================================================================
+
+// AssignPartitionPayload contains data for assigning a partition to nodes.
+// This is used when creating a topic or rebalancing partitions.
+type AssignPartitionPayload struct {
+	Topic        string            `json:"topic"`
+	Partition    int               `json:"partition"`
+	Leader       string            `json:"leader"`        // Node ID of the leader
+	LeaderAddr   string            `json:"leader_addr"`   // Client-facing address of leader
+	Replicas     []string          `json:"replicas"`      // Node IDs of all replicas
+	ReplicaAddrs map[string]string `json:"replica_addrs"` // Node ID -> client address
+}
+
+// UpdatePartitionLeaderPayload contains data for changing a partition leader.
+// This is used during failover or rebalancing.
+type UpdatePartitionLeaderPayload struct {
+	Topic         string `json:"topic"`
+	Partition     int    `json:"partition"`
+	NewLeader     string `json:"new_leader"`      // Node ID of new leader
+	NewLeaderAddr string `json:"new_leader_addr"` // Client-facing address of new leader
+	Reason        string `json:"reason"`          // Why the leader changed (failover, rebalance, etc.)
+}
+
+// UpdatePartitionISRPayload contains data for updating in-sync replicas.
+type UpdatePartitionISRPayload struct {
+	Topic     string   `json:"topic"`
+	Partition int      `json:"partition"`
+	ISR       []string `json:"isr"` // Node IDs of in-sync replicas
 }
 
 // NewCreateTopicCommand creates a command for topic creation.
@@ -501,6 +539,99 @@ func DecodeSetACLPayload(data []byte) (*SetACLPayload, error) {
 func DecodeDeleteACLPayload(data []byte) (*DeleteACLPayload, error) {
 	var payload DeleteACLPayload
 	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+// ============================================================================
+// Partition Assignment Command Constructors
+// ============================================================================
+
+// NewAssignPartitionCommand creates a command for partition assignment.
+func NewAssignPartitionCommand(topic string, partition int, leader, leaderAddr string, replicas []string, replicaAddrs map[string]string) (*Command, error) {
+	payload, err := json.Marshal(AssignPartitionPayload{
+		Topic:        topic,
+		Partition:    partition,
+		Leader:       leader,
+		LeaderAddr:   leaderAddr,
+		Replicas:     replicas,
+		ReplicaAddrs: replicaAddrs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Command{
+		Type:    CmdAssignPartition,
+		Payload: payload,
+	}, nil
+}
+
+// NewUpdatePartitionLeaderCommand creates a command for changing partition leader.
+func NewUpdatePartitionLeaderCommand(topic string, partition int, newLeader, newLeaderAddr, reason string) (*Command, error) {
+	payload, err := json.Marshal(UpdatePartitionLeaderPayload{
+		Topic:         topic,
+		Partition:     partition,
+		NewLeader:     newLeader,
+		NewLeaderAddr: newLeaderAddr,
+		Reason:        reason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Command{
+		Type:    CmdUpdatePartitionLeader,
+		Payload: payload,
+	}, nil
+}
+
+// NewUpdatePartitionISRCommand creates a command for updating ISR.
+func NewUpdatePartitionISRCommand(topic string, partition int, isr []string) (*Command, error) {
+	payload, err := json.Marshal(UpdatePartitionISRPayload{
+		Topic:     topic,
+		Partition: partition,
+		ISR:       isr,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Command{
+		Type:    CmdUpdatePartitionISR,
+		Payload: payload,
+	}, nil
+}
+
+// GetAssignPartitionPayload extracts AssignPartitionPayload from command.
+func (c *Command) GetAssignPartitionPayload() (*AssignPartitionPayload, error) {
+	if c.Type != CmdAssignPartition {
+		return nil, fmt.Errorf("invalid command type: expected %s, got %s", CmdAssignPartition, c.Type)
+	}
+	var payload AssignPartitionPayload
+	if err := json.Unmarshal(c.Payload, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+// GetUpdatePartitionLeaderPayload extracts UpdatePartitionLeaderPayload from command.
+func (c *Command) GetUpdatePartitionLeaderPayload() (*UpdatePartitionLeaderPayload, error) {
+	if c.Type != CmdUpdatePartitionLeader {
+		return nil, fmt.Errorf("invalid command type: expected %s, got %s", CmdUpdatePartitionLeader, c.Type)
+	}
+	var payload UpdatePartitionLeaderPayload
+	if err := json.Unmarshal(c.Payload, &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
+
+// GetUpdatePartitionISRPayload extracts UpdatePartitionISRPayload from command.
+func (c *Command) GetUpdatePartitionISRPayload() (*UpdatePartitionISRPayload, error) {
+	if c.Type != CmdUpdatePartitionISR {
+		return nil, fmt.Errorf("invalid command type: expected %s, got %s", CmdUpdatePartitionISR, c.Type)
+	}
+	var payload UpdatePartitionISRPayload
+	if err := json.Unmarshal(c.Payload, &payload); err != nil {
 		return nil, err
 	}
 	return &payload, nil

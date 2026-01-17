@@ -203,9 +203,10 @@ const (
 	// ========== Cluster Operations (0x50-0x5F) ==========
 	// Distributed cluster management.
 
-	OpClusterJoin   OpCode = 0x50 // Join a cluster as a new node
-	OpClusterLeave  OpCode = 0x51 // Leave the cluster gracefully
-	OpClusterStatus OpCode = 0x52 // Get cluster membership and health
+	OpClusterJoin     OpCode = 0x50 // Join a cluster as a new node
+	OpClusterLeave    OpCode = 0x51 // Leave the cluster gracefully
+	OpClusterStatus   OpCode = 0x52 // Get cluster membership and health
+	OpClusterMetadata OpCode = 0x53 // Get partition-to-node mappings for smart routing
 
 	// ========== Consumer Group Operations (0x60-0x6F) ==========
 	// Consumer group management and offset operations.

@@ -80,13 +80,32 @@ func (s PartitionState) String() string {
 }
 
 // PartitionAssignment represents the assignment of a partition.
+// This is the core structure for partition-level leadership distribution.
+// Unlike Raft leadership (which is cluster-wide), partition leadership
+// can be distributed across different nodes for horizontal scaling.
 type PartitionAssignment struct {
 	Topic     string         `json:"topic"`
 	Partition int            `json:"partition"`
-	Leader    string         `json:"leader"`
-	Replicas  []string       `json:"replicas"`
-	ISR       []string       `json:"isr"` // In-Sync Replicas
+	Leader    string         `json:"leader"`    // Node ID of the partition leader
+	Replicas  []string       `json:"replicas"`  // Node IDs of all replicas (including leader)
+	ISR       []string       `json:"isr"`       // In-Sync Replicas (node IDs)
 	State     PartitionState `json:"state"`
+
+	// Node addresses for direct routing (populated from membership)
+	LeaderAddr   string            `json:"leader_addr,omitempty"`   // Client-facing address of leader
+	ReplicaAddrs map[string]string `json:"replica_addrs,omitempty"` // Node ID -> client address
+	Epoch        uint64            `json:"epoch"`                   // Incremented on leader change for fencing
+}
+
+// PartitionLeaderInfo contains routing information for a partition leader.
+// Used by clients and brokers to route requests to the correct node.
+type PartitionLeaderInfo struct {
+	Topic       string `json:"topic"`
+	Partition   int    `json:"partition"`
+	LeaderID    string `json:"leader_id"`
+	LeaderAddr  string `json:"leader_addr"`  // Client-facing address (host:port)
+	Epoch       uint64 `json:"epoch"`        // For leader fencing
+	IsLocalNode bool   `json:"-"`            // True if this node is the leader
 }
 
 // ReassignmentPlan represents a plan to reassign partitions.
@@ -200,6 +219,8 @@ func (pm *PartitionManager) GetReplicaPartitions() []*PartitionAssignment {
 }
 
 // CreateAssignment creates a new partition assignment.
+// The leader and replicas are node IDs. Addresses are populated separately
+// via UpdateReplicaAddresses when membership information is available.
 func (pm *PartitionManager) CreateAssignment(topic string, partition int, leader string, replicas []string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -209,30 +230,85 @@ func (pm *PartitionManager) CreateAssignment(topic string, partition int, leader
 	}
 
 	assignment := &PartitionAssignment{
-		Topic:     topic,
-		Partition: partition,
-		Leader:    leader,
-		Replicas:  replicas,
-		ISR:       replicas, // Initially all replicas are in-sync
-		State:     PartitionOnline,
+		Topic:        topic,
+		Partition:    partition,
+		Leader:       leader,
+		Replicas:     replicas,
+		ISR:          replicas, // Initially all replicas are in-sync
+		State:        PartitionOnline,
+		ReplicaAddrs: make(map[string]string),
+		Epoch:        1, // Start at epoch 1
 	}
 
 	pm.assignments[topic][partition] = assignment
-	pm.logger.Info("Created partition assignment", "topic", topic, "partition", partition, "leader", leader)
+	pm.logger.Info("Created partition assignment", "topic", topic, "partition", partition, "leader", leader, "epoch", 1)
+
+	return pm.saveAssignments()
+}
+
+// CreateAssignmentWithAddr creates a new partition assignment with leader address.
+// This is the preferred method when the leader address is known.
+func (pm *PartitionManager) CreateAssignmentWithAddr(topic string, partition int, leader, leaderAddr string, replicas []string, replicaAddrs map[string]string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if _, ok := pm.assignments[topic]; !ok {
+		pm.assignments[topic] = make(map[int]*PartitionAssignment)
+	}
+
+	assignment := &PartitionAssignment{
+		Topic:        topic,
+		Partition:    partition,
+		Leader:       leader,
+		LeaderAddr:   leaderAddr,
+		Replicas:     replicas,
+		ISR:          replicas,
+		State:        PartitionOnline,
+		ReplicaAddrs: replicaAddrs,
+		Epoch:        1,
+	}
+
+	pm.assignments[topic][partition] = assignment
+	pm.logger.Info("Created partition assignment with address",
+		"topic", topic, "partition", partition, "leader", leader, "leader_addr", leaderAddr)
 
 	return pm.saveAssignments()
 }
 
 // UpdateLeader updates the leader for a partition.
+// This increments the epoch to fence stale leaders.
 func (pm *PartitionManager) UpdateLeader(topic string, partition int, newLeader string) error {
+	return pm.UpdateLeaderWithAddr(topic, partition, newLeader, "")
+}
+
+// UpdateLeaderWithAddr updates the leader for a partition with the new leader's address.
+// This increments the epoch to fence stale leaders.
+func (pm *PartitionManager) UpdateLeaderWithAddr(topic string, partition int, newLeader, newLeaderAddr string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	if topicAssignments, ok := pm.assignments[topic]; ok {
 		if assignment, ok := topicAssignments[partition]; ok {
 			oldLeader := assignment.Leader
+			oldEpoch := assignment.Epoch
 			assignment.Leader = newLeader
-			pm.logger.Info("Updated partition leader", "topic", topic, "partition", partition, "old_leader", oldLeader, "new_leader", newLeader)
+			assignment.Epoch++ // Increment epoch on leader change for fencing
+
+			// Update leader address if provided
+			if newLeaderAddr != "" {
+				assignment.LeaderAddr = newLeaderAddr
+			} else if addr, ok := assignment.ReplicaAddrs[newLeader]; ok {
+				// Try to get address from replica addresses
+				assignment.LeaderAddr = addr
+			}
+
+			pm.logger.Info("Updated partition leader",
+				"topic", topic,
+				"partition", partition,
+				"old_leader", oldLeader,
+				"new_leader", newLeader,
+				"old_epoch", oldEpoch,
+				"new_epoch", assignment.Epoch)
 
 			if pm.onLeaderChange != nil {
 				go pm.onLeaderChange(topic, partition, newLeader)
@@ -411,4 +487,385 @@ func (pm *PartitionManager) saveAssignments() error {
 
 	// Atomic rename - this is atomic on POSIX systems
 	return os.Rename(tempFile, assignmentFile)
+}
+
+// ============================================================================
+// Partition Routing Methods for Horizontal Scaling
+// ============================================================================
+
+// GetPartitionLeader returns the leader info for a specific partition.
+// This is used for routing produce/consume requests to the correct node.
+func (pm *PartitionManager) GetPartitionLeader(topic string, partition int) (*PartitionLeaderInfo, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		if assignment, ok := topicAssignments[partition]; ok {
+			return &PartitionLeaderInfo{
+				Topic:       topic,
+				Partition:   partition,
+				LeaderID:    assignment.Leader,
+				LeaderAddr:  assignment.LeaderAddr,
+				Epoch:       assignment.Epoch,
+				IsLocalNode: assignment.Leader == pm.nodeID,
+			}, true
+		}
+	}
+	return nil, false
+}
+
+// IsPartitionLeader returns true if this node is the leader for the partition.
+func (pm *PartitionManager) IsPartitionLeader(topic string, partition int) bool {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		if assignment, ok := topicAssignments[partition]; ok {
+			return assignment.Leader == pm.nodeID
+		}
+	}
+	return false
+}
+
+// GetAllPartitionLeaders returns leader info for all partitions of a topic.
+// Used by clients to build a routing table.
+func (pm *PartitionManager) GetAllPartitionLeaders(topic string) []*PartitionLeaderInfo {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	var leaders []*PartitionLeaderInfo
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		for _, assignment := range topicAssignments {
+			leaders = append(leaders, &PartitionLeaderInfo{
+				Topic:       topic,
+				Partition:   assignment.Partition,
+				LeaderID:    assignment.Leader,
+				LeaderAddr:  assignment.LeaderAddr,
+				Epoch:       assignment.Epoch,
+				IsLocalNode: assignment.Leader == pm.nodeID,
+			})
+		}
+	}
+	return leaders
+}
+
+// UpdateLeaderAddress updates the client-facing address for a partition leader.
+// Called when membership information is updated.
+func (pm *PartitionManager) UpdateLeaderAddress(topic string, partition int, leaderAddr string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		if assignment, ok := topicAssignments[partition]; ok {
+			assignment.LeaderAddr = leaderAddr
+			return pm.saveAssignments()
+		}
+	}
+	return fmt.Errorf("partition not found: %s-%d", topic, partition)
+}
+
+// UpdateReplicaAddresses updates the addresses for all replicas of a partition.
+func (pm *PartitionManager) UpdateReplicaAddresses(topic string, partition int, addrs map[string]string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		if assignment, ok := topicAssignments[partition]; ok {
+			assignment.ReplicaAddrs = addrs
+			// Also update leader address if present
+			if leaderAddr, ok := addrs[assignment.Leader]; ok {
+				assignment.LeaderAddr = leaderAddr
+			}
+			return pm.saveAssignments()
+		}
+	}
+	return fmt.Errorf("partition not found: %s-%d", topic, partition)
+}
+
+// GetClusterPartitionMetadata returns metadata for all partitions across all topics.
+// This is used for the cluster metadata protocol response.
+func (pm *PartitionManager) GetClusterPartitionMetadata() map[string][]*PartitionLeaderInfo {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	result := make(map[string][]*PartitionLeaderInfo)
+	for topic, topicAssignments := range pm.assignments {
+		for _, assignment := range topicAssignments {
+			result[topic] = append(result[topic], &PartitionLeaderInfo{
+				Topic:       topic,
+				Partition:   assignment.Partition,
+				LeaderID:    assignment.Leader,
+				LeaderAddr:  assignment.LeaderAddr,
+				Epoch:       assignment.Epoch,
+				IsLocalNode: assignment.Leader == pm.nodeID,
+			})
+		}
+	}
+	return result
+}
+
+// IncrementEpoch increments the epoch for a partition (called on leader change).
+func (pm *PartitionManager) IncrementEpoch(topic string, partition int) (uint64, error) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if topicAssignments, ok := pm.assignments[topic]; ok {
+		if assignment, ok := topicAssignments[partition]; ok {
+			assignment.Epoch++
+			if err := pm.saveAssignments(); err != nil {
+				return 0, err
+			}
+			return assignment.Epoch, nil
+		}
+	}
+	return 0, fmt.Errorf("partition not found: %s-%d", topic, partition)
+}
+
+// ============================================================================
+// Smart Partition Distribution for Horizontal Scaling
+// ============================================================================
+
+// PartitionDistributor handles intelligent distribution of partition leaders
+// across cluster nodes to achieve load balancing.
+type PartitionDistributor struct {
+	pm     *PartitionManager
+	logger *logging.Logger
+}
+
+// NewPartitionDistributor creates a new partition distributor.
+func NewPartitionDistributor(pm *PartitionManager) *PartitionDistributor {
+	return &PartitionDistributor{
+		pm:     pm,
+		logger: logging.NewLogger("partition-distributor"),
+	}
+}
+
+// DistributionPlan represents a plan for distributing partitions.
+type DistributionPlan struct {
+	Assignments []PartitionPlacement
+}
+
+// PartitionPlacement represents where a partition should be placed.
+type PartitionPlacement struct {
+	Topic     string
+	Partition int
+	Leader    string   // Node ID of the leader
+	Replicas  []string // Node IDs of replicas (including leader)
+}
+
+// ComputeDistribution computes an optimal distribution of partitions across nodes.
+// Uses a round-robin approach with rack awareness (if available).
+func (pd *PartitionDistributor) ComputeDistribution(topic string, numPartitions int, nodes []string, replicationFactor int) *DistributionPlan {
+	if len(nodes) == 0 {
+		return &DistributionPlan{}
+	}
+
+	// Ensure replication factor doesn't exceed node count
+	if replicationFactor > len(nodes) {
+		replicationFactor = len(nodes)
+	}
+
+	plan := &DistributionPlan{
+		Assignments: make([]PartitionPlacement, numPartitions),
+	}
+
+	// Round-robin distribution of leaders
+	for i := 0; i < numPartitions; i++ {
+		leaderIdx := i % len(nodes)
+		leader := nodes[leaderIdx]
+
+		// Select replicas (including leader) using round-robin from leader position
+		replicas := make([]string, replicationFactor)
+		for j := 0; j < replicationFactor; j++ {
+			replicaIdx := (leaderIdx + j) % len(nodes)
+			replicas[j] = nodes[replicaIdx]
+		}
+
+		plan.Assignments[i] = PartitionPlacement{
+			Topic:     topic,
+			Partition: i,
+			Leader:    leader,
+			Replicas:  replicas,
+		}
+	}
+
+	return plan
+}
+
+// ComputeRebalance computes a rebalancing plan when nodes change.
+// This minimizes partition movement while achieving balance.
+func (pd *PartitionDistributor) ComputeRebalance(nodes []string, replicationFactor int) *DistributionPlan {
+	pd.pm.mu.RLock()
+	defer pd.pm.mu.RUnlock()
+
+	if len(nodes) == 0 {
+		return &DistributionPlan{}
+	}
+
+	// Count current leader assignments per node
+	leaderCounts := make(map[string]int)
+	for _, node := range nodes {
+		leaderCounts[node] = 0
+	}
+
+	// Collect all current assignments
+	var allAssignments []*PartitionAssignment
+	for _, topicAssignments := range pd.pm.assignments {
+		for _, assignment := range topicAssignments {
+			allAssignments = append(allAssignments, assignment)
+			if _, ok := leaderCounts[assignment.Leader]; ok {
+				leaderCounts[assignment.Leader]++
+			}
+		}
+	}
+
+	if len(allAssignments) == 0 {
+		return &DistributionPlan{}
+	}
+
+	// Calculate target leaders per node
+	totalPartitions := len(allAssignments)
+	targetPerNode := totalPartitions / len(nodes)
+	remainder := totalPartitions % len(nodes)
+
+	// Find overloaded and underloaded nodes
+	type nodeLoad struct {
+		nodeID string
+		count  int
+		target int
+	}
+
+	nodeLoads := make([]nodeLoad, 0, len(nodes))
+	for i, node := range nodes {
+		target := targetPerNode
+		if i < remainder {
+			target++
+		}
+		nodeLoads = append(nodeLoads, nodeLoad{
+			nodeID: node,
+			count:  leaderCounts[node],
+			target: target,
+		})
+	}
+
+	// Build rebalance plan
+	plan := &DistributionPlan{
+		Assignments: make([]PartitionPlacement, 0),
+	}
+
+	// Find partitions that need to move (leader on dead node or overloaded node)
+	for _, assignment := range allAssignments {
+		needsReassignment := false
+		newLeader := assignment.Leader
+
+		// Check if current leader is still in the cluster
+		leaderAlive := false
+		for _, node := range nodes {
+			if node == assignment.Leader {
+				leaderAlive = true
+				break
+			}
+		}
+
+		if !leaderAlive {
+			// Leader is dead, need to elect new leader from replicas
+			needsReassignment = true
+			for _, replica := range assignment.Replicas {
+				for _, node := range nodes {
+					if replica == node {
+						newLeader = replica
+						break
+					}
+				}
+				if newLeader != assignment.Leader {
+					break
+				}
+			}
+			// If no replica is alive, pick any available node
+			if newLeader == assignment.Leader && len(nodes) > 0 {
+				newLeader = nodes[0]
+			}
+		}
+
+		if needsReassignment {
+			// Compute new replicas
+			newReplicas := pd.selectReplicas(newLeader, nodes, replicationFactor)
+			plan.Assignments = append(plan.Assignments, PartitionPlacement{
+				Topic:     assignment.Topic,
+				Partition: assignment.Partition,
+				Leader:    newLeader,
+				Replicas:  newReplicas,
+			})
+		}
+	}
+
+	return plan
+}
+
+// selectReplicas selects replicas for a partition, starting with the leader.
+func (pd *PartitionDistributor) selectReplicas(leader string, nodes []string, replicationFactor int) []string {
+	if replicationFactor > len(nodes) {
+		replicationFactor = len(nodes)
+	}
+
+	replicas := make([]string, 0, replicationFactor)
+	replicas = append(replicas, leader)
+
+	// Add other nodes as replicas
+	for _, node := range nodes {
+		if len(replicas) >= replicationFactor {
+			break
+		}
+		if node != leader {
+			replicas = append(replicas, node)
+		}
+	}
+
+	return replicas
+}
+
+// GetLeaderDistribution returns the current distribution of leaders across nodes.
+func (pd *PartitionDistributor) GetLeaderDistribution() map[string]int {
+	pd.pm.mu.RLock()
+	defer pd.pm.mu.RUnlock()
+
+	distribution := make(map[string]int)
+	for _, topicAssignments := range pd.pm.assignments {
+		for _, assignment := range topicAssignments {
+			distribution[assignment.Leader]++
+		}
+	}
+	return distribution
+}
+
+// IsBalanced returns true if partition leaders are evenly distributed.
+// Allows for a difference of 1 partition between nodes (due to remainder).
+func (pd *PartitionDistributor) IsBalanced(nodes []string) bool {
+	if len(nodes) == 0 {
+		return true
+	}
+
+	distribution := pd.GetLeaderDistribution()
+
+	// Calculate expected range
+	totalPartitions := 0
+	for _, count := range distribution {
+		totalPartitions += count
+	}
+
+	if totalPartitions == 0 {
+		return true
+	}
+
+	minExpected := totalPartitions / len(nodes)
+	maxExpected := minExpected + 1
+
+	for _, node := range nodes {
+		count := distribution[node]
+		if count < minExpected || count > maxExpected {
+			return false
+		}
+	}
+
+	return true
 }

@@ -64,6 +64,7 @@ import (
 	"sync"
 	"time"
 
+	"flymq/internal/banner"
 	"flymq/internal/broker"
 	"flymq/internal/config"
 	"flymq/internal/logging"
@@ -98,6 +99,17 @@ type AuthApplier interface {
 	ApplyDeleteACL(topic string)
 }
 
+// ReplicationApplier is the interface for applying replicated data to local storage.
+// This is used by followers to write data received from partition leaders.
+type ReplicationApplier interface {
+	// WriteReplicatedData writes replicated data to a partition's log.
+	// Returns the local offset where the data was written.
+	WriteReplicatedData(topic string, partition int, offset uint64, data []byte) error
+
+	// GetHighWatermark returns the highest offset written to a partition.
+	GetHighWatermark(topic string, partition int) (uint64, error)
+}
+
 // Cluster coordinates all cluster components.
 type Cluster struct {
 	mu sync.RWMutex
@@ -107,9 +119,12 @@ type Cluster struct {
 	membership  *MembershipManager
 	partitions  *PartitionManager
 	replication *ReplicationManager
+	distributor *PartitionDistributor // For smart partition distribution
 	transport   *TCPTransport
-	applier     CommandApplier // For applying committed commands
-	authApplier AuthApplier    // For applying user/ACL commands
+	discovery   *DiscoveryService      // For mDNS service discovery
+	applier     CommandApplier     // For applying committed commands
+	authApplier AuthApplier        // For applying user/ACL commands
+	replApplier ReplicationApplier // For applying replicated partition data
 
 	logger *logging.Logger
 	stopCh chan struct{}
@@ -142,6 +157,21 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 		"cluster_addr", clusterConfig.ClusterAddr,
 		"advertise_cluster", advertiseCluster,
 		"peers", clusterConfig.Peers)
+
+	// Initialize service discovery if enabled
+	if cfg.Discovery.Enabled {
+		discoveryConfig := DiscoveryConfig{
+			NodeID:      cfg.NodeID,
+			ClusterID:   cfg.Discovery.ClusterID,
+			ClusterAddr: advertiseCluster,
+			ClientAddr:  cfg.GetAdvertiseAddr(),
+			Version:     banner.Version,
+			Enabled:     true,
+		}
+		c.discovery = NewDiscoveryService(discoveryConfig)
+		c.logger.Info("Service discovery enabled",
+			"cluster_id", cfg.Discovery.ClusterID)
+	}
 
 	// Initialize transport
 	c.transport = NewTCPTransport(clusterConfig.ClusterAddr, 10*time.Second)
@@ -195,6 +225,9 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 	}
 	c.partitions = partitions
 
+	// Initialize partition distributor for smart load balancing
+	c.distributor = NewPartitionDistributor(partitions)
+
 	// Initialize replication manager
 	replicationConfig := ReplicationConfig{
 		NodeID:            clusterConfig.NodeID,
@@ -215,6 +248,16 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 // Start starts the cluster.
 func (c *Cluster) Start(ctx context.Context) error {
 	c.logger.Info("Starting cluster", "node_id", c.config.NodeID, "cluster_addr", c.config.ClusterAddr)
+
+	// Start service discovery if enabled
+	if c.discovery != nil {
+		if err := c.discovery.Start(); err != nil {
+			c.logger.Warn("Failed to start service discovery", "error", err)
+			// Non-fatal: continue without discovery
+		} else {
+			c.logger.Info("Service discovery started")
+		}
+	}
 
 	// Start membership manager
 	if err := c.membership.Start(); err != nil {
@@ -253,6 +296,13 @@ func (c *Cluster) Stop() error {
 
 	c.wg.Wait()
 
+	// Stop service discovery
+	if c.discovery != nil {
+		if err := c.discovery.Stop(); err != nil {
+			c.logger.Error("Failed to stop discovery", "error", err)
+		}
+	}
+
 	if err := c.replication.Stop(); err != nil {
 		c.logger.Error("Failed to stop replication", "error", err)
 	}
@@ -281,6 +331,13 @@ func (c *Cluster) SetAuthApplier(applier AuthApplier) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.authApplier = applier
+}
+
+// SetReplicationApplier sets the replication applier for partition data.
+func (c *Cluster) SetReplicationApplier(applier ReplicationApplier) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.replApplier = applier
 }
 
 // IsLeader returns true if this node is the cluster leader.
@@ -565,6 +622,179 @@ func (c *Cluster) ProposeDeleteACL(topic string) error {
 	return c.raft.Apply(data)
 }
 
+// ============================================================================
+// Partition Assignment Proposals for Horizontal Scaling
+// ============================================================================
+
+// ProposeAssignPartition proposes a partition assignment to the cluster.
+// This is used when creating topics or rebalancing partitions.
+func (c *Cluster) ProposeAssignPartition(topic string, partition int, leader, leaderAddr string, replicas []string, replicaAddrs map[string]string) error {
+	if !c.raft.IsLeader() {
+		return c.notLeaderError()
+	}
+
+	cmd, err := NewAssignPartitionCommand(topic, partition, leader, leaderAddr, replicas, replicaAddrs)
+	if err != nil {
+		return fmt.Errorf("failed to create command: %w", err)
+	}
+
+	data, err := cmd.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode command: %w", err)
+	}
+
+	c.logger.Info("Proposing assign partition",
+		"topic", topic,
+		"partition", partition,
+		"leader", leader)
+	return c.raft.Apply(data)
+}
+
+// ProposeUpdatePartitionLeader proposes a partition leader change to the cluster.
+// This is used during failover or rebalancing.
+func (c *Cluster) ProposeUpdatePartitionLeader(topic string, partition int, newLeader, newLeaderAddr, reason string) error {
+	if !c.raft.IsLeader() {
+		return c.notLeaderError()
+	}
+
+	cmd, err := NewUpdatePartitionLeaderCommand(topic, partition, newLeader, newLeaderAddr, reason)
+	if err != nil {
+		return fmt.Errorf("failed to create command: %w", err)
+	}
+
+	data, err := cmd.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode command: %w", err)
+	}
+
+	c.logger.Info("Proposing update partition leader",
+		"topic", topic,
+		"partition", partition,
+		"new_leader", newLeader,
+		"reason", reason)
+	return c.raft.Apply(data)
+}
+
+// ProposeUpdatePartitionISR proposes an ISR update to the cluster.
+func (c *Cluster) ProposeUpdatePartitionISR(topic string, partition int, isr []string) error {
+	if !c.raft.IsLeader() {
+		return c.notLeaderError()
+	}
+
+	cmd, err := NewUpdatePartitionISRCommand(topic, partition, isr)
+	if err != nil {
+		return fmt.Errorf("failed to create command: %w", err)
+	}
+
+	data, err := cmd.Encode()
+	if err != nil {
+		return fmt.Errorf("failed to encode command: %w", err)
+	}
+
+	c.logger.Info("Proposing update partition ISR",
+		"topic", topic,
+		"partition", partition,
+		"isr", isr)
+	return c.raft.Apply(data)
+}
+
+// GetPartitionLeader returns the leader info for a specific partition (internal type).
+func (c *Cluster) GetPartitionLeader(topic string, partition int) (*PartitionLeaderInfo, bool) {
+	return c.partitions.GetPartitionLeader(topic, partition)
+}
+
+// GetPartitionLeaderInfo returns the leader info for a specific partition (broker interface type).
+func (c *Cluster) GetPartitionLeaderInfo(topic string, partition int) (*broker.PartitionLeaderInfo, bool) {
+	info, ok := c.partitions.GetPartitionLeader(topic, partition)
+	if !ok {
+		return nil, false
+	}
+	return &broker.PartitionLeaderInfo{
+		Topic:       info.Topic,
+		Partition:   info.Partition,
+		LeaderID:    info.LeaderID,
+		LeaderAddr:  info.LeaderAddr,
+		Epoch:       info.Epoch,
+		IsLocalNode: info.IsLocalNode,
+	}, true
+}
+
+// IsPartitionLeader returns true if this node is the leader for the partition.
+func (c *Cluster) IsPartitionLeader(topic string, partition int) bool {
+	return c.partitions.IsPartitionLeader(topic, partition)
+}
+
+// GetAllPartitionLeaders returns leader info for all partitions of a topic (broker interface type).
+func (c *Cluster) GetAllPartitionLeaders(topic string) []*broker.PartitionLeaderInfo {
+	internalLeaders := c.partitions.GetAllPartitionLeaders(topic)
+	result := make([]*broker.PartitionLeaderInfo, len(internalLeaders))
+	for i, info := range internalLeaders {
+		result[i] = &broker.PartitionLeaderInfo{
+			Topic:       info.Topic,
+			Partition:   info.Partition,
+			LeaderID:    info.LeaderID,
+			LeaderAddr:  info.LeaderAddr,
+			Epoch:       info.Epoch,
+			IsLocalNode: info.IsLocalNode,
+		}
+	}
+	return result
+}
+
+// GetClusterPartitionMetadata returns metadata for all partitions across all topics.
+func (c *Cluster) GetClusterPartitionMetadata() map[string][]*PartitionLeaderInfo {
+	return c.partitions.GetClusterPartitionMetadata()
+}
+
+// GetPartitionAssignment returns the full partition assignment including State, Replicas, and ISR.
+func (c *Cluster) GetPartitionAssignment(topic string, partition int) (*broker.PartitionAssignment, bool) {
+	assignment, ok := c.partitions.GetAssignment(topic, partition)
+	if !ok {
+		return nil, false
+	}
+	return &broker.PartitionAssignment{
+		Topic:        assignment.Topic,
+		Partition:    assignment.Partition,
+		Leader:       assignment.Leader,
+		LeaderAddr:   assignment.LeaderAddr,
+		Replicas:     assignment.Replicas,
+		ISR:          assignment.ISR,
+		State:        assignment.State.String(),
+		ReplicaAddrs: assignment.ReplicaAddrs,
+		Epoch:        assignment.Epoch,
+	}, true
+}
+
+// GetTopicPartitionAssignments returns all partition assignments for a topic.
+func (c *Cluster) GetTopicPartitionAssignments(topic string) []*broker.PartitionAssignment {
+	assignments := c.partitions.GetTopicAssignments(topic)
+	result := make([]*broker.PartitionAssignment, len(assignments))
+	for i, a := range assignments {
+		result[i] = &broker.PartitionAssignment{
+			Topic:        a.Topic,
+			Partition:    a.Partition,
+			Leader:       a.Leader,
+			LeaderAddr:   a.LeaderAddr,
+			Replicas:     a.Replicas,
+			ISR:          a.ISR,
+			State:        a.State.String(),
+			ReplicaAddrs: a.ReplicaAddrs,
+			Epoch:        a.Epoch,
+		}
+	}
+	return result
+}
+
+// NodeID returns this node's ID.
+func (c *Cluster) NodeID() string {
+	return c.config.NodeID
+}
+
+// NodeAddr returns this node's client-facing address.
+func (c *Cluster) NodeAddr() string {
+	return c.membership.Self().Address
+}
+
 // GetRaftState returns the current Raft consensus state.
 func (c *Cluster) GetRaftState() broker.RaftState {
 	return broker.RaftState{
@@ -575,6 +805,115 @@ func (c *Cluster) GetRaftState() broker.RaftState {
 		LeaderID:    c.raft.LeaderID(),
 		LogLength:   c.raft.LogLength(),
 	}
+}
+
+// GetLeaderDistribution returns the current distribution of partition leaders across nodes.
+func (c *Cluster) GetLeaderDistribution() map[string]int {
+	return c.distributor.GetLeaderDistribution()
+}
+
+// IsPartitionBalanced returns true if partition leaders are evenly distributed.
+func (c *Cluster) IsPartitionBalanced() bool {
+	nodes := c.getActiveNodeIDs()
+	return c.distributor.IsBalanced(nodes)
+}
+
+// ComputePartitionDistribution computes an optimal distribution for a new topic.
+func (c *Cluster) ComputePartitionDistribution(topic string, numPartitions int) *DistributionPlan {
+	nodes := c.getActiveNodeIDs()
+	return c.distributor.ComputeDistribution(topic, numPartitions, nodes, c.config.ReplicationFactor)
+}
+
+// TriggerRebalance triggers a partition rebalance across the cluster.
+// This should only be called on the Raft leader.
+func (c *Cluster) TriggerRebalance() error {
+	if !c.raft.IsLeader() {
+		return fmt.Errorf("only the Raft leader can trigger rebalance")
+	}
+
+	nodes := c.getActiveNodeIDs()
+	plan := c.distributor.ComputeRebalance(nodes, c.config.ReplicationFactor)
+
+	if len(plan.Assignments) == 0 {
+		c.logger.Info("No rebalancing needed")
+		return nil
+	}
+
+	c.logger.Info("Triggering partition rebalance", "moves", len(plan.Assignments))
+
+	// Apply each reassignment through Raft
+	for _, placement := range plan.Assignments {
+		// Get the leader address from membership
+		leaderAddr := ""
+		if member, ok := c.membership.GetMember(placement.Leader); ok {
+			leaderAddr = member.Address
+		}
+
+		if err := c.ProposeUpdatePartitionLeader(placement.Topic, placement.Partition, placement.Leader, leaderAddr, "rebalance"); err != nil {
+			c.logger.Error("Failed to propose partition reassignment",
+				"topic", placement.Topic,
+				"partition", placement.Partition,
+				"new_leader", placement.Leader,
+				"error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ReassignPartition reassigns a partition to a new leader and/or replicas.
+// This should only be called on the Raft leader.
+func (c *Cluster) ReassignPartition(topic string, partition int, newLeader string, replicas []string) error {
+	if !c.raft.IsLeader() {
+		return fmt.Errorf("only the Raft leader can reassign partitions")
+	}
+
+	// Validate the new leader is in the replicas list
+	leaderInReplicas := false
+	for _, r := range replicas {
+		if r == newLeader {
+			leaderInReplicas = true
+			break
+		}
+	}
+	if !leaderInReplicas && len(replicas) > 0 {
+		return fmt.Errorf("new leader %s must be in the replicas list", newLeader)
+	}
+
+	// Validate all nodes exist in the cluster
+	for _, nodeID := range replicas {
+		if _, ok := c.membership.GetMember(nodeID); !ok {
+			return fmt.Errorf("node %s not found in cluster", nodeID)
+		}
+	}
+
+	// Get the leader address from membership
+	leaderAddr := ""
+	if member, ok := c.membership.GetMember(newLeader); ok {
+		leaderAddr = member.Address
+	}
+
+	c.logger.Info("Reassigning partition",
+		"topic", topic,
+		"partition", partition,
+		"new_leader", newLeader,
+		"replicas", replicas)
+
+	// Propose the partition assignment through Raft
+	return c.ProposeUpdatePartitionLeader(topic, partition, newLeader, leaderAddr, "manual_reassignment")
+}
+
+// getActiveNodeIDs returns the IDs of all active cluster nodes.
+func (c *Cluster) getActiveNodeIDs() []string {
+	members := c.membership.GetMembers()
+	nodes := make([]string, 0, len(members))
+	for _, member := range members {
+		if member.Status == MemberAlive {
+			nodes = append(nodes, member.ID)
+		}
+	}
+	return nodes
 }
 
 // GetMembers returns all cluster members with full metadata.
@@ -724,24 +1063,6 @@ func convertRaftNodeStats(stats *NodeStats) *broker.NodeStats {
 	}
 }
 
-// GetPartitionLeader returns the leader for a partition.
-func (c *Cluster) GetPartitionLeader(topic string, partition int) (string, error) {
-	assignment, ok := c.partitions.GetAssignment(topic, partition)
-	if !ok {
-		return "", fmt.Errorf("partition not found: %s-%d", topic, partition)
-	}
-	return assignment.Leader, nil
-}
-
-// IsPartitionLeader returns true if this node is the leader for the partition.
-func (c *Cluster) IsPartitionLeader(topic string, partition int) bool {
-	assignment, ok := c.partitions.GetAssignment(topic, partition)
-	if !ok {
-		return false
-	}
-	return assignment.Leader == c.config.NodeID
-}
-
 func (c *Cluster) watchMembership(ctx context.Context) {
 	defer c.wg.Done()
 
@@ -811,7 +1132,7 @@ func (c *Cluster) rebalancePartitions() {
 			// Simple approach: assign to first available member
 			for _, member := range members {
 				if member.Status == MemberAlive {
-					if err := c.partitions.UpdateLeader(assignment.Topic, assignment.Partition, member.ID); err != nil {
+					if err := c.partitions.UpdateLeaderWithAddr(assignment.Topic, assignment.Partition, member.ID, member.Address); err != nil {
 						c.logger.Error("Failed to assign partition", "error", err)
 						continue
 					}
@@ -826,23 +1147,180 @@ func (c *Cluster) rebalancePartitions() {
 	}
 }
 
+// autoAssignPartitions distributes partition leadership across cluster members.
+// This is called when a new topic is created to enable horizontal scaling.
+// Partitions are distributed round-robin across available nodes.
+func (c *Cluster) autoAssignPartitions(topic string, numPartitions int) {
+	members := c.membership.GetMembers()
+	if len(members) == 0 {
+		// Single node - assign all partitions to self
+		selfMember := c.membership.Self()
+		for i := 0; i < numPartitions; i++ {
+			replicas := []string{c.config.NodeID}
+			replicaAddrs := map[string]string{c.config.NodeID: selfMember.Address}
+			if err := c.partitions.CreateAssignmentWithAddr(
+				topic, i,
+				c.config.NodeID, selfMember.Address,
+				replicas, replicaAddrs,
+			); err != nil {
+				c.logger.Error("Failed to assign partition", "topic", topic, "partition", i, "error", err)
+			} else {
+				c.logger.Info("Assigned partition to self",
+					"topic", topic, "partition", i, "leader", c.config.NodeID)
+			}
+		}
+		return
+	}
+
+	// Build list of alive members including self
+	aliveMembers := make([]*Member, 0, len(members)+1)
+	selfMember := c.membership.Self()
+	aliveMembers = append(aliveMembers, selfMember)
+	for _, m := range members {
+		if m.Status == MemberAlive && m.ID != c.config.NodeID {
+			aliveMembers = append(aliveMembers, m)
+		}
+	}
+
+	if len(aliveMembers) == 0 {
+		c.logger.Warn("No alive members for partition assignment", "topic", topic)
+		return
+	}
+
+	c.logger.Info("Auto-assigning partitions for horizontal scaling",
+		"topic", topic,
+		"partitions", numPartitions,
+		"nodes", len(aliveMembers))
+
+	// Distribute partitions round-robin across nodes
+	// This ensures even distribution of partition leadership
+	for i := 0; i < numPartitions; i++ {
+		leaderIdx := i % len(aliveMembers)
+		leader := aliveMembers[leaderIdx]
+
+		// Build replica list (for now, just the leader - replication will be added in Phase 4)
+		// In a full implementation, we'd select replicationFactor nodes
+		replicas := []string{leader.ID}
+		replicaAddrs := map[string]string{leader.ID: leader.Address}
+
+		// Add additional replicas for fault tolerance (up to replicationFactor)
+		replicationFactor := c.config.ReplicationFactor
+		if replicationFactor > len(aliveMembers) {
+			replicationFactor = len(aliveMembers)
+		}
+		for j := 1; j < replicationFactor; j++ {
+			replicaIdx := (leaderIdx + j) % len(aliveMembers)
+			replica := aliveMembers[replicaIdx]
+			replicas = append(replicas, replica.ID)
+			replicaAddrs[replica.ID] = replica.Address
+		}
+
+		if err := c.partitions.CreateAssignmentWithAddr(
+			topic, i,
+			leader.ID, leader.Address,
+			replicas, replicaAddrs,
+		); err != nil {
+			c.logger.Error("Failed to assign partition",
+				"topic", topic, "partition", i, "error", err)
+		} else {
+			c.logger.Info("Assigned partition",
+				"topic", topic,
+				"partition", i,
+				"leader", leader.ID,
+				"leader_addr", leader.Address,
+				"replicas", replicas)
+		}
+	}
+}
+
 func (c *Cluster) onLeaderChange(topic string, partition int, newLeader string) {
 	c.logger.Info("Partition leader changed", "topic", topic, "partition", partition, "new_leader", newLeader)
 
-	// If we're no longer the leader, we might need to start following the new leader
-	// In Raft-based replication, this is handled by the Raft consensus layer
-	// The actual data replication happens through Raft log replication
-	if newLeader != c.config.NodeID {
+	// Check if we're a replica for this partition
+	assignment, ok := c.partitions.GetAssignment(topic, partition)
+	if !ok {
+		c.logger.Warn("Partition assignment not found", "topic", topic, "partition", partition)
+		return
+	}
+
+	isReplica := false
+	for _, replica := range assignment.Replicas {
+		if replica == c.config.NodeID {
+			isReplica = true
+			break
+		}
+	}
+
+	if !isReplica {
+		// We're not a replica for this partition, nothing to do
+		return
+	}
+
+	if newLeader == c.config.NodeID {
+		// We became the leader - stop replication (we're now the source)
+		if err := c.replication.StopReplication(topic, partition); err != nil {
+			c.logger.Error("Failed to stop replication", "topic", topic, "partition", partition, "error", err)
+		} else {
+			c.logger.Info("Stopped replication - we are now the leader",
+				"topic", topic, "partition", partition)
+		}
+	} else {
+		// We're a follower - start replicating from the new leader
 		member, ok := c.membership.GetMember(newLeader)
 		if !ok {
 			c.logger.Error("Leader member not found", "leader", newLeader)
 			return
 		}
-		c.logger.Debug("Following new partition leader",
-			"topic", topic,
-			"partition", partition,
-			"leader", newLeader,
-			"leader_address", member.Address)
+
+		// Get the high watermark to start replication from
+		var startOffset uint64
+		c.mu.RLock()
+		replApplier := c.replApplier
+		c.mu.RUnlock()
+
+		if replApplier != nil {
+			hwm, err := replApplier.GetHighWatermark(topic, partition)
+			if err != nil {
+				c.logger.Warn("Failed to get high watermark, starting from 0",
+					"topic", topic, "partition", partition, "error", err)
+			} else {
+				startOffset = hwm
+			}
+		}
+
+		// Create write callback that writes to local storage
+		writeCallback := func(offset uint64, data []byte) error {
+			c.mu.RLock()
+			applier := c.replApplier
+			c.mu.RUnlock()
+
+			if applier == nil {
+				return fmt.Errorf("replication applier not set")
+			}
+			return applier.WriteReplicatedData(topic, partition, offset, data)
+		}
+
+		// Start replication with a context that's cancelled when the cluster stops
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-c.stopCh
+			cancel()
+		}()
+		if err := c.replication.StartReplication(ctx, topic, partition, member.Address, startOffset, writeCallback); err != nil {
+			c.logger.Error("Failed to start replication",
+				"topic", topic,
+				"partition", partition,
+				"leader", newLeader,
+				"leader_addr", member.Address,
+				"error", err)
+		} else {
+			c.logger.Info("Started replication from new leader",
+				"topic", topic,
+				"partition", partition,
+				"leader", newLeader,
+				"leader_addr", member.Address,
+				"start_offset", startOffset)
+		}
 	}
 }
 
@@ -897,6 +1375,10 @@ func (c *Cluster) applyEntry(entry LogEntry) {
 			c.logger.Error("Failed to apply create topic", "topic", payload.Name, "error", err)
 		} else {
 			c.logger.Info("Applied create topic", "topic", payload.Name, "partitions", payload.Partitions)
+
+			// Auto-assign partitions to nodes for horizontal scaling
+			// This distributes partition leadership across cluster members
+			c.autoAssignPartitions(payload.Name, payload.Partitions)
 		}
 
 	case CmdDeleteTopic:
@@ -962,6 +1444,16 @@ func (c *Cluster) applyEntry(entry LogEntry) {
 
 	case CmdDeleteACL:
 		c.applyACLCommand(cmd)
+
+	// Partition assignment commands for horizontal scaling
+	case CmdAssignPartition:
+		c.applyPartitionCommand(cmd)
+
+	case CmdUpdatePartitionLeader:
+		c.applyPartitionCommand(cmd)
+
+	case CmdUpdatePartitionISR:
+		c.applyPartitionCommand(cmd)
 
 	default:
 		c.logger.Warn("Unknown command type", "type", cmd.Type)
@@ -1047,5 +1539,84 @@ func (c *Cluster) applyACLCommand(cmd *Command) {
 		}
 		authApplier.ApplyDeleteACL(payload.Topic)
 		c.logger.Info("Applied delete ACL", "topic", payload.Topic)
+	}
+}
+
+// applyPartitionCommand applies partition assignment commands.
+// These commands manage partition-level leadership for horizontal scaling.
+func (c *Cluster) applyPartitionCommand(cmd *Command) {
+	switch cmd.Type {
+	case CmdAssignPartition:
+		payload, err := cmd.GetAssignPartitionPayload()
+		if err != nil {
+			c.logger.Error("Failed to get assign partition payload", "error", err)
+			return
+		}
+		// Create or update the partition assignment
+		if err := c.partitions.CreateAssignmentWithAddr(
+			payload.Topic,
+			payload.Partition,
+			payload.Leader,
+			payload.LeaderAddr,
+			payload.Replicas,
+			payload.ReplicaAddrs,
+		); err != nil {
+			c.logger.Error("Failed to apply assign partition",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"error", err)
+		} else {
+			c.logger.Info("Applied assign partition",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"leader", payload.Leader,
+				"leader_addr", payload.LeaderAddr)
+		}
+
+	case CmdUpdatePartitionLeader:
+		payload, err := cmd.GetUpdatePartitionLeaderPayload()
+		if err != nil {
+			c.logger.Error("Failed to get update partition leader payload", "error", err)
+			return
+		}
+		if err := c.partitions.UpdateLeaderWithAddr(
+			payload.Topic,
+			payload.Partition,
+			payload.NewLeader,
+			payload.NewLeaderAddr,
+		); err != nil {
+			c.logger.Error("Failed to apply update partition leader",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"error", err)
+		} else {
+			c.logger.Info("Applied update partition leader",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"new_leader", payload.NewLeader,
+				"reason", payload.Reason)
+		}
+
+	case CmdUpdatePartitionISR:
+		payload, err := cmd.GetUpdatePartitionISRPayload()
+		if err != nil {
+			c.logger.Error("Failed to get update partition ISR payload", "error", err)
+			return
+		}
+		if err := c.partitions.UpdateISR(
+			payload.Topic,
+			payload.Partition,
+			payload.ISR,
+		); err != nil {
+			c.logger.Error("Failed to apply update partition ISR",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"error", err)
+		} else {
+			c.logger.Info("Applied update partition ISR",
+				"topic", payload.Topic,
+				"partition", payload.Partition,
+				"isr", payload.ISR)
+		}
 	}
 }

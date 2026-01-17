@@ -327,3 +327,136 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// Cluster Metadata Protocol Tests
+// ============================================================================
+
+func TestClusterMetadataRequestEncodeDecode(t *testing.T) {
+	tests := []struct {
+		name  string
+		topic string
+	}{
+		{"empty topic", ""},
+		{"specific topic", "my-topic"},
+		{"topic with special chars", "my-topic-123_test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := BinaryClusterMetadataRequest{Topic: tt.topic}
+			encoded := EncodeBinaryClusterMetadataRequest(&req)
+
+			decoded, err := DecodeBinaryClusterMetadataRequest(encoded)
+			if err != nil {
+				t.Fatalf("Failed to decode: %v", err)
+			}
+
+			if decoded.Topic != tt.topic {
+				t.Errorf("Topic = %s, want %s", decoded.Topic, tt.topic)
+			}
+		})
+	}
+}
+
+func TestClusterMetadataResponseEncodeDecode(t *testing.T) {
+	tests := []struct {
+		name string
+		resp BinaryClusterMetadataResponse
+	}{
+		{
+			name: "empty response",
+			resp: BinaryClusterMetadataResponse{
+				ClusterID: "cluster-1",
+				Topics:    []TopicMetadata{},
+			},
+		},
+		{
+			name: "single topic single partition",
+			resp: BinaryClusterMetadataResponse{
+				ClusterID: "cluster-1",
+				Topics: []TopicMetadata{
+					{
+						Topic: "topic1",
+						Partitions: []PartitionMetadata{
+							{
+								Partition:  0,
+								LeaderID:   "node-1",
+								LeaderAddr: "localhost:9092",
+								Epoch:      1,
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "multiple topics multiple partitions",
+			resp: BinaryClusterMetadataResponse{
+				ClusterID: "cluster-abc",
+				Topics: []TopicMetadata{
+					{
+						Topic: "topic1",
+						Partitions: []PartitionMetadata{
+							{Partition: 0, LeaderID: "node-1", LeaderAddr: "host1:9092", Epoch: 1},
+							{Partition: 1, LeaderID: "node-2", LeaderAddr: "host2:9092", Epoch: 2},
+							{Partition: 2, LeaderID: "node-3", LeaderAddr: "host3:9092", Epoch: 1},
+						},
+					},
+					{
+						Topic: "topic2",
+						Partitions: []PartitionMetadata{
+							{Partition: 0, LeaderID: "node-2", LeaderAddr: "host2:9092", Epoch: 5},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded := EncodeBinaryClusterMetadataResponse(&tt.resp)
+
+			decoded, err := DecodeBinaryClusterMetadataResponse(encoded)
+			if err != nil {
+				t.Fatalf("Failed to decode: %v", err)
+			}
+
+			if decoded.ClusterID != tt.resp.ClusterID {
+				t.Errorf("ClusterID = %s, want %s", decoded.ClusterID, tt.resp.ClusterID)
+			}
+
+			if len(decoded.Topics) != len(tt.resp.Topics) {
+				t.Fatalf("Topics count = %d, want %d", len(decoded.Topics), len(tt.resp.Topics))
+			}
+
+			for i, topic := range decoded.Topics {
+				expected := tt.resp.Topics[i]
+				if topic.Topic != expected.Topic {
+					t.Errorf("Topic[%d].Topic = %s, want %s", i, topic.Topic, expected.Topic)
+				}
+
+				if len(topic.Partitions) != len(expected.Partitions) {
+					t.Fatalf("Topic[%d].Partitions count = %d, want %d", i, len(topic.Partitions), len(expected.Partitions))
+				}
+
+				for j, part := range topic.Partitions {
+					exp := expected.Partitions[j]
+					if part.Partition != exp.Partition {
+						t.Errorf("Partition = %d, want %d", part.Partition, exp.Partition)
+					}
+					if part.LeaderID != exp.LeaderID {
+						t.Errorf("LeaderID = %s, want %s", part.LeaderID, exp.LeaderID)
+					}
+					if part.LeaderAddr != exp.LeaderAddr {
+						t.Errorf("LeaderAddr = %s, want %s", part.LeaderAddr, exp.LeaderAddr)
+					}
+					if part.Epoch != exp.Epoch {
+						t.Errorf("Epoch = %d, want %d", part.Epoch, exp.Epoch)
+					}
+				}
+			}
+		})
+	}
+}
+

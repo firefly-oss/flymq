@@ -154,6 +154,47 @@ type Cluster interface {
 	// ACL management cluster operations
 	ProposeSetACL(topic string, public bool, allowedUsers, allowedRoles []string) error
 	ProposeDeleteACL(topic string) error
+
+	// Partition-level leadership for horizontal scaling
+	// These methods enable routing to partition leaders instead of Raft leader
+	IsPartitionLeader(topic string, partition int) bool
+	GetPartitionLeaderInfo(topic string, partition int) (*PartitionLeaderInfo, bool)
+	GetAllPartitionLeaders(topic string) []*PartitionLeaderInfo
+	GetPartitionAssignment(topic string, partition int) (*PartitionAssignment, bool)
+	GetTopicPartitionAssignments(topic string) []*PartitionAssignment
+	ProposeAssignPartition(topic string, partition int, leader, leaderAddr string, replicas []string, replicaAddrs map[string]string) error
+
+	// Partition management operations
+	TriggerRebalance() error
+	ReassignPartition(topic string, partition int, newLeader string, replicas []string) error
+
+	// Node information for inter-node communication
+	NodeID() string
+	NodeAddr() string // Client-facing address of this node
+}
+
+// PartitionAssignment represents the full assignment of a partition including replicas and ISR.
+type PartitionAssignment struct {
+	Topic        string            `json:"topic"`
+	Partition    int               `json:"partition"`
+	Leader       string            `json:"leader"`       // Node ID of the partition leader
+	LeaderAddr   string            `json:"leader_addr"`  // Client-facing address of leader
+	Replicas     []string          `json:"replicas"`     // Node IDs of all replicas (including leader)
+	ISR          []string          `json:"isr"`          // In-Sync Replicas (node IDs)
+	State        string            `json:"state"`        // "online", "offline", "reassigning", "syncing"
+	ReplicaAddrs map[string]string `json:"replica_addrs"` // Node ID -> client address
+	Epoch        uint64            `json:"epoch"`        // Incremented on leader change for fencing
+}
+
+// PartitionLeaderInfo contains routing information for a partition leader.
+// Used by clients and brokers to route requests to the correct node.
+type PartitionLeaderInfo struct {
+	Topic       string `json:"topic"`
+	Partition   int    `json:"partition"`
+	LeaderID    string `json:"leader_id"`
+	LeaderAddr  string `json:"leader_addr"`  // Client-facing address (host:port)
+	Epoch       uint64 `json:"epoch"`        // For leader fencing
+	IsLocalNode bool   `json:"-"`            // True if this node is the leader
 }
 
 // RaftState represents the current Raft consensus state.
@@ -366,6 +407,34 @@ func (b *Broker) IsClusterMode() bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.cluster != nil
+}
+
+// TriggerRebalance triggers a partition rebalance to distribute leaders evenly.
+// Returns an error if not in cluster mode or if the rebalance fails.
+func (b *Broker) TriggerRebalance() error {
+	b.mu.RLock()
+	cluster := b.cluster
+	b.mu.RUnlock()
+
+	if cluster == nil {
+		return fmt.Errorf("partition rebalancing is only available in cluster mode")
+	}
+
+	return cluster.TriggerRebalance()
+}
+
+// ReassignPartition reassigns a partition to a new leader and/or replicas.
+// Returns an error if not in cluster mode or if the reassignment fails.
+func (b *Broker) ReassignPartition(topic string, partition int, newLeader string, replicas []string) error {
+	b.mu.RLock()
+	cluster := b.cluster
+	b.mu.RUnlock()
+
+	if cluster == nil {
+		return fmt.Errorf("partition reassignment is only available in cluster mode")
+	}
+
+	return cluster.ReassignPartition(topic, partition, newLeader, replicas)
 }
 
 // GetClusterInfo returns basic information about the cluster.
@@ -631,38 +700,45 @@ func (b *Broker) Produce(topic string, data []byte) (uint64, error) {
 // ProduceWithKey writes a message to a topic with an optional key.
 // If key is provided, the partition is determined by hashing the key.
 // If key is nil, round-robin partition selection is used.
-// In cluster mode, only the leader can accept writes (like Kafka).
+// In cluster mode, uses partition-level leadership for horizontal scaling.
+// Each partition can have a different leader, distributing write load across nodes.
 func (b *Broker) ProduceWithKey(topic string, key, data []byte) (uint64, error) {
+	offset, _, err := b.ProduceWithKeyAndPartition(topic, key, data)
+	return offset, err
+}
+
+// ProduceWithKeyAndPartition writes a message to a topic with an optional key
+// and returns both the offset and the partition the message was written to.
+// This is useful when the caller needs to know the partition for the response.
+func (b *Broker) ProduceWithKeyAndPartition(topic string, key, data []byte) (uint64, int, error) {
 	b.mu.RLock()
 	t, exists := b.topics[topic]
 	cluster := b.cluster
 	b.mu.RUnlock()
 
-	// In cluster mode, use direct local writes on leader (like Kafka's ISR model)
-	// This avoids Raft log overhead for message data
+	// In cluster mode, use partition-level leadership (like Kafka)
+	// Each partition can have a different leader for horizontal scaling
 	if cluster != nil {
-		// Check if we're the leader - only leader accepts writes
-		if !cluster.IsLeader() {
-			// Return "not leader" error with leader address for client failover
-			leaderAddr := cluster.LeaderAddr()
-			if leaderAddr != "" {
-				return 0, fmt.Errorf("not leader: leader_addr=%s", leaderAddr)
-			}
-			return 0, fmt.Errorf("not leader: no leader elected")
-		}
-
-		// Auto-create topic if needed (via Raft for consistency)
+		// Auto-create topic if needed (via Raft for metadata consistency)
 		if !exists {
+			// Only the Raft leader can create topics
+			if !cluster.IsLeader() {
+				leaderAddr := cluster.LeaderAddr()
+				if leaderAddr != "" {
+					return 0, -1, fmt.Errorf("not leader: leader_addr=%s", leaderAddr)
+				}
+				return 0, -1, fmt.Errorf("not leader: no leader elected")
+			}
+
 			if err := cluster.ProposeCreateTopic(topic, 6); err != nil {
 				// Ignore "already exists" - might be concurrent create
 				if !strings.Contains(err.Error(), "already exists") &&
 					!strings.Contains(err.Error(), "not leader") {
-					return 0, fmt.Errorf("failed to create topic: %w", err)
+					return 0, -1, fmt.Errorf("failed to create topic: %w", err)
 				}
 			}
 
 			// Wait for topic to be applied locally (Raft apply is async)
-			// Retry up to 50 times with 10ms delay = 500ms max wait
 			for i := 0; i < 50; i++ {
 				b.mu.RLock()
 				t = b.topics[topic]
@@ -676,24 +752,53 @@ func (b *Broker) ProduceWithKey(topic string, key, data []byte) (uint64, error) 
 			}
 
 			if !exists || t == nil {
-				return 0, fmt.Errorf("topic %s not ready after create (timeout)", topic)
+				return 0, -1, fmt.Errorf("topic %s not ready after create (timeout)", topic)
 			}
 		}
 
-		// Select partition
+		// Select partition based on key or round-robin
 		partition := b.selectPartition(t, key)
 
-		// Write directly to local log (leader fast path)
+		// Check if we're the partition leader (not Raft leader)
+		// This enables horizontal scaling - different partitions can have different leaders
+		leaderInfo, hasAssignment := cluster.GetPartitionLeaderInfo(topic, partition)
+
+		if hasAssignment {
+			// We have partition assignment metadata
+			if !leaderInfo.IsLocalNode {
+				// Not the partition leader - return error with partition leader address
+				if leaderInfo.LeaderAddr != "" {
+					return 0, partition, fmt.Errorf("not partition leader: partition=%d leader_addr=%s",
+						partition, leaderInfo.LeaderAddr)
+				}
+				return 0, partition, fmt.Errorf("not partition leader: partition=%d leader=%s",
+					partition, leaderInfo.LeaderID)
+			}
+			// We are the partition leader - write locally
+		} else {
+			// No partition assignment yet - fall back to Raft leader behavior
+			// This happens during initial topic creation before assignments are distributed
+			if !cluster.IsLeader() {
+				leaderAddr := cluster.LeaderAddr()
+				if leaderAddr != "" {
+					return 0, partition, fmt.Errorf("not leader: leader_addr=%s", leaderAddr)
+				}
+				return 0, partition, fmt.Errorf("not leader: no leader elected")
+			}
+		}
+
+		// Write directly to local log (partition leader fast path)
 		p := t.Partitions[partition]
 		record := storage.EncodeRecord(key, data)
-		return p.Log.Append(record)
+		offset, err := p.Log.Append(record)
+		return offset, partition, err
 	}
 
 	// Standalone mode
 	if !exists {
 		// Auto-create topic with 1 partition
 		if err := b.CreateTopic(topic, 1); err != nil {
-			return 0, err
+			return 0, -1, err
 		}
 		b.mu.RLock()
 		t = b.topics[topic]
@@ -706,7 +811,8 @@ func (b *Broker) ProduceWithKey(topic string, key, data []byte) (uint64, error) 
 	// Standalone mode - write directly using record format
 	p := t.Partitions[partition]
 	record := storage.EncodeRecord(key, data)
-	return p.Log.Append(record)
+	offset, err := p.Log.Append(record)
+	return offset, partition, err
 }
 
 // selectPartition determines which partition to write to.
@@ -1071,10 +1177,15 @@ func (b *Broker) GetTopicInfo(topic string) (*TopicInfo, error) {
 	for i, p := range t.Partitions {
 		low, _ := p.Log.LowestOffset()
 		high, _ := p.Log.HighestOffset()
+		var msgCount uint64
+		if high >= low {
+			msgCount = high - low + 1
+		}
 		info.Partitions[i] = PartitionInfo{
 			ID:            p.ID,
 			LowestOffset:  low,
 			HighestOffset: high,
+			MessageCount:  msgCount,
 		}
 	}
 
@@ -1092,6 +1203,24 @@ type PartitionInfo struct {
 	ID            int    `json:"id"`
 	LowestOffset  uint64 `json:"lowest_offset"`
 	HighestOffset uint64 `json:"highest_offset"`
+	MessageCount  uint64 `json:"message_count"`
+}
+
+// GetTopicMessageCount returns the total number of messages in a topic across all partitions.
+func (b *Broker) GetTopicMessageCount(topic string) (int64, error) {
+	info, err := b.GetTopicInfo(topic)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	for _, p := range info.Partitions {
+		// Message count is high - low + 1 (if there are any messages)
+		if p.HighestOffset >= p.LowestOffset {
+			total += int64(p.HighestOffset - p.LowestOffset + 1)
+		}
+	}
+	return total, nil
 }
 
 // ConsumerGroupInfo contains information about a consumer group.
@@ -1150,4 +1279,206 @@ func (b *Broker) GetConsumerGroup(topic, groupID string) (*ConsumerGroupInfo, er
 // DeleteConsumerGroup removes a consumer group.
 func (b *Broker) DeleteConsumerGroup(topic, groupID string) error {
 	return b.consumers.DeleteGroup(topic, groupID)
+}
+
+// ============================================================================
+// ReplicationApplier Implementation for Partition Data Replication
+// ============================================================================
+
+// WriteReplicatedData writes replicated data to a partition's log.
+// This is called by followers when receiving data from partition leaders.
+func (b *Broker) WriteReplicatedData(topic string, partition int, offset uint64, data []byte) error {
+	b.mu.RLock()
+	t, exists := b.topics[topic]
+	b.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("topic not found: %s", topic)
+	}
+
+	if partition >= len(t.Partitions) || partition < 0 {
+		return fmt.Errorf("partition %d not found for topic %s", partition, topic)
+	}
+
+	p := t.Partitions[partition]
+
+	// Write the data at the specified offset
+	// The storage layer should handle offset validation
+	_, err := p.Log.Append(data)
+	if err != nil {
+		return fmt.Errorf("failed to write replicated data: %w", err)
+	}
+
+	return nil
+}
+
+// GetHighWatermark returns the highest offset written to a partition.
+// This is used to determine where to start replication from.
+func (b *Broker) GetHighWatermark(topic string, partition int) (uint64, error) {
+	b.mu.RLock()
+	t, exists := b.topics[topic]
+	b.mu.RUnlock()
+
+	if !exists {
+		return 0, fmt.Errorf("topic not found: %s", topic)
+	}
+
+	if partition >= len(t.Partitions) || partition < 0 {
+		return 0, fmt.Errorf("partition %d not found for topic %s", partition, topic)
+	}
+
+	p := t.Partitions[partition]
+	return p.Log.HighestOffset()
+}
+
+// GetClusterMetadata returns partition-to-node mappings for smart client routing.
+// If topic is empty, returns metadata for all topics.
+func (b *Broker) GetClusterMetadata(topic string) (*protocol.BinaryClusterMetadataResponse, error) {
+	if b.cluster == nil {
+		// Standalone mode - return local node as leader for all partitions
+		return b.getStandaloneMetadata(topic)
+	}
+
+	return b.getClusterMetadata(topic)
+}
+
+// getStandaloneMetadata returns metadata for standalone mode.
+func (b *Broker) getStandaloneMetadata(topic string) (*protocol.BinaryClusterMetadataResponse, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	resp := &protocol.BinaryClusterMetadataResponse{
+		ClusterID: "standalone",
+		Topics:    make([]protocol.TopicMetadata, 0),
+	}
+
+	// Get local address from config
+	localAddr := b.config.BindAddr
+	nodeID := b.config.NodeID
+
+	if topic != "" {
+		// Single topic
+		t, exists := b.topics[topic]
+		if !exists {
+			return nil, fmt.Errorf("topic not found: %s", topic)
+		}
+
+		partitions := make([]protocol.PartitionMetadata, len(t.Partitions))
+		for i := range t.Partitions {
+			partitions[i] = protocol.PartitionMetadata{
+				Partition:  int32(i),
+				LeaderID:   nodeID,
+				LeaderAddr: localAddr,
+				Epoch:      1,
+				State:      "online",
+				Replicas:   []string{nodeID},
+				ISR:        []string{nodeID},
+			}
+		}
+		resp.Topics = append(resp.Topics, protocol.TopicMetadata{
+			Topic:      topic,
+			Partitions: partitions,
+		})
+	} else {
+		// All topics
+		for name, t := range b.topics {
+			partitions := make([]protocol.PartitionMetadata, len(t.Partitions))
+			for i := range t.Partitions {
+				partitions[i] = protocol.PartitionMetadata{
+					Partition:  int32(i),
+					LeaderID:   nodeID,
+					LeaderAddr: localAddr,
+					Epoch:      1,
+					State:      "online",
+					Replicas:   []string{nodeID},
+					ISR:        []string{nodeID},
+				}
+			}
+			resp.Topics = append(resp.Topics, protocol.TopicMetadata{
+				Topic:      name,
+				Partitions: partitions,
+			})
+		}
+	}
+
+	return resp, nil
+}
+
+// getClusterMetadata returns metadata from the cluster.
+func (b *Broker) getClusterMetadata(topic string) (*protocol.BinaryClusterMetadataResponse, error) {
+	resp := &protocol.BinaryClusterMetadataResponse{
+		ClusterID: b.config.NodeID, // Use node ID as cluster ID for now
+		Topics:    make([]protocol.TopicMetadata, 0),
+	}
+
+	b.mu.RLock()
+	topics := make([]string, 0)
+	if topic != "" {
+		if _, exists := b.topics[topic]; !exists {
+			b.mu.RUnlock()
+			return nil, fmt.Errorf("topic not found: %s", topic)
+		}
+		topics = append(topics, topic)
+	} else {
+		for name := range b.topics {
+			topics = append(topics, name)
+		}
+	}
+	b.mu.RUnlock()
+
+	// Get partition metadata from cluster using full assignment info
+	for _, topicName := range topics {
+		b.mu.RLock()
+		t := b.topics[topicName]
+		numPartitions := len(t.Partitions)
+		b.mu.RUnlock()
+
+		partitions := make([]protocol.PartitionMetadata, numPartitions)
+		for i := 0; i < numPartitions; i++ {
+			assignment, ok := b.cluster.GetPartitionAssignment(topicName, i)
+			if ok && assignment != nil {
+				partitions[i] = protocol.PartitionMetadata{
+					Partition:  int32(i),
+					LeaderID:   assignment.Leader,
+					LeaderAddr: assignment.LeaderAddr,
+					Epoch:      assignment.Epoch,
+					State:      assignment.State,
+					Replicas:   assignment.Replicas,
+					ISR:        assignment.ISR,
+				}
+			} else {
+				// No assignment info available - use leader info as fallback
+				info, infoOk := b.cluster.GetPartitionLeaderInfo(topicName, i)
+				if infoOk && info != nil {
+					partitions[i] = protocol.PartitionMetadata{
+						Partition:  int32(i),
+						LeaderID:   info.LeaderID,
+						LeaderAddr: info.LeaderAddr,
+						Epoch:      info.Epoch,
+						State:      "online",
+						Replicas:   []string{info.LeaderID},
+						ISR:        []string{info.LeaderID},
+					}
+				} else {
+					// No info available - use empty values with offline state
+					partitions[i] = protocol.PartitionMetadata{
+						Partition:  int32(i),
+						LeaderID:   "",
+						LeaderAddr: "",
+						Epoch:      0,
+						State:      "offline",
+						Replicas:   []string{},
+						ISR:        []string{},
+					}
+				}
+			}
+		}
+
+		resp.Topics = append(resp.Topics, protocol.TopicMetadata{
+			Topic:      topicName,
+			Partitions: partitions,
+		})
+	}
+
+	return resp, nil
 }
