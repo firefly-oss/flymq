@@ -1184,22 +1184,9 @@ EOF
 # Installation
 # =============================================================================
 
-check_dependencies() {
-    print_step "Checking dependencies"
-    echo ""
-
-    if ! command -v go &> /dev/null; then
-        print_error "Go is not installed. Please install Go 1.21+ first."
-        print_info "Visit: ${CYAN}https://go.dev/dl/${RESET}"
-        exit 1
-    fi
-
-    GO_VERSION=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | sed 's/go//')
-    print_success "Go $GO_VERSION found"
-}
-
-# Track if we cloned the repo (for cleanup)
+# Track if we need to clone the repo (detected early)
 CLONED_REPO_DIR=""
+NEEDS_REMOTE_CLONE=false
 
 # Cleanup function for cloned repo - called on exit/error
 cleanup_cloned_repo() {
@@ -1208,6 +1195,48 @@ cleanup_cloned_repo() {
         print_info "Cleaning up temporary files..."
         rm -rf "${CLONED_REPO_DIR}"
         CLONED_REPO_DIR=""
+    fi
+}
+
+# Detect if we're in the repo or need to clone
+detect_source_mode() {
+    # Check if we're already in the FlyMQ repository
+    if [[ -f "go.mod" ]] && grep -q "module flymq" go.mod 2>/dev/null; then
+        NEEDS_REMOTE_CLONE=false
+        return 0
+    fi
+
+    # Check if we're in a subdirectory of the repo
+    if [[ -f "${SCRIPT_DIR}/go.mod" ]] && grep -q "module flymq" "${SCRIPT_DIR}/go.mod" 2>/dev/null; then
+        NEEDS_REMOTE_CLONE=false
+        return 0
+    fi
+
+    # Not in repo - will need to clone
+    NEEDS_REMOTE_CLONE=true
+}
+
+check_dependencies() {
+    print_step "Checking dependencies"
+    echo ""
+
+    # Always need Go
+    if ! command -v go &> /dev/null; then
+        print_error "Go is not installed. Please install Go 1.21+ first."
+        print_info "Visit: ${CYAN}https://go.dev/dl/${RESET}"
+        exit 1
+    fi
+    GO_VERSION=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | sed 's/go//')
+    print_success "Go $GO_VERSION found"
+
+    # Need Git if running via curl (remote install)
+    if [[ "$NEEDS_REMOTE_CLONE" == true ]]; then
+        if ! command -v git &> /dev/null; then
+            print_error "Git is not installed. Required for remote installation."
+            print_info "Install git or clone manually: ${CYAN}git clone https://github.com/firefly-oss/flymq.git${RESET}"
+            exit 1
+        fi
+        print_success "Git found"
     fi
 }
 
@@ -1225,40 +1254,23 @@ ensure_source_code() {
         return 0
     fi
 
-    # Not in repo - need to clone it (running via curl)
+    # Not in repo - clone from GitHub
     print_step "Downloading FlyMQ source code"
     echo ""
 
-    # Check for git
-    if ! command -v git &> /dev/null; then
-        print_error "Git is not installed. Please install git first."
-        print_info "Or clone the repository manually: ${CYAN}git clone https://github.com/firefly-oss/flymq.git${RESET}"
+    # Create temp directory for clone
+    CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
+    print_info "Cloning to: ${CYAN}${CLONED_REPO_DIR}${RESET}"
+
+    # Clone main branch
+    echo -n "  "
+    if ! git clone --depth 1 https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
+        print_error "Failed to clone FlyMQ repository"
+        rm -rf "${CLONED_REPO_DIR}"
+        CLONED_REPO_DIR=""
         exit 1
     fi
-    print_success "Git found"
-
-    # Create temp directory for clone in /tmp
-    CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
-    print_info "Cloning to temporary directory: ${CYAN}${CLONED_REPO_DIR}${RESET}"
-
-    # Try versioned tag first
-    echo -n "  "
-    if git clone --depth 1 --branch "v${FLYMQ_VERSION}" https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
-        print_success "Cloned FlyMQ v${FLYMQ_VERSION}"
-    else
-        # Tag not found - clean up and try main branch
-        rm -rf "${CLONED_REPO_DIR}"
-        CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
-        print_warning "Tag v${FLYMQ_VERSION} not found, trying main branch..."
-        echo -n "  "
-        if ! git clone --depth 1 https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
-            print_error "Failed to clone FlyMQ repository"
-            rm -rf "${CLONED_REPO_DIR}"
-            CLONED_REPO_DIR=""
-            exit 1
-        fi
-        print_success "Cloned FlyMQ (main branch)"
-    fi
+    print_success "Cloned FlyMQ repository"
 
     # Verify the clone was successful
     if [[ ! -f "${CLONED_REPO_DIR}/go.mod" ]]; then
@@ -1270,7 +1282,6 @@ ensure_source_code() {
 
     # Change to cloned directory
     cd "${CLONED_REPO_DIR}"
-    print_success "Source code ready"
 }
 
 build_binaries() {
@@ -2446,6 +2457,7 @@ main() {
     fi
 
     echo ""
+    detect_source_mode
     check_dependencies
     ensure_source_code
     build_binaries
