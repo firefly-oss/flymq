@@ -1908,6 +1908,20 @@ configure_section_performance() {
 
     echo -e "  ${BOLD}Logging${RESET}"
     CFG_LOG_LEVEL=$(prompt_choice "Log level" "${CFG_LOG_LEVEL}" "debug" "info" "warn" "error")
+    echo ""
+
+    echo -e "  ${BOLD}Platform Optimizations${RESET} ${DIM}(automatic)${RESET}"
+    case "$OS" in
+        linux)
+            echo -e "    ${GREEN}✓${RESET} Zero-copy I/O: ${GREEN}sendfile + splice${RESET}"
+            ;;
+        darwin)
+            echo -e "    ${GREEN}✓${RESET} Zero-copy I/O: ${GREEN}sendfile${RESET} ${DIM}(reads only)${RESET}"
+            ;;
+        *)
+            echo -e "    ${YELLOW}○${RESET} Zero-copy I/O: ${YELLOW}Buffered fallback${RESET}"
+            ;;
+    esac
 }
 
 show_final_configuration() {
