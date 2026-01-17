@@ -447,7 +447,7 @@ func TestConsumerGroupResumeFromCommit(t *testing.T) {
 	}
 
 	// Fetch remaining messages using FetchWithKeys to verify content
-	fetchedMessages, nextOffset, err := b.FetchWithKeys(topic, 0, resumeOffset, 10)
+	fetchedMessages, nextOffset, err := b.FetchWithKeys(topic, 0, resumeOffset, 10, "")
 	if err != nil {
 		t.Fatalf("Fetch (resume) failed: %v", err)
 	}

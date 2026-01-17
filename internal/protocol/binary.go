@@ -27,24 +27,27 @@ Binary encoding eliminates this overhead by using a compact binary format.
 
 BINARY PRODUCE REQUEST FORMAT:
 ==============================
-  [2 bytes] topic length (uint16, big-endian)
-  [N bytes] topic name (UTF-8)
-  [4 bytes] key length (uint32, big-endian, 0 = no key)
-  [K bytes] key data
-  [4 bytes] value length (uint32, big-endian)
-  [V bytes] value data
-  [4 bytes] partition (int32, big-endian, -1 = auto)
+
+	[2 bytes] topic length (uint16, big-endian)
+	[N bytes] topic name (UTF-8)
+	[4 bytes] key length (uint32, big-endian, 0 = no key)
+	[K bytes] key data
+	[4 bytes] value length (uint32, big-endian)
+	[V bytes] value data
+	[4 bytes] partition (int32, big-endian, -1 = auto)
 
 BINARY PRODUCE RESPONSE FORMAT:
 ===============================
-  [8 bytes] offset (uint64, big-endian)
-  [4 bytes] partition (int32, big-endian)
+
+	[8 bytes] offset (uint64, big-endian)
+	[4 bytes] partition (int32, big-endian)
 
 FLAG USAGE:
 ===========
 The Flags byte in the header indicates binary mode:
-  0x01 = Binary payload (vs JSON)
-  0x02 = Compressed (future)
+
+	0x01 = Binary payload (vs JSON)
+	0x02 = Compressed (future)
 */
 package protocol
 
@@ -80,12 +83,12 @@ type BinaryProduceRequest struct {
 //
 // Binary format: [2B topic_len][topic][4B partition][8B offset][8B timestamp][4B key_size][4B value_size]
 type RecordMetadata struct {
-	Topic       string // Topic name
-	Partition   int32  // Partition the record was sent to
-	Offset      uint64 // Offset of the record in the partition
-	Timestamp   int64  // Timestamp in milliseconds (Unix epoch)
-	KeySize     int32  // Size of the key in bytes (-1 if no key)
-	ValueSize   int32  // Size of the value in bytes
+	Topic     string // Topic name
+	Partition int32  // Partition the record was sent to
+	Offset    uint64 // Offset of the record in the partition
+	Timestamp int64  // Timestamp in milliseconds (Unix epoch)
+	KeySize   int32  // Size of the key in bytes (-1 if no key)
+	ValueSize int32  // Size of the value in bytes
 }
 
 var (
@@ -597,12 +600,14 @@ type BinaryFetchRequest struct {
 	Partition   int32
 	Offset      uint64
 	MaxMessages int32
+	Filter      string // Optional regex filter to apply server-side
 }
 
 // EncodeBinaryFetchRequest encodes a fetch request to binary format.
 func EncodeBinaryFetchRequest(req *BinaryFetchRequest) []byte {
 	topicLen := len(req.Topic)
-	buf := make([]byte, 2+topicLen+4+8+4)
+	filterLen := len(req.Filter)
+	buf := make([]byte, 2+topicLen+4+8+4+2+filterLen)
 	offset := 0
 
 	binary.BigEndian.PutUint16(buf[offset:], uint16(topicLen))
@@ -614,6 +619,13 @@ func EncodeBinaryFetchRequest(req *BinaryFetchRequest) []byte {
 	binary.BigEndian.PutUint64(buf[offset:], req.Offset)
 	offset += 8
 	binary.BigEndian.PutUint32(buf[offset:], uint32(req.MaxMessages))
+	offset += 4
+
+	binary.BigEndian.PutUint16(buf[offset:], uint16(filterLen))
+	offset += 2
+	if filterLen > 0 {
+		copy(buf[offset:], req.Filter)
+	}
 
 	return buf
 }
@@ -631,12 +643,24 @@ func DecodeBinaryFetchRequest(data []byte) (*BinaryFetchRequest, error) {
 		return nil, ErrInvalidBinaryFormat
 	}
 
-	return &BinaryFetchRequest{
+	req := &BinaryFetchRequest{
 		Topic:       string(data[offset : offset+topicLen]),
 		Partition:   int32(binary.BigEndian.Uint32(data[offset+topicLen:])),
 		Offset:      binary.BigEndian.Uint64(data[offset+topicLen+4:]),
 		MaxMessages: int32(binary.BigEndian.Uint32(data[offset+topicLen+12:])),
-	}, nil
+	}
+	offset += topicLen + 16
+
+	// Optional filter (v1.1+ compat)
+	if offset+2 <= len(data) {
+		filterLen := int(binary.BigEndian.Uint16(data[offset:]))
+		offset += 2
+		if offset+filterLen <= len(data) {
+			req.Filter = string(data[offset : offset+filterLen])
+		}
+	}
+
+	return req, nil
 }
 
 // BinaryFetchMessage represents a single message in a binary fetch response.
@@ -1161,16 +1185,16 @@ func DecodeBinaryMetadataRequest(data []byte) (*BinaryMetadataRequest, error) {
 
 // BinaryPartitionInfo represents partition metadata.
 type BinaryPartitionInfo struct {
-	ID            int32
-	LeaderID      int32
-	OldestOffset  uint64
-	NewestOffset  uint64
+	ID           int32
+	LeaderID     int32
+	OldestOffset uint64
+	NewestOffset uint64
 }
 
 // BinaryMetadataResponse represents a binary metadata response.
 type BinaryMetadataResponse struct {
-	Topic       string
-	Partitions  []BinaryPartitionInfo
+	Topic      string
+	Partitions []BinaryPartitionInfo
 }
 
 // EncodeBinaryMetadataResponse encodes a metadata response.
@@ -2453,121 +2477,121 @@ func EncodeBinaryRoleListResponse(resp *BinaryRoleListResponse) []byte {
 
 // BinaryGetOffsetRequest represents a request to get a committed offset.
 type BinaryGetOffsetRequest struct {
-    Topic     string
-    GroupID   string
-    Partition int32
+	Topic     string
+	GroupID   string
+	Partition int32
 }
 
 // EncodeBinaryGetOffsetRequest encodes a get-offset request.
 func EncodeBinaryGetOffsetRequest(req *BinaryGetOffsetRequest) []byte {
-    topicLen := len(req.Topic)
-    groupLen := len(req.GroupID)
-    buf := make([]byte, 2+topicLen+2+groupLen+4)
-    off := 0
-    binary.BigEndian.PutUint16(buf[off:], uint16(topicLen))
-    off += 2
-    copy(buf[off:], req.Topic)
-    off += topicLen
-    binary.BigEndian.PutUint16(buf[off:], uint16(groupLen))
-    off += 2
-    copy(buf[off:], req.GroupID)
-    off += groupLen
-    binary.BigEndian.PutUint32(buf[off:], uint32(req.Partition))
-    return buf
+	topicLen := len(req.Topic)
+	groupLen := len(req.GroupID)
+	buf := make([]byte, 2+topicLen+2+groupLen+4)
+	off := 0
+	binary.BigEndian.PutUint16(buf[off:], uint16(topicLen))
+	off += 2
+	copy(buf[off:], req.Topic)
+	off += topicLen
+	binary.BigEndian.PutUint16(buf[off:], uint16(groupLen))
+	off += 2
+	copy(buf[off:], req.GroupID)
+	off += groupLen
+	binary.BigEndian.PutUint32(buf[off:], uint32(req.Partition))
+	return buf
 }
 
 // DecodeBinaryGetOffsetRequest decodes a get-offset request.
 func DecodeBinaryGetOffsetRequest(data []byte) (*BinaryGetOffsetRequest, error) {
-    if len(data) < 8 {
-        return nil, ErrBufferTooSmall
-    }
-    off := 0
-    tlen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+tlen+6 > len(data) {
-        return nil, ErrInvalidBinaryFormat
-    }
-    topic := string(data[off : off+tlen])
-    off += tlen
-    glen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+glen+4 > len(data) {
-        return nil, ErrInvalidBinaryFormat
-    }
-    group := string(data[off : off+glen])
-    off += glen
-    part := int32(binary.BigEndian.Uint32(data[off:]))
-    return &BinaryGetOffsetRequest{Topic: topic, GroupID: group, Partition: part}, nil
+	if len(data) < 8 {
+		return nil, ErrBufferTooSmall
+	}
+	off := 0
+	tlen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+tlen+6 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	topic := string(data[off : off+tlen])
+	off += tlen
+	glen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+glen+4 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	group := string(data[off : off+glen])
+	off += glen
+	part := int32(binary.BigEndian.Uint32(data[off:]))
+	return &BinaryGetOffsetRequest{Topic: topic, GroupID: group, Partition: part}, nil
 }
 
 // BinaryGetOffsetResponse represents a committed offset response.
 type BinaryGetOffsetResponse struct {
-    Offset uint64
+	Offset uint64
 }
 
 // EncodeBinaryGetOffsetResponse encodes a get-offset response.
 func EncodeBinaryGetOffsetResponse(resp *BinaryGetOffsetResponse) []byte {
-    buf := make([]byte, 8)
-    binary.BigEndian.PutUint64(buf, resp.Offset)
-    return buf
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, resp.Offset)
+	return buf
 }
 
 // DecodeBinaryGetOffsetResponse decodes a get-offset response.
 func DecodeBinaryGetOffsetResponse(data []byte) (*BinaryGetOffsetResponse, error) {
-    if len(data) < 8 {
-        return nil, ErrBufferTooSmall
-    }
-    return &BinaryGetOffsetResponse{Offset: binary.BigEndian.Uint64(data)}, nil
+	if len(data) < 8 {
+		return nil, ErrBufferTooSmall
+	}
+	return &BinaryGetOffsetResponse{Offset: binary.BigEndian.Uint64(data)}, nil
 }
 
 // BinaryResetOffsetRequest represents a request to reset offset.
 // Mode: "earliest", "latest", or "offset". If mode=="offset", Offset is used.
 type BinaryResetOffsetRequest struct {
-    Topic     string
-    GroupID   string
-    Partition int32
-    Mode      string
-    Offset    uint64
+	Topic     string
+	GroupID   string
+	Partition int32
+	Mode      string
+	Offset    uint64
 }
 
 // DecodeBinaryResetOffsetRequest decodes a reset-offset request.
 // Format: [2B topic][topic][2B group][group][4B partition][1B mode_len][mode][optional 8B offset]
 func DecodeBinaryResetOffsetRequest(data []byte) (*BinaryResetOffsetRequest, error) {
-    if len(data) < 9 {
-        return nil, ErrBufferTooSmall
-    }
-    off := 0
-    tlen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+tlen+7 > len(data) {
-        return nil, ErrInvalidBinaryFormat
-    }
-    topic := string(data[off : off+tlen])
-    off += tlen
-    glen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+glen+5 > len(data) {
-        return nil, ErrInvalidBinaryFormat
-    }
-    group := string(data[off : off+glen])
-    off += glen
-    part := int32(binary.BigEndian.Uint32(data[off:]))
-    off += 4
-    mlen := int(data[off])
-    off++
-    if off+mlen > len(data) {
-        return nil, ErrInvalidBinaryFormat
-    }
-    mode := string(data[off : off+mlen])
-    off += mlen
-    var explicit uint64
-    if mode == "offset" {
-        if off+8 > len(data) {
-            return nil, ErrInvalidBinaryFormat
-        }
-        explicit = binary.BigEndian.Uint64(data[off:])
-    }
-    return &BinaryResetOffsetRequest{Topic: topic, GroupID: group, Partition: part, Mode: mode, Offset: explicit}, nil
+	if len(data) < 9 {
+		return nil, ErrBufferTooSmall
+	}
+	off := 0
+	tlen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+tlen+7 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	topic := string(data[off : off+tlen])
+	off += tlen
+	glen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+glen+5 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	group := string(data[off : off+glen])
+	off += glen
+	part := int32(binary.BigEndian.Uint32(data[off:]))
+	off += 4
+	mlen := int(data[off])
+	off++
+	if off+mlen > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	mode := string(data[off : off+mlen])
+	off += mlen
+	var explicit uint64
+	if mode == "offset" {
+		if off+8 > len(data) {
+			return nil, ErrInvalidBinaryFormat
+		}
+		explicit = binary.BigEndian.Uint64(data[off:])
+	}
+	return &BinaryResetOffsetRequest{Topic: topic, GroupID: group, Partition: part, Mode: mode, Offset: explicit}, nil
 }
 
 // BinarySimpleBoolResponse is a generic success boolean response.
@@ -2575,8 +2599,10 @@ type BinarySimpleBoolResponse struct{ Success bool }
 
 // EncodeBinarySimpleBoolResponse encodes a simple boolean response.
 func EncodeBinarySimpleBoolResponse(resp *BinarySimpleBoolResponse) []byte {
-    if resp.Success { return []byte{1} }
-    return []byte{0}
+	if resp.Success {
+		return []byte{1}
+	}
+	return []byte{0}
 }
 
 // BinaryListGroupsResponse lists consumer groups.
@@ -2584,48 +2610,51 @@ func EncodeBinarySimpleBoolResponse(resp *BinarySimpleBoolResponse) []byte {
 // Format per group: [2B topic][topic][2B group][group][4B members][4B count][count*(4B partition + 8B offset)]
 // Preceded by [4B group_count]
 
-type BinaryGroupOffsets struct{ Partition int32; Offset uint64 }
+type BinaryGroupOffsets struct {
+	Partition int32
+	Offset    uint64
+}
 
 type BinaryListGroupsResponse struct {
-    Groups []struct{
-        Topic   string
-        GroupID string
-        Members uint32
-        Offsets []BinaryGroupOffsets
-    }
+	Groups []struct {
+		Topic   string
+		GroupID string
+		Members uint32
+		Offsets []BinaryGroupOffsets
+	}
 }
 
 func EncodeBinaryListGroupsResponse(resp *BinaryListGroupsResponse) []byte {
-    // Compute size
-    size := 4
-    for _, g := range resp.Groups {
-        size += 2 + len(g.Topic) + 2 + len(g.GroupID) + 4 + 4 + len(g.Offsets)*(4+8)
-    }
-    buf := make([]byte, size)
-    off := 0
-    binary.BigEndian.PutUint32(buf[off:], uint32(len(resp.Groups)))
-    off += 4
-    for _, g := range resp.Groups {
-        binary.BigEndian.PutUint16(buf[off:], uint16(len(g.Topic)))
-        off += 2
-        copy(buf[off:], g.Topic)
-        off += len(g.Topic)
-        binary.BigEndian.PutUint16(buf[off:], uint16(len(g.GroupID)))
-        off += 2
-        copy(buf[off:], g.GroupID)
-        off += len(g.GroupID)
-        binary.BigEndian.PutUint32(buf[off:], g.Members)
-        off += 4
-        binary.BigEndian.PutUint32(buf[off:], uint32(len(g.Offsets)))
-        off += 4
-        for _, o := range g.Offsets {
-            binary.BigEndian.PutUint32(buf[off:], uint32(o.Partition))
-            off += 4
-            binary.BigEndian.PutUint64(buf[off:], o.Offset)
-            off += 8
-        }
-    }
-    return buf
+	// Compute size
+	size := 4
+	for _, g := range resp.Groups {
+		size += 2 + len(g.Topic) + 2 + len(g.GroupID) + 4 + 4 + len(g.Offsets)*(4+8)
+	}
+	buf := make([]byte, size)
+	off := 0
+	binary.BigEndian.PutUint32(buf[off:], uint32(len(resp.Groups)))
+	off += 4
+	for _, g := range resp.Groups {
+		binary.BigEndian.PutUint16(buf[off:], uint16(len(g.Topic)))
+		off += 2
+		copy(buf[off:], g.Topic)
+		off += len(g.Topic)
+		binary.BigEndian.PutUint16(buf[off:], uint16(len(g.GroupID)))
+		off += 2
+		copy(buf[off:], g.GroupID)
+		off += len(g.GroupID)
+		binary.BigEndian.PutUint32(buf[off:], g.Members)
+		off += 4
+		binary.BigEndian.PutUint32(buf[off:], uint32(len(g.Offsets)))
+		off += 4
+		for _, o := range g.Offsets {
+			binary.BigEndian.PutUint32(buf[off:], uint32(o.Partition))
+			off += 4
+			binary.BigEndian.PutUint64(buf[off:], o.Offset)
+			off += 8
+		}
+	}
+	return buf
 }
 
 // BinaryDescribeGroupRequest requests info for a single group
@@ -2634,79 +2663,91 @@ func EncodeBinaryListGroupsResponse(resp *BinaryListGroupsResponse) []byte {
 type BinaryDescribeGroupRequest struct{ Topic, GroupID string }
 
 func DecodeBinaryDescribeGroupRequest(data []byte) (*BinaryDescribeGroupRequest, error) {
-    if len(data) < 4 { return nil, ErrBufferTooSmall }
-    off := 0
-    tlen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+tlen+2 > len(data) { return nil, ErrInvalidBinaryFormat }
-    topic := string(data[off:off+tlen])
-    off += tlen
-    glen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+glen > len(data) { return nil, ErrInvalidBinaryFormat }
-    group := string(data[off:off+glen])
-    return &BinaryDescribeGroupRequest{Topic: topic, GroupID: group}, nil
+	if len(data) < 4 {
+		return nil, ErrBufferTooSmall
+	}
+	off := 0
+	tlen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+tlen+2 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	topic := string(data[off : off+tlen])
+	off += tlen
+	glen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+glen > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	group := string(data[off : off+glen])
+	return &BinaryDescribeGroupRequest{Topic: topic, GroupID: group}, nil
 }
 
 // BinaryDescribeGroupResponse mirrors a single group's info
 
 type BinaryDescribeGroupResponse struct {
-    Topic   string
-    GroupID string
-    Members uint32
-    Offsets []BinaryGroupOffsets
+	Topic   string
+	GroupID string
+	Members uint32
+	Offsets []BinaryGroupOffsets
 }
 
 func EncodeBinaryDescribeGroupResponse(resp *BinaryDescribeGroupResponse) []byte {
-    // Size: topic+group strings + members + count + offsets
-    size := 2 + len(resp.Topic) + 2 + len(resp.GroupID) + 4 + 4 + len(resp.Offsets)*(4+8)
-    buf := make([]byte, size)
-    off := 0
-    binary.BigEndian.PutUint16(buf[off:], uint16(len(resp.Topic)))
-    off += 2
-    copy(buf[off:], resp.Topic)
-    off += len(resp.Topic)
-    binary.BigEndian.PutUint16(buf[off:], uint16(len(resp.GroupID)))
-    off += 2
-    copy(buf[off:], resp.GroupID)
-    off += len(resp.GroupID)
-    binary.BigEndian.PutUint32(buf[off:], resp.Members)
-    off += 4
-    binary.BigEndian.PutUint32(buf[off:], uint32(len(resp.Offsets)))
-    off += 4
-    for _, o := range resp.Offsets {
-        binary.BigEndian.PutUint32(buf[off:], uint32(o.Partition))
-        off += 4
-        binary.BigEndian.PutUint64(buf[off:], o.Offset)
-        off += 8
-    }
-    return buf
+	// Size: topic+group strings + members + count + offsets
+	size := 2 + len(resp.Topic) + 2 + len(resp.GroupID) + 4 + 4 + len(resp.Offsets)*(4+8)
+	buf := make([]byte, size)
+	off := 0
+	binary.BigEndian.PutUint16(buf[off:], uint16(len(resp.Topic)))
+	off += 2
+	copy(buf[off:], resp.Topic)
+	off += len(resp.Topic)
+	binary.BigEndian.PutUint16(buf[off:], uint16(len(resp.GroupID)))
+	off += 2
+	copy(buf[off:], resp.GroupID)
+	off += len(resp.GroupID)
+	binary.BigEndian.PutUint32(buf[off:], resp.Members)
+	off += 4
+	binary.BigEndian.PutUint32(buf[off:], uint32(len(resp.Offsets)))
+	off += 4
+	for _, o := range resp.Offsets {
+		binary.BigEndian.PutUint32(buf[off:], uint32(o.Partition))
+		off += 4
+		binary.BigEndian.PutUint64(buf[off:], o.Offset)
+		off += 8
+	}
+	return buf
 }
 
 // BinaryGetLagRequest and Response
 
-type BinaryGetLagRequest struct{ Topic string; GroupID string; Partition int32 }
+type BinaryGetLagRequest struct {
+	Topic     string
+	GroupID   string
+	Partition int32
+}
 
 type BinaryGetLagResponse struct {
-    CurrentOffset   uint64 // next to consume (committed)
-    CommittedOffset uint64 // same as CurrentOffset for clarity
-    LatestOffset    uint64 // next offset after highest message
-    Lag             uint64 // LatestOffset - CurrentOffset
+	CurrentOffset   uint64 // next to consume (committed)
+	CommittedOffset uint64 // same as CurrentOffset for clarity
+	LatestOffset    uint64 // next offset after highest message
+	Lag             uint64 // LatestOffset - CurrentOffset
 }
 
 func DecodeBinaryGetLagRequest(data []byte) (*BinaryGetLagRequest, error) {
-    r, err := DecodeBinaryGetOffsetRequest(data)
-    if err != nil { return nil, err }
-    return &BinaryGetLagRequest{Topic: r.Topic, GroupID: r.GroupID, Partition: r.Partition}, nil
+	r, err := DecodeBinaryGetOffsetRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	return &BinaryGetLagRequest{Topic: r.Topic, GroupID: r.GroupID, Partition: r.Partition}, nil
 }
 
 func EncodeBinaryGetLagResponse(resp *BinaryGetLagResponse) []byte {
-    buf := make([]byte, 8*4)
-    binary.BigEndian.PutUint64(buf[0:], resp.CurrentOffset)
-    binary.BigEndian.PutUint64(buf[8:], resp.CommittedOffset)
-    binary.BigEndian.PutUint64(buf[16:], resp.LatestOffset)
-    binary.BigEndian.PutUint64(buf[24:], resp.Lag)
-    return buf
+	buf := make([]byte, 8*4)
+	binary.BigEndian.PutUint64(buf[0:], resp.CurrentOffset)
+	binary.BigEndian.PutUint64(buf[8:], resp.CommittedOffset)
+	binary.BigEndian.PutUint64(buf[16:], resp.LatestOffset)
+	binary.BigEndian.PutUint64(buf[24:], resp.Lag)
+	return buf
 }
 
 // BinaryDeleteGroupRequest/Response
@@ -2714,18 +2755,24 @@ func EncodeBinaryGetLagResponse(resp *BinaryGetLagResponse) []byte {
 type BinaryDeleteGroupRequest struct{ Topic, GroupID string }
 
 func DecodeBinaryDeleteGroupRequest(data []byte) (*BinaryDeleteGroupRequest, error) {
-    if len(data) < 4 { return nil, ErrBufferTooSmall }
-    off := 0
-    tlen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+tlen+2 > len(data) { return nil, ErrInvalidBinaryFormat }
-    topic := string(data[off:off+tlen])
-    off += tlen
-    glen := int(binary.BigEndian.Uint16(data[off:]))
-    off += 2
-    if off+glen > len(data) { return nil, ErrInvalidBinaryFormat }
-    group := string(data[off:off+glen])
-    return &BinaryDeleteGroupRequest{Topic: topic, GroupID: group}, nil
+	if len(data) < 4 {
+		return nil, ErrBufferTooSmall
+	}
+	off := 0
+	tlen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+tlen+2 > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	topic := string(data[off : off+tlen])
+	off += tlen
+	glen := int(binary.BigEndian.Uint16(data[off:]))
+	off += 2
+	if off+glen > len(data) {
+		return nil, ErrInvalidBinaryFormat
+	}
+	group := string(data[off : off+glen])
+	return &BinaryDeleteGroupRequest{Topic: topic, GroupID: group}, nil
 }
 
 // ============================================================================
@@ -4014,8 +4061,9 @@ func DecodeBinaryClusterMetadataResponse(data []byte) (*BinaryClusterMetadataRes
 
 // BinaryAuditQueryRequest represents a request to query audit events.
 // Format: [8B start_time][8B end_time][4B type_count][types...][2B user_len][user]
-//         [2B resource_len][resource][2B result_len][result][2B search_len][search]
-//         [4B limit][4B offset]
+//
+//	[2B resource_len][resource][2B result_len][result][2B search_len][search]
+//	[4B limit][4B offset]
 type BinaryAuditQueryRequest struct {
 	StartTime  int64    // Unix timestamp (0 = no filter)
 	EndTime    int64    // Unix timestamp (0 = no filter)
@@ -4227,8 +4275,6 @@ func DecodeBinaryAuditQueryRequest(data []byte) (*BinaryAuditQueryRequest, error
 
 	return req, nil
 }
-
-
 
 // EncodeBinaryAuditEvent encodes a single audit event.
 func EncodeBinaryAuditEvent(event *BinaryAuditEvent) []byte {

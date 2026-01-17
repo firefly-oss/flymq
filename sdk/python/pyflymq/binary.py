@@ -228,21 +228,25 @@ class BinaryFetchRequest:
     partition: int
     offset: int
     max_messages: int
+    filter: str = ""  # Optional regex filter
 
 
 def encode_fetch_request(req: BinaryFetchRequest) -> bytes:
     """
     Encode fetch request to binary.
     
-    Format: [2B topic_len][topic][4B partition][8B offset][4B max_messages]
+    Format: [2B topic_len][topic][4B partition][8B offset][4B max_messages][2B filter_len][filter]
     """
     topic_bytes = req.topic.encode("utf-8")
+    filter_bytes = req.filter.encode("utf-8") if req.filter else b""
     parts = [
         struct.pack(">H", len(topic_bytes)),
         topic_bytes,
         struct.pack(">i", req.partition),
         struct.pack(">Q", req.offset),
         struct.pack(">i", req.max_messages),
+        struct.pack(">H", len(filter_bytes)),
+        filter_bytes,
     ]
     return b"".join(parts)
 

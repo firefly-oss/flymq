@@ -88,6 +88,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -177,13 +178,13 @@ type Cluster interface {
 type PartitionAssignment struct {
 	Topic        string            `json:"topic"`
 	Partition    int               `json:"partition"`
-	Leader       string            `json:"leader"`       // Node ID of the partition leader
-	LeaderAddr   string            `json:"leader_addr"`  // Client-facing address of leader
-	Replicas     []string          `json:"replicas"`     // Node IDs of all replicas (including leader)
-	ISR          []string          `json:"isr"`          // In-Sync Replicas (node IDs)
-	State        string            `json:"state"`        // "online", "offline", "reassigning", "syncing"
+	Leader       string            `json:"leader"`        // Node ID of the partition leader
+	LeaderAddr   string            `json:"leader_addr"`   // Client-facing address of leader
+	Replicas     []string          `json:"replicas"`      // Node IDs of all replicas (including leader)
+	ISR          []string          `json:"isr"`           // In-Sync Replicas (node IDs)
+	State        string            `json:"state"`         // "online", "offline", "reassigning", "syncing"
 	ReplicaAddrs map[string]string `json:"replica_addrs"` // Node ID -> client address
-	Epoch        uint64            `json:"epoch"`        // Incremented on leader change for fencing
+	Epoch        uint64            `json:"epoch"`         // Incremented on leader change for fencing
 }
 
 // PartitionLeaderInfo contains routing information for a partition leader.
@@ -192,9 +193,9 @@ type PartitionLeaderInfo struct {
 	Topic       string `json:"topic"`
 	Partition   int    `json:"partition"`
 	LeaderID    string `json:"leader_id"`
-	LeaderAddr  string `json:"leader_addr"`  // Client-facing address (host:port)
-	Epoch       uint64 `json:"epoch"`        // For leader fencing
-	IsLocalNode bool   `json:"-"`            // True if this node is the leader
+	LeaderAddr  string `json:"leader_addr"` // Client-facing address (host:port)
+	Epoch       uint64 `json:"epoch"`       // For leader fencing
+	IsLocalNode bool   `json:"-"`           // True if this node is the leader
 }
 
 // RaftState represents the current Raft consensus state.
@@ -1040,7 +1041,7 @@ type FetchedMessage struct {
 // Fetch retrieves multiple messages starting from an offset.
 // For backward compatibility, returns only values. Use FetchWithKeys to get keys.
 func (b *Broker) Fetch(topic string, partition int, offset uint64, maxMessages int) ([][]byte, uint64, error) {
-	messages, nextOffset, err := b.FetchWithKeys(topic, partition, offset, maxMessages)
+	messages, nextOffset, err := b.FetchWithKeys(topic, partition, offset, maxMessages, "")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1054,7 +1055,8 @@ func (b *Broker) Fetch(topic string, partition int, offset uint64, maxMessages i
 }
 
 // FetchWithKeys retrieves multiple messages with their keys starting from an offset.
-func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int) ([]FetchedMessage, uint64, error) {
+// It optionally filters messages based on content (substring or regex).
+func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int, filter string) ([]FetchedMessage, uint64, error) {
 	b.mu.RLock()
 	t, exists := b.topics[topic]
 	b.mu.RUnlock()
@@ -1071,7 +1073,17 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 	var messages []FetchedMessage
 	currentOffset := offset
 
-	for i := 0; i < maxMessages; i++ {
+	// Prepare regex if filter provided
+	var re *regexp.Regexp
+	if filter != "" {
+		re, _ = regexp.Compile(filter)
+	}
+
+	// We scan up to 1000 messages or until we find maxMessages matching the filter
+	scanLimit := 1000
+	scanned := 0
+
+	for len(messages) < maxMessages && scanned < scanLimit {
 		data, err := p.Log.Read(currentOffset)
 		if err != nil {
 			if err == io.EOF {
@@ -1079,6 +1091,7 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 			}
 			return nil, 0, err
 		}
+		scanned++
 
 		// Decode record format
 		record, err := storage.DecodeRecord(data)
@@ -1086,11 +1099,29 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 			return nil, 0, err
 		}
 
-		messages = append(messages, FetchedMessage{
-			Key:    record.Key,
-			Value:  record.Value,
-			Offset: currentOffset,
-		})
+		// Apply filter if provided
+		matches := true
+		if filter != "" {
+			matches = false
+			valStr := string(record.Value)
+			keyStr := string(record.Key)
+
+			// Try substring match first
+			if strings.Contains(strings.ToLower(valStr), strings.ToLower(filter)) ||
+				strings.Contains(strings.ToLower(keyStr), strings.ToLower(filter)) {
+				matches = true
+			} else if re != nil && (re.Match(record.Value) || re.Match(record.Key)) {
+				matches = true
+			}
+		}
+
+		if matches {
+			messages = append(messages, FetchedMessage{
+				Key:    record.Key,
+				Value:  record.Value,
+				Offset: currentOffset,
+			})
+		}
 		currentOffset++
 	}
 

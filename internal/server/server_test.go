@@ -295,7 +295,7 @@ func (b *MockBroker) ConsumeFromPartitionWithKey(topic string, partition int, of
 	return nil, messages[offset].Data, nil
 }
 
-func (b *MockBroker) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int) ([]broker.FetchedMessage, uint64, error) {
+func (b *MockBroker) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int, filter string) ([]broker.FetchedMessage, uint64, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 

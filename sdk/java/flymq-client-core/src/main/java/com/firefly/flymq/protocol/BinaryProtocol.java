@@ -1025,7 +1025,7 @@ public final class BinaryProtocol {
 
     /**
      * Encodes a fetch request (batch consume).
-     * Format: [2B topic_len][topic][4B partition][8B offset][4B max_messages]
+     * Format: [2B topic_len][topic][4B partition][8B offset][4B max_messages][2B filter_len][filter]
      *
      * This matches the server's expected BinaryFetchRequest format.
      *
@@ -1033,17 +1033,26 @@ public final class BinaryProtocol {
      * @param partition The partition to fetch from
      * @param offset The starting offset
      * @param maxMessages Maximum number of messages to fetch
+     * @param filter Optional regex filter to apply server-side
      * @return Encoded fetch request bytes
      */
-    public static byte[] encodeFetchRequest(String topic, int partition, long offset, int maxMessages) {
+    public static byte[] encodeFetchRequest(String topic, int partition, long offset, int maxMessages, String filter) {
         byte[] topicBytes = topic.getBytes(StandardCharsets.UTF_8);
-        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + 8 + 4)
+        byte[] filterBytes = filter != null ? filter.getBytes(StandardCharsets.UTF_8) : new byte[0];
+        
+        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 4 + 8 + 4 + 2 + filterBytes.length)
                 .order(ByteOrder.BIG_ENDIAN);
         buf.putShort((short) topicBytes.length);
         buf.put(topicBytes);
         buf.putInt(partition);
         buf.putLong(offset);
         buf.putInt(maxMessages);
+        
+        buf.putShort((short) filterBytes.length);
+        if (filterBytes.length > 0) {
+            buf.put(filterBytes);
+        }
+        
         return buf.array();
     }
 

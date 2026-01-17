@@ -175,7 +175,7 @@ type Broker interface {
 
 	// FetchWithKeys retrieves multiple messages with their keys starting from the given offset.
 	// Returns FetchedMessage structs containing key, value, and offset.
-	FetchWithKeys(topic string, partition int, offset uint64, maxMessages int) ([]broker.FetchedMessage, uint64, error)
+	FetchWithKeys(topic string, partition int, offset uint64, maxMessages int, filter string) ([]broker.FetchedMessage, uint64, error)
 
 	// ListTopics returns the names of all topics in the broker.
 	ListTopics() []string
@@ -1482,7 +1482,7 @@ func (s *Server) handleFetch(w io.Writer, payload []byte, flags byte) error {
 	}
 
 	// Use FetchWithKeys to get messages with their keys
-	brokerMessages, nextOffset, err := s.broker.FetchWithKeys(topic, partition, offset, maxMessages)
+	brokerMessages, nextOffset, err := s.broker.FetchWithKeys(topic, partition, offset, maxMessages, req.Filter)
 	if err != nil {
 		return err
 	}
@@ -1630,7 +1630,7 @@ func (s *Server) handleFetchBinary(w io.Writer, payload []byte) error {
 	}
 
 	// Fetch messages from broker
-	brokerMessages, nextOffset, err := s.broker.FetchWithKeys(req.Topic, int(req.Partition), req.Offset, int(req.MaxMessages))
+	brokerMessages, nextOffset, err := s.broker.FetchWithKeys(req.Topic, int(req.Partition), req.Offset, int(req.MaxMessages), req.Filter)
 	if err != nil {
 		return err
 	}
