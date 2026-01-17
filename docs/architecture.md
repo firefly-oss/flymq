@@ -389,10 +389,18 @@ REST API for cluster management.
 Low-level optimizations for high throughput.
 
 **Files:**
-- `zerocopy.go` - Zero-copy I/O with sendfile
+- `zerocopy.go` - Zero-copy I/O core types and interfaces
+- `zerocopy_linux.go` - Linux sendfile/splice implementation
+- `zerocopy_darwin.go` - macOS sendfile implementation
+- `zerocopy_others.go` - Fallback for Windows/BSD
 - `compression.go` - LZ4, Snappy, Zstd compression
 - `multiplexing.go` - Connection multiplexing
 - `asyncio.go` - Async disk I/O with worker pools
+
+**Platform-specific zero-copy:**
+- Linux: Full zero-copy with `sendfile()` and `splice()`
+- macOS: Zero-copy reads with Darwin `sendfile()`
+- Others: Graceful fallback to buffered I/O
 
 ## Thread Safety
 

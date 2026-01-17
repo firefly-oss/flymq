@@ -605,25 +605,49 @@ func (c *Client) produceWithRetry(topic string, data []byte) (uint64, error) {
 
 ### Zero-Copy I/O
 
-FlyMQ uses `sendfile` system calls for zero-copy network transfers:
+FlyMQ uses platform-specific system calls for zero-copy network transfers, eliminating unnecessary data copies between kernel and user space:
+
+**Platform Support:**
+
+| Platform | File → Socket | Socket → File | Implementation |
+|----------|---------------|---------------|----------------|
+| **Linux** | `sendfile()` | `splice()` | Full zero-copy both directions |
+| **macOS/Darwin** | `sendfile()` | Regular copy | Zero-copy for reads only |
+| **Windows/Others** | Regular copy | Regular copy | Graceful fallback |
 
 ```go
 // ZeroCopyReader wraps a file for zero-copy reads
 type ZeroCopyReader struct {
-    file *os.File
-    size int64
+    file   *os.File
+    offset int64
+    length int64
 }
 
-// WriteTo implements io.WriterTo for sendfile optimization
-func (z *ZeroCopyReader) WriteTo(w io.Writer) (int64, error) {
-    if conn, ok := w.(*net.TCPConn); ok {
-        // Use sendfile for direct kernel-to-network transfer
-        return z.sendfile(conn)
+// SendTo sends data directly to a network connection using sendfile.
+// Platform-specific implementations in zerocopy_linux.go, zerocopy_darwin.go
+func (z *ZeroCopyReader) SendTo(conn net.Conn) (int64, error) {
+    tcpConn, ok := conn.(*net.TCPConn)
+    if !ok {
+        return z.regularCopy(conn) // Fallback for non-TCP
     }
-    // Fallback to regular copy
-    return io.Copy(w, z.file)
+    // Use platform-specific sendfile syscall
+    return z.sendfile(tcpConn)
+}
+
+// IsZeroCopySupported returns true if zero-copy is available on this platform
+func IsZeroCopySupported() bool {
+    return zeroCopySupported() // true on Linux and macOS
 }
 ```
+
+**Linux-specific optimizations:**
+- Uses `unix.Sendfile()` for file-to-socket transfers
+- Uses `unix.Splice()` with pipes for socket-to-file transfers (WriteFrom)
+- Handles `EAGAIN` and `EINTR` for non-blocking I/O
+
+**macOS-specific optimizations:**
+- Uses Darwin's `sendfile()` syscall (different signature than Linux)
+- Falls back to regular copy for socket-to-file (no splice on Darwin)
 
 ### Compression
 
@@ -848,7 +872,7 @@ func NewSegmentWithConfig(baseOffset uint64, dir string, cfg SegmentConfig, perf
 
 ### Zero-Copy Support
 
-For large messages (≥64KB), the server uses `sendfile()` for zero-copy transfer:
+For large messages (≥64KB), the server uses platform-specific zero-copy transfers:
 
 ```go
 func (s *Segment) GetZeroCopyInfo(offset, size uint64) (string, int64, error) {
@@ -856,8 +880,16 @@ func (s *Segment) GetZeroCopyInfo(offset, size uint64) (string, int64, error) {
 }
 
 func (s *Server) handleConsumeZeroCopy(w io.Writer, payload []byte) error {
-    filename, offset, _ := segment.GetZeroCopyInfo(relOffset, msgSize)
-    // Use sendfile() to transfer directly from disk to socket
+    file, offset, length, _ := segment.GetZeroCopyInfo(relOffset, msgSize)
+
+    // Use platform-specific zero-copy (sendfile on Linux/macOS)
+    reader := performance.NewZeroCopyReader(file, offset, length)
+    return reader.SendTo(conn) // Uses sendfile() internally
 }
 ```
+
+**Platform behavior:**
+- **Linux**: Uses `sendfile()` syscall for direct kernel-to-network transfer
+- **macOS**: Uses Darwin `sendfile()` with different syscall signature
+- **Windows/Others**: Gracefully falls back to buffered I/O
 
