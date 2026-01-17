@@ -114,7 +114,9 @@ CFG_ADMIN_TLS_AUTO_GENERATE="false"
 CFG_AUTH_ENABLED="true"
 CFG_AUTH_ADMIN_USER="admin"
 CFG_AUTH_ADMIN_PASS=""
-CFG_AUTH_ALLOW_ANONYMOUS="false"
+CFG_AUTH_ALLOW_ANONYMOUS="true"   # Allow anonymous connections to public topics
+CFG_AUTH_DEFAULT_PUBLIC="true"    # Topics are public by default (anyone can produce/consume)
+CFG_AUTH_DEFAULT_PUBLIC="false"  # Topics are private by default (secure)
 
 # Partition Management (Horizontal Scaling) - Sensible defaults
 CFG_PARTITION_DISTRIBUTION_STRATEGY="round-robin"
@@ -1048,6 +1050,7 @@ generate_config() {
   "auth": {
     "enabled": ${CFG_AUTH_ENABLED},
     "allow_anonymous": ${CFG_AUTH_ALLOW_ANONYMOUS},
+    "default_public": ${CFG_AUTH_DEFAULT_PUBLIC},
     "admin_username": "${CFG_AUTH_ADMIN_USER}",
     "admin_password": "${CFG_AUTH_ADMIN_PASS}"
   },
@@ -1962,7 +1965,16 @@ configure_section_security() {
         if [[ -n "$custom_pass" ]]; then
             CFG_AUTH_ADMIN_PASS="$custom_pass"
         fi
-        if prompt_yes_no "Allow anonymous read-only connections" "n"; then
+        echo ""
+        echo -e "  ${DIM}Public topics allow anyone to produce and consume messages.${RESET}"
+        if prompt_yes_no "Make topics public by default" "y"; then
+            CFG_AUTH_DEFAULT_PUBLIC="true"
+        else
+            CFG_AUTH_DEFAULT_PUBLIC="false"
+        fi
+        echo ""
+        echo -e "  ${DIM}Anonymous connections can access public topics without authentication.${RESET}"
+        if prompt_yes_no "Allow anonymous connections to public topics" "y"; then
             CFG_AUTH_ALLOW_ANONYMOUS="true"
         else
             CFG_AUTH_ALLOW_ANONYMOUS="false"
@@ -2343,6 +2355,16 @@ show_configuration_summary() {
             echo -e "      Admin Password:    ${CYAN}(configured)${RESET}"
         else
             echo -e "      Admin Password:    ${YELLOW}(will be auto-generated)${RESET}"
+        fi
+        if [[ "$CFG_AUTH_DEFAULT_PUBLIC" == "true" ]]; then
+            echo -e "      Default Public:    ${GREEN}Yes${RESET} ${DIM}(topics accessible to all)${RESET}"
+        else
+            echo -e "      Default Public:    ${YELLOW}No${RESET} ${DIM}(topics require auth)${RESET}"
+        fi
+        if [[ "$CFG_AUTH_ALLOW_ANONYMOUS" == "true" ]]; then
+            echo -e "      Anonymous Access:  ${GREEN}Allowed${RESET} ${DIM}(to public topics)${RESET}"
+        else
+            echo -e "      Anonymous Access:  ${YELLOW}Denied${RESET}"
         fi
     else
         echo -e "      Authentication:    ${YELLOW}Disabled${RESET}"

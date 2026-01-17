@@ -38,6 +38,12 @@ type authTestServer struct {
 // newAuthTestServer creates a new test server with authentication enabled.
 // It creates an admin user and optionally a consumer user.
 func newAuthTestServer(t *testing.T, defaultPublic bool) *authTestServer {
+	return newAuthTestServerWithOptions(t, defaultPublic, false)
+}
+
+// newAuthTestServerWithOptions creates a new test server with authentication enabled
+// and configurable options for defaultPublic and allowAnonymous.
+func newAuthTestServerWithOptions(t *testing.T, defaultPublic bool, allowAnonymous bool) *authTestServer {
 	t.Helper()
 
 	// Find an available port
@@ -57,7 +63,7 @@ func newAuthTestServer(t *testing.T, defaultPublic bool) *authTestServer {
 		Auth: config.AuthConfig{
 			Enabled:        true,
 			RBACEnabled:    true,
-			AllowAnonymous: false,
+			AllowAnonymous: allowAnonymous,
 			DefaultPublic:  defaultPublic,
 			UserFile:       dataDir + "/users.json",
 			ACLFile:        dataDir + "/acls.json",
@@ -320,7 +326,8 @@ func TestRBACProducerCanOnlyWrite(t *testing.T) {
 // ============================================================================
 
 func TestPublicTopicsAccessibleWithoutAuth(t *testing.T) {
-	ts := newAuthTestServer(t, true) // defaultPublic=true
+	// defaultPublic=true, allowAnonymous=true - anonymous users can access public topics
+	ts := newAuthTestServerWithOptions(t, true, true)
 
 	// Create topic and produce as admin
 	adminClient, err := client.NewClientWithOptions(ts.addr, client.ClientOptions{
@@ -352,6 +359,49 @@ func TestPublicTopicsAccessibleWithoutAuth(t *testing.T) {
 	}
 	if len(msgs) != 1 {
 		t.Errorf("Expected 1 message, got %d", len(msgs))
+	}
+
+	// Writing to public topic should also work for anonymous users
+	_, err = c.Produce("public-topic", []byte("anonymous message"))
+	if err != nil {
+		t.Errorf("Should be able to write to public topic without auth: %v", err)
+	}
+}
+
+func TestPublicTopicsRequireAuthWhenAnonymousDisabled(t *testing.T) {
+	// defaultPublic=true, allowAnonymous=false - anonymous users cannot access even public topics
+	ts := newAuthTestServerWithOptions(t, true, false)
+
+	// Create topic as admin
+	adminClient, err := client.NewClientWithOptions(ts.addr, client.ClientOptions{
+		Username: "admin",
+		Password: "adminpass",
+	})
+	if err != nil {
+		t.Fatalf("Failed to create admin client: %v", err)
+	}
+	if err := adminClient.CreateTopic("public-topic", 1); err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	adminClient.Close()
+
+	// Connect without auth - should fail even for public topic
+	c, err := client.NewClient(ts.addr)
+	if err != nil {
+		t.Fatalf("Failed to create unauthenticated client: %v", err)
+	}
+	defer c.Close()
+
+	// Reading from public topic should fail when allow_anonymous=false
+	_, _, err = c.Fetch("public-topic", 0, 0, 10)
+	if err == nil {
+		t.Errorf("Should NOT be able to read public topic when allow_anonymous=false")
+	}
+
+	// Writing to public topic should also fail
+	_, err = c.Produce("public-topic", []byte("anonymous message"))
+	if err == nil {
+		t.Errorf("Should NOT be able to write to public topic when allow_anonymous=false")
 	}
 }
 

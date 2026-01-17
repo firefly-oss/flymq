@@ -145,12 +145,21 @@ FlyMQ provides enterprise-grade authentication and authorization through a Role-
 |--------|--------------|---------|-------------|
 | `auth.enabled` | `FLYMQ_AUTH_ENABLED` | `false` | Enable authentication |
 | `auth.rbac_enabled` | - | `true` | Enable role-based access control (when auth enabled) |
-| `auth.allow_anonymous` | `FLYMQ_AUTH_ALLOW_ANONYMOUS` | `false` | Allow unauthenticated connections |
+| `auth.allow_anonymous` | `FLYMQ_AUTH_ALLOW_ANONYMOUS` | `true` | Allow unauthenticated connections to public topics |
+| `auth.default_public` | `FLYMQ_AUTH_DEFAULT_PUBLIC` | `true` | Topics are public by default (anyone can produce/consume) |
 | `auth.user_file` | `FLYMQ_AUTH_USER_FILE` | `""` | Path to users database file (JSON format) |
 | `auth.acl_file` | `FLYMQ_AUTH_ACL_FILE` | `""` | Path to ACL database file (JSON format) |
-| `auth.default_public` | `FLYMQ_AUTH_DEFAULT_PUBLIC` | `true` | Topics are public by default (backward compatible) |
 | `auth.admin_username` | `FLYMQ_AUTH_ADMIN_USERNAME` | `admin` | Default admin username |
 | `auth.admin_password` | `FLYMQ_AUTH_ADMIN_PASSWORD` | `""` | Default admin password (created on first startup) |
+
+**Public Topics:**
+
+Public topics allow anyone to produce and consume messages without authentication. This is controlled by two settings:
+
+- `default_public: true` - All topics are public by default (can be overridden per-topic via ACLs)
+- `allow_anonymous: true` - Unauthenticated connections can access public topics
+
+When both are enabled (the default), anyone can connect and use public topics without credentials.
 
 **Built-in Roles:**
 
@@ -164,9 +173,10 @@ FlyMQ provides enterprise-grade authentication and authorization through a Role-
 **Topic ACLs:**
 
 Topics can have explicit ACLs that override the default public setting:
-- `public: true` - No authentication required
-- `allowed_users` - List of usernames with access
-- `allowed_roles` - List of roles with access
+- `public: true` - Anyone can produce and consume (no authentication required if `allow_anonymous` is enabled)
+- `public: false` - Requires authentication and appropriate permissions
+- `allowed_users` - List of usernames with access (for non-public topics)
+- `allowed_roles` - List of roles with access (for non-public topics)
 
 ### Audit Trail
 

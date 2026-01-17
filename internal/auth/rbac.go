@@ -228,12 +228,18 @@ func (a *Authorizer) AuthorizeTopicAccess(username string, topic string, perm Pe
 	acl, hasACL := a.aclStore.GetTopicACL(topic)
 	isPublicTopic := (hasACL && acl.Public) || (!hasACL && a.aclStore.DefaultPublic)
 
-	// Public topics are accessible to everyone (including anonymous users)
-	if isPublicTopic {
+	// Public topics are accessible to everyone for read/write operations
+	// (Admin operations still require authentication - checked separately in CanAdmin)
+	if isPublicTopic && perm != PermissionAdmin {
+		// For anonymous users, check if anonymous access is allowed
+		if username == "" && !a.allowAnonymous {
+			return ErrAuthRequired
+		}
+		// Public topic - allow access (both produce and consume)
 		return nil
 	}
 
-	// Non-public topic requires authentication
+	// Non-public topic or admin operation requires authentication
 	if username == "" {
 		return ErrAuthRequired
 	}

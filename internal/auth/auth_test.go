@@ -230,16 +230,53 @@ func TestAuthorizer_PublicTopic(t *testing.T) {
 	// Mark a topic as public
 	aclStore.SetTopicPublic("public-topic", true)
 
+	// Create a test user
+	userStore.CreateUser("testuser", "password", []string{"consumer"})
+
 	authorizer := NewAuthorizer(userStore, aclStore, true)
 
-	// Anonymous user should be able to access public topic
+	// Test 1: Anonymous access WITHOUT allow_anonymous enabled
+	// Anonymous user should NOT be able to access even public topics
+	authorizer.SetAllowAnonymous(false)
+	if err := authorizer.CanConsume("", "public-topic"); err != ErrAuthRequired {
+		t.Errorf("Anonymous should NOT access public topic when allow_anonymous=false, got: %v", err)
+	}
+	if err := authorizer.CanProduce("", "public-topic"); err != ErrAuthRequired {
+		t.Errorf("Anonymous should NOT produce to public topic when allow_anonymous=false, got: %v", err)
+	}
+
+	// Test 2: Anonymous access WITH allow_anonymous enabled
+	authorizer.SetAllowAnonymous(true)
+
+	// Anonymous user should be able to READ from public topic
+	if err := authorizer.CanConsume("", "public-topic"); err != nil {
+		t.Errorf("Anonymous should read from public topic when allow_anonymous=true: %v", err)
+	}
+
+	// Anonymous user should be able to WRITE to public topic
 	if err := authorizer.CanProduce("", "public-topic"); err != nil {
-		t.Errorf("Anonymous should access public topic: %v", err)
+		t.Errorf("Anonymous should write to public topic when allow_anonymous=true: %v", err)
 	}
 
 	// Anonymous user should NOT be able to access private topic
-	if err := authorizer.CanProduce("", "private-topic"); err != ErrAuthRequired {
+	if err := authorizer.CanConsume("", "private-topic"); err != ErrAuthRequired {
 		t.Errorf("Expected ErrAuthRequired for private topic, got: %v", err)
+	}
+	if err := authorizer.CanProduce("", "private-topic"); err != ErrAuthRequired {
+		t.Errorf("Expected ErrAuthRequired for private topic produce, got: %v", err)
+	}
+
+	// Test 3: Authenticated user can access public topics with any permission
+	if err := authorizer.CanProduce("testuser", "public-topic"); err != nil {
+		t.Errorf("Authenticated user should write to public topic: %v", err)
+	}
+	if err := authorizer.CanConsume("testuser", "public-topic"); err != nil {
+		t.Errorf("Authenticated user should read from public topic: %v", err)
+	}
+
+	// Test 4: Admin operations on public topics still require authentication
+	if err := authorizer.CanAdmin("", "public-topic"); err != ErrAuthRequired {
+		t.Errorf("Anonymous should NOT have admin access to public topic, got: %v", err)
 	}
 }
 
