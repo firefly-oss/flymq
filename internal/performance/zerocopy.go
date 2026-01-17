@@ -35,6 +35,12 @@ ZERO-COPY (sendfile):
 	Disk → Kernel Buffer → Network
 	         (no user-space copies)
 
+PLATFORM SUPPORT:
+=================
+- Linux: Uses sendfile() for file-to-socket and splice() for socket-to-file
+- macOS/Darwin: Uses sendfile() for file-to-socket (different syscall signature)
+- Others: Falls back to regular io.Copy
+
 WHEN TO USE:
 ============
 - Serving large messages to consumers
@@ -54,7 +60,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"syscall"
 )
 
 // ZeroCopyReader provides zero-copy reading from files using sendfile.
@@ -102,31 +107,10 @@ func (z *ZeroCopyReader) SendTo(conn net.Conn) (int64, error) {
 	return written, sendErr
 }
 
-// sendfile uses the sendfile system call for zero-copy transfer.
-func (z *ZeroCopyReader) sendfile(destFd int) (int64, error) {
-	srcFd := int(z.file.Fd())
-	offset := z.offset
-	remaining := z.length
-	var written int64
-
-	for remaining > 0 {
-		// sendfile may not send all data in one call
-		n, err := syscall.Sendfile(destFd, srcFd, &offset, int(remaining))
-		if err != nil {
-			if err == syscall.EAGAIN {
-				continue
-			}
-			return written, err
-		}
-		if n == 0 {
-			break
-		}
-		written += int64(n)
-		remaining -= int64(n)
-	}
-
-	return written, nil
-}
+// sendfile is implemented in platform-specific files:
+// - zerocopy_linux.go: Uses Linux sendfile syscall
+// - zerocopy_darwin.go: Uses Darwin sendfile syscall (different signature)
+// - zerocopy_others.go: Falls back to regular copy
 
 // regularCopy falls back to regular io.Copy when sendfile is not available.
 func (z *ZeroCopyReader) regularCopy(w io.Writer) (int64, error) {
@@ -238,15 +222,14 @@ func NewZeroCopyWriter(file *os.File) *ZeroCopyWriter {
 	return &ZeroCopyWriter{file: file}
 }
 
-// WriteFrom reads data from a connection and writes directly to file.
-func (z *ZeroCopyWriter) WriteFrom(conn net.Conn, length int64) (int64, error) {
-	// For writing, we use splice on Linux or fall back to regular copy
-	// On macOS/Darwin, we fall back to regular copy
-	return z.regularWrite(conn, length)
-}
+// WriteFrom is implemented in platform-specific files:
+// - zerocopy_linux.go: Uses Linux splice syscall for socket-to-file transfer
+// - zerocopy_darwin.go: Falls back to regular copy (no splice on Darwin)
+// - zerocopy_others.go: Falls back to regular copy
 
-func (z *ZeroCopyWriter) regularWrite(r io.Reader, length int64) (int64, error) {
-	return io.CopyN(z.file, r, length)
+// IsZeroCopySupported returns true if zero-copy operations are supported on this platform.
+func IsZeroCopySupported() bool {
+	return zeroCopySupported()
 }
 
 // Global buffer pools for different sizes
