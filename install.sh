@@ -1201,6 +1201,16 @@ check_dependencies() {
 # Track if we cloned the repo (for cleanup)
 CLONED_REPO_DIR=""
 
+# Cleanup function for cloned repo - called on exit/error
+cleanup_cloned_repo() {
+    if [[ -n "${CLONED_REPO_DIR}" ]] && [[ -d "${CLONED_REPO_DIR}" ]]; then
+        echo ""
+        print_info "Cleaning up temporary files..."
+        rm -rf "${CLONED_REPO_DIR}"
+        CLONED_REPO_DIR=""
+    fi
+}
+
 ensure_source_code() {
     # Check if we're already in the FlyMQ repository
     if [[ -f "go.mod" ]] && grep -q "module flymq" go.mod 2>/dev/null; then
@@ -1231,28 +1241,36 @@ ensure_source_code() {
     CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
     print_info "Cloning to temporary directory: ${CYAN}${CLONED_REPO_DIR}${RESET}"
 
+    # Try versioned tag first
     echo -n "  "
-    if ! git clone --depth 1 --branch "v${FLYMQ_VERSION}" https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
-        # Try main branch if tag doesn't exist
+    if git clone --depth 1 --branch "v${FLYMQ_VERSION}" https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
+        print_success "Cloned FlyMQ v${FLYMQ_VERSION}"
+    else
+        # Tag not found - clean up and try main branch
+        rm -rf "${CLONED_REPO_DIR}"
+        CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
         print_warning "Tag v${FLYMQ_VERSION} not found, trying main branch..."
         echo -n "  "
         if ! git clone --depth 1 https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
             print_error "Failed to clone FlyMQ repository"
             rm -rf "${CLONED_REPO_DIR}"
+            CLONED_REPO_DIR=""
             exit 1
         fi
+        print_success "Cloned FlyMQ (main branch)"
     fi
-    print_success "Cloned FlyMQ repository"
+
+    # Verify the clone was successful
+    if [[ ! -f "${CLONED_REPO_DIR}/go.mod" ]]; then
+        print_error "Clone verification failed: go.mod not found"
+        rm -rf "${CLONED_REPO_DIR}"
+        CLONED_REPO_DIR=""
+        exit 1
+    fi
 
     # Change to cloned directory
     cd "${CLONED_REPO_DIR}"
-}
-
-cleanup_cloned_repo() {
-    if [[ -n "${CLONED_REPO_DIR}" ]] && [[ -d "${CLONED_REPO_DIR}" ]]; then
-        print_info "Cleaning up temporary files..."
-        rm -rf "${CLONED_REPO_DIR}"
-    fi
+    print_success "Source code ready"
 }
 
 build_binaries() {
@@ -1610,10 +1628,12 @@ uninstall() {
 cleanup() {
     echo ""
     print_warning "Installation cancelled by user"
+    cleanup_cloned_repo
     exit 130
 }
 
 trap cleanup SIGINT SIGTERM
+trap cleanup_cloned_repo EXIT
 
 # =============================================================================
 # Main
@@ -2433,8 +2453,8 @@ main() {
     create_data_dir
     generate_config "$config_dir"
     install_system_service "$config_dir" "$PREFIX"
-    cleanup_cloned_repo
     print_post_install "$PREFIX" "$config_dir"
+    # Note: cleanup_cloned_repo is called automatically via EXIT trap
 }
 
 main "$@"
