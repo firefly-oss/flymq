@@ -1198,6 +1198,63 @@ check_dependencies() {
     print_success "Go $GO_VERSION found"
 }
 
+# Track if we cloned the repo (for cleanup)
+CLONED_REPO_DIR=""
+
+ensure_source_code() {
+    # Check if we're already in the FlyMQ repository
+    if [[ -f "go.mod" ]] && grep -q "module flymq" go.mod 2>/dev/null; then
+        print_success "Running from FlyMQ repository"
+        return 0
+    fi
+
+    # Check if we're in a subdirectory of the repo
+    if [[ -f "${SCRIPT_DIR}/go.mod" ]] && grep -q "module flymq" "${SCRIPT_DIR}/go.mod" 2>/dev/null; then
+        cd "${SCRIPT_DIR}"
+        print_success "Running from FlyMQ repository"
+        return 0
+    fi
+
+    # Not in repo - need to clone it (running via curl)
+    print_step "Downloading FlyMQ source code"
+    echo ""
+
+    # Check for git
+    if ! command -v git &> /dev/null; then
+        print_error "Git is not installed. Please install git first."
+        print_info "Or clone the repository manually: ${CYAN}git clone https://github.com/firefly-oss/flymq.git${RESET}"
+        exit 1
+    fi
+    print_success "Git found"
+
+    # Create temp directory for clone in /tmp
+    CLONED_REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/flymq-install.XXXXXX")
+    print_info "Cloning to temporary directory: ${CYAN}${CLONED_REPO_DIR}${RESET}"
+
+    echo -n "  "
+    if ! git clone --depth 1 --branch "v${FLYMQ_VERSION}" https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
+        # Try main branch if tag doesn't exist
+        print_warning "Tag v${FLYMQ_VERSION} not found, trying main branch..."
+        echo -n "  "
+        if ! git clone --depth 1 https://github.com/firefly-oss/flymq.git "${CLONED_REPO_DIR}" 2>&1; then
+            print_error "Failed to clone FlyMQ repository"
+            rm -rf "${CLONED_REPO_DIR}"
+            exit 1
+        fi
+    fi
+    print_success "Cloned FlyMQ repository"
+
+    # Change to cloned directory
+    cd "${CLONED_REPO_DIR}"
+}
+
+cleanup_cloned_repo() {
+    if [[ -n "${CLONED_REPO_DIR}" ]] && [[ -d "${CLONED_REPO_DIR}" ]]; then
+        print_info "Cleaning up temporary files..."
+        rm -rf "${CLONED_REPO_DIR}"
+    fi
+}
+
 build_binaries() {
     print_step "Building FlyMQ"
     echo ""
@@ -1217,7 +1274,7 @@ build_binaries() {
 
     # Build server
     echo -n "  "
-    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$server_bin" cmd/flymq/main.go 2>&1; then
+    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$server_bin" ./cmd/flymq 2>&1; then
         print_error "Failed to build flymq server"
         exit 1
     fi
@@ -1225,7 +1282,7 @@ build_binaries() {
 
     # Build CLI
     echo -n "  "
-    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$cli_bin" cmd/flymq-cli/main.go 2>&1; then
+    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$cli_bin" ./cmd/flymq-cli 2>&1; then
         print_error "Failed to build flymq-cli"
         exit 1
     fi
@@ -1237,7 +1294,7 @@ build_binaries() {
         discover_bin="bin/flymq-discover.exe"
     fi
     echo -n "  "
-    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$discover_bin" cmd/flymq-discover/main.go 2>&1; then
+    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$discover_bin" ./cmd/flymq-discover 2>&1; then
         print_warning "Failed to build flymq-discover (optional)"
     else
         print_success "Built flymq-discover"
@@ -2370,11 +2427,13 @@ main() {
 
     echo ""
     check_dependencies
+    ensure_source_code
     build_binaries
     install_binaries "$PREFIX"
     create_data_dir
     generate_config "$config_dir"
     install_system_service "$config_dir" "$PREFIX"
+    cleanup_cloned_repo
     print_post_install "$PREFIX" "$config_dir"
 }
 
