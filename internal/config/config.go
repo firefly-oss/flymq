@@ -86,7 +86,8 @@ const (
 	EnvEncryptionKey     = "FLYMQ_ENCRYPTION_KEY"
 
 	// Performance configuration
-	EnvAcks = "FLYMQ_ACKS" // Acks mode: all, leader, none
+	EnvAcks         = "FLYMQ_ACKS"          // Acks mode: all, leader, none
+	EnvDefaultSerDe = "FLYMQ_DEFAULT_SERDE" // Default SerDe: binary, json, string
 
 	// Schema configuration
 	EnvSchemaEnabled     = "FLYMQ_SCHEMA_ENABLED"
@@ -256,10 +257,10 @@ type HealthConfig struct {
 	Addr    string `toml:"addr" json:"addr"`       // Health check HTTP server address
 
 	// TLS Configuration for HTTPS
-	TLSEnabled      bool   `toml:"tls_enabled" json:"tls_enabled"`             // Enable HTTPS for health endpoints
-	TLSCertFile     string `toml:"tls_cert_file" json:"tls_cert_file"`         // Path to TLS certificate file
-	TLSKeyFile      string `toml:"tls_key_file" json:"tls_key_file"`           // Path to TLS private key file
-	TLSAutoGenerate bool   `toml:"tls_auto_generate" json:"tls_auto_generate"` // Auto-generate self-signed certificate
+	TLSEnabled      bool   `toml:"tls_enabled" json:"tls_enabled"`               // Enable HTTPS for health endpoints
+	TLSCertFile     string `toml:"tls_cert_file" json:"tls_cert_file"`           // Path to TLS certificate file
+	TLSKeyFile      string `toml:"tls_key_file" json:"tls_key_file"`             // Path to TLS private key file
+	TLSAutoGenerate bool   `toml:"tls_auto_generate" json:"tls_auto_generate"`   // Auto-generate self-signed certificate
 	TLSUseAdminCert bool   `toml:"tls_use_admin_cert" json:"tls_use_admin_cert"` // Use Admin API TLS certificate
 }
 
@@ -313,9 +314,10 @@ type PerformanceConfig struct {
 	// Default: 100. Lower values = more durable, higher latency
 	SyncBatchSize int `toml:"sync_batch_size" json:"sync_batch_size"`
 
-	// BinaryProtocol enables binary message encoding instead of JSON
-	// Reduces serialization overhead by 50-80%
-	BinaryProtocol bool `toml:"binary_protocol" json:"binary_protocol"`
+	// DefaultSerDe is the default serialization/deserialization format for message payloads.
+	// Used by CLI and SDKs when no specific encoder/decoder is specified.
+	// Options: "binary", "json", "string". Default: "binary"
+	DefaultSerDe string `toml:"default_serde" json:"default_serde"`
 
 	// AsyncIO enables the async I/O manager for non-blocking writes
 	AsyncIO bool `toml:"async_io" json:"async_io"`
@@ -452,9 +454,9 @@ func DefaultConfig() *Config {
 			AdminUsername:  "admin",
 		},
 		Partition: PartitionConfig{
-			DistributionStrategy:    "round-robin",
-			DefaultReplicationFactor: 1,  // Single replica by default (increase for production)
-			DefaultPartitions:        1,  // Single partition by default
+			DistributionStrategy:     "round-robin",
+			DefaultReplicationFactor: 1, // Single replica by default (increase for production)
+			DefaultPartitions:        1, // Single partition by default
 			AutoRebalanceEnabled:     false,
 			AutoRebalanceInterval:    300, // 5 minutes
 			RebalanceThreshold:       0.2, // 20% imbalance triggers rebalance
@@ -485,7 +487,7 @@ func DefaultConfig() *Config {
 		},
 		Performance: autoTunePerformance(),
 		Audit: AuditConfig{
-			Enabled:       true, // Enabled by default for security compliance
+			Enabled:       true,              // Enabled by default for security compliance
 			MaxFileSize:   100 * 1024 * 1024, // 100MB
 			RetentionDays: 90,
 		},
@@ -524,7 +526,7 @@ func autoTunePerformance() PerformanceConfig {
 		Acks:                  "leader",   // Balanced durability/performance
 		SyncIntervalMs:        5,          // Aggressive 5ms sync interval (was 10ms)
 		SyncBatchSize:         batchSize,  // Auto-tuned batch size
-		BinaryProtocol:        false,      // JSON by default for compatibility
+		DefaultSerDe:          "binary",   // Efficient binary SerDe by default
 		AsyncIO:               true,       // Enable async I/O by default
 		ZeroCopy:              true,       // Enable zero-copy for consumers
 		WriteBufferSize:       bufferSize, // Auto-tuned buffer size
@@ -665,6 +667,9 @@ func (m *Manager) LoadFromEnv() {
 	// Performance environment variables
 	if v := os.Getenv(EnvAcks); v != "" {
 		cfg.Performance.Acks = v
+	}
+	if v := os.Getenv(EnvDefaultSerDe); v != "" {
+		cfg.Performance.DefaultSerDe = v
 	}
 
 	// Schema environment variables

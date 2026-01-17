@@ -17,8 +17,8 @@ set -euo pipefail
 # Configuration
 # =============================================================================
 
-readonly SCRIPT_VERSION="1.26.9"
-readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.9}"
+readonly SCRIPT_VERSION="1.26.10"
+readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.10}"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Installation options
@@ -60,6 +60,7 @@ CFG_CLUSTER_ENABLED="false"       # whether clustering is enabled
 
 # Performance Configuration
 CFG_ACKS="leader"                 # Durability mode: all, leader, none
+CFG_DEFAULT_SERDE="binary"        # Default SerDe: binary, json, string
 
 # Schema validation - ENABLED by default
 CFG_SCHEMA_ENABLED="true"
@@ -1057,6 +1058,7 @@ generate_config() {
 
   "performance": {
     "acks": "${CFG_ACKS}",
+    "default_serde": "${CFG_DEFAULT_SERDE}",
     "sync_interval_ms": 5
   },
 
@@ -1180,6 +1182,7 @@ FLYMQ_LOG_LEVEL=${CFG_LOG_LEVEL}
 
 # Performance
 FLYMQ_ACKS=${CFG_ACKS}
+FLYMQ_DEFAULT_SERDE=${CFG_DEFAULT_SERDE}
 
 # Security (non-sensitive)
 FLYMQ_TLS_ENABLED=${CFG_TLS_ENABLED}

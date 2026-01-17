@@ -60,7 +60,7 @@ const (
 
 // Version information
 const (
-	Version   = "1.26.9"
+	Version   = "1.26.10"
 	Copyright = "Copyright (c) 2026 Firefly Software Solutions Inc."
 	License   = "Licensed under Apache License 2.0"
 )
@@ -527,9 +527,6 @@ func printPerformanceInfo(w io.Writer, cfg *config.Config) {
 	if cfg.Performance.ZeroCopy {
 		ioFeatures = append(ioFeatures, AnsiGreen+"ZeroCopy"+AnsiReset)
 	}
-	if cfg.Performance.BinaryProtocol {
-		ioFeatures = append(ioFeatures, AnsiGreen+"Binary"+AnsiReset)
-	}
 
 	col1 = fmtKV("Optimizations", strings.Join(ioFeatures, "+"))
 	col2 = fmtKV("Write Buffer", formatBytes(int64(cfg.Performance.WriteBufferSize)))
@@ -545,6 +542,6 @@ func printPerformanceInfo(w io.Writer, cfg *config.Config) {
 	// Row 3: System
 	col1 = fmtKV("CPUs", fmt.Sprintf("%d", runtime.NumCPU()))
 	col2 = fmtKV("GOMAXPROCS", fmt.Sprintf("%d", runtime.GOMAXPROCS(0)))
-	col3 = ""
+	col3 = fmtKV("Default SerDe", AnsiCyan+cfg.Performance.DefaultSerDe+AnsiReset)
 	printRow3(w, col1, col2, col3)
 }
