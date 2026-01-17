@@ -24,9 +24,18 @@ COMMANDS:
 	consume, sub     Consume messages from a topic
 	topics           Manage topics (list, create, delete, describe)
 	groups           Manage consumer groups
-	cluster          View cluster information
+	cluster          View cluster information and manage partitions
 	health           Check server health
 	benchmark        Run performance benchmarks
+
+CLUSTER SUBCOMMANDS (Partition Management):
+===========================================
+
+	cluster metadata    Get partition-to-node mappings for smart routing
+	cluster partitions  List all partition assignments
+	cluster leaders     Show leader distribution across nodes
+	cluster rebalance   Trigger partition rebalance for even distribution
+	cluster reassign    Reassign a partition to a new leader
 
 EXAMPLES:
 =========
@@ -42,6 +51,15 @@ EXAMPLES:
 
 	# Check cluster health
 	flymq-cli health
+
+	# View partition leader distribution
+	flymq-cli cluster leaders
+
+	# Trigger partition rebalance
+	flymq-cli cluster rebalance
+
+	# Reassign partition to new leader
+	flymq-cli cluster reassign my-topic 0 --leader node-2
 */
 package main
 
@@ -1828,6 +1846,53 @@ func httpGetWithTLS(url string, cfg HTTPClientConfig) (string, error) {
 	return string(body), nil
 }
 
+func httpPostWithTLS(url string, body []byte, cfg HTTPClientConfig) (string, error) {
+	client, err := buildHTTPClient(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = strings.NewReader(string(body))
+	}
+
+	req, err := http.NewRequest("POST", url, bodyReader)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add Basic Auth if credentials provided
+	if cfg.Username != "" && cfg.Password != "" {
+		req.SetBasicAuth(cfg.Username, cfg.Password)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode >= 400 {
+		if resp.StatusCode == 401 {
+			return "", fmt.Errorf("authentication required (use --admin-user and --admin-pass)")
+		}
+		if resp.StatusCode == 403 {
+			return "", fmt.Errorf("permission denied")
+		}
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return string(respBody), nil
+}
+
 // ============================================================================
 // Cluster Commands
 // ============================================================================
@@ -1835,14 +1900,21 @@ func httpGetWithTLS(url string, cfg HTTPClientConfig) (string, error) {
 func cmdCluster(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
 	if subCmd == "" {
-		cli.Error("Usage: flymq-cli cluster <status|members|info|join|leave> [options]")
+		cli.Error("Usage: flymq-cli cluster <subcommand> [options]")
 		fmt.Println()
 		fmt.Println("Subcommands:")
-		fmt.Println("  status    Show cluster status and health")
-		fmt.Println("  members   List all cluster members")
-		fmt.Println("  info      Show detailed cluster information")
-		fmt.Println("  join      Join a cluster (requires --peer)")
-		fmt.Println("  leave     Leave the cluster gracefully")
+		fmt.Println("  status      Show cluster status and health")
+		fmt.Println("  members     List all cluster members")
+		fmt.Println("  info        Show detailed cluster information")
+		fmt.Println("  join        Join a cluster (requires --peer)")
+		fmt.Println("  leave       Leave the cluster gracefully")
+		fmt.Println()
+		fmt.Println("Partition Management (Horizontal Scaling):")
+		fmt.Println("  metadata    Get partition-to-node mappings for smart routing")
+		fmt.Println("  partitions  List all partition assignments")
+		fmt.Println("  leaders     Show leader distribution across nodes")
+		fmt.Println("  rebalance   Trigger partition rebalance for even distribution")
+		fmt.Println("  reassign    Reassign a partition to a new leader")
 		os.Exit(1)
 	}
 
@@ -1857,6 +1929,17 @@ func cmdCluster(args []string) {
 		cmdClusterJoin(subArgs)
 	case "leave":
 		cmdClusterLeave(subArgs)
+	// Partition management commands
+	case "metadata":
+		cmdClusterMetadata(subArgs)
+	case "partitions":
+		cmdClusterPartitions(subArgs)
+	case "leaders":
+		cmdClusterLeaders(subArgs)
+	case "rebalance":
+		cmdClusterRebalance(subArgs)
+	case "reassign":
+		cmdClusterReassign(subArgs)
 	default:
 		cli.Error("Unknown cluster subcommand: %s", subCmd)
 		os.Exit(1)
@@ -1955,6 +2038,172 @@ func cmdClusterLeave(args []string) {
 
 	cli.Success("Successfully left the cluster")
 	cli.Info("The node is now in standalone mode.")
+}
+
+// ============================================================================
+// Partition Management Commands (Horizontal Scaling)
+// ============================================================================
+
+func cmdClusterMetadata(args []string) {
+	adminAddr := getAdminAddr(args)
+	tlsCfg := getAdminTLSConfig(args)
+
+	// Optional topic filter
+	topic := ""
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--topic" || args[i] == "-t") && i+1 < len(args) {
+			topic = args[i+1]
+			break
+		}
+	}
+
+	url := buildURL(adminAddr, "/api/v1/cluster/metadata", tlsCfg.TLSEnabled)
+	if topic != "" {
+		url += "?topic=" + topic
+	}
+
+	resp, err := httpGetWithTLS(url, tlsCfg)
+	if err != nil {
+		cli.Error("Failed to get cluster metadata: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Cluster Metadata (Partition-to-Node Mappings)")
+	cli.Separator()
+	fmt.Println(resp)
+	cli.Separator()
+	cli.Info("Use this metadata for smart client routing to partition leaders")
+}
+
+func cmdClusterPartitions(args []string) {
+	adminAddr := getAdminAddr(args)
+	tlsCfg := getAdminTLSConfig(args)
+
+	// Optional topic filter
+	topic := ""
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--topic" || args[i] == "-t") && i+1 < len(args) {
+			topic = args[i+1]
+			break
+		}
+	}
+
+	url := buildURL(adminAddr, "/api/v1/cluster/partitions", tlsCfg.TLSEnabled)
+	if topic != "" {
+		url += "?topic=" + topic
+	}
+
+	resp, err := httpGetWithTLS(url, tlsCfg)
+	if err != nil {
+		cli.Error("Failed to get partition assignments: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Partition Assignments")
+	cli.Separator()
+	fmt.Println(resp)
+	cli.Separator()
+}
+
+func cmdClusterLeaders(args []string) {
+	adminAddr := getAdminAddr(args)
+	tlsCfg := getAdminTLSConfig(args)
+	url := buildURL(adminAddr, "/api/v1/cluster/leaders", tlsCfg.TLSEnabled)
+
+	resp, err := httpGetWithTLS(url, tlsCfg)
+	if err != nil {
+		cli.Error("Failed to get leader distribution: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Partition Leader Distribution")
+	cli.Separator()
+	fmt.Println(resp)
+	cli.Separator()
+	cli.Info("A balanced distribution means each node has roughly equal partition leaders")
+}
+
+func cmdClusterRebalance(args []string) {
+	adminAddr := getAdminAddr(args)
+	tlsCfg := getAdminTLSConfig(args)
+	url := buildURL(adminAddr, "/api/v1/cluster/rebalance", tlsCfg.TLSEnabled)
+
+	cli.Warning("This will trigger a partition rebalance across the cluster.")
+	cli.Info("Partition leaders will be redistributed for even load distribution.")
+
+	resp, err := httpPostWithTLS(url, nil, tlsCfg)
+	if err != nil {
+		cli.Error("Failed to trigger rebalance: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Rebalance Result")
+	cli.Separator()
+	fmt.Println(resp)
+	cli.Separator()
+	cli.Success("Partition rebalance initiated")
+}
+
+func cmdClusterReassign(args []string) {
+	if len(args) < 2 {
+		cli.Error("Usage: flymq-cli cluster reassign <topic> <partition> --leader <node-id> [--replicas <node1,node2,...>]")
+		os.Exit(1)
+	}
+
+	topic := args[0]
+	partition, err := strconv.Atoi(args[1])
+	if err != nil {
+		cli.Error("Invalid partition number: %s", args[1])
+		os.Exit(1)
+	}
+
+	var newLeader string
+	var replicas string
+	for i := 2; i < len(args); i++ {
+		if (args[i] == "--leader" || args[i] == "-l") && i+1 < len(args) {
+			newLeader = args[i+1]
+			i++
+		} else if (args[i] == "--replicas" || args[i] == "-r") && i+1 < len(args) {
+			replicas = args[i+1]
+			i++
+		}
+	}
+
+	if newLeader == "" {
+		cli.Error("--leader is required")
+		os.Exit(1)
+	}
+
+	adminAddr := getAdminAddr(args)
+	tlsCfg := getAdminTLSConfig(args)
+	url := buildURL(adminAddr, fmt.Sprintf("/api/v1/cluster/partitions/%s/%d", topic, partition), tlsCfg.TLSEnabled)
+
+	body := fmt.Sprintf(`{"new_leader": "%s"`, newLeader)
+	if replicas != "" {
+		replicaList := strings.Split(replicas, ",")
+		replicaJSON := `[`
+		for i, r := range replicaList {
+			if i > 0 {
+				replicaJSON += ","
+			}
+			replicaJSON += `"` + strings.TrimSpace(r) + `"`
+		}
+		replicaJSON += `]`
+		body += fmt.Sprintf(`, "new_replicas": %s`, replicaJSON)
+	}
+	body += `}`
+
+	resp, err := httpPostWithTLS(url, []byte(body), tlsCfg)
+	if err != nil {
+		cli.Error("Failed to reassign partition: %v", err)
+		os.Exit(1)
+	}
+
+	cli.Header("Partition Reassignment")
+	cli.Separator()
+	fmt.Println(resp)
+	cli.Separator()
+	cli.Success("Partition %s:%d reassigned to %s", topic, partition, newLeader)
 }
 
 // ============================================================================

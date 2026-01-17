@@ -76,6 +76,8 @@ func printHelp() {
 	fmt.Println()
 	fmt.Println("\033[1;36mOptions:\033[0m")
 	fmt.Println("  -config string    Path to configuration file (JSON format)")
+	fmt.Println("  -human-readable   Use human-readable log format instead of JSON")
+	fmt.Println("  -quiet            Skip banner and config display, output logs only")
 	fmt.Println("  -version          Show version information")
 	fmt.Println("  -help, -h         Show this help message")
 	fmt.Println()
@@ -85,7 +87,7 @@ func printHelp() {
 	fmt.Println("  FLYMQ_DATA_DIR           Data directory path")
 	fmt.Println("  FLYMQ_NODE_ID            Unique node identifier")
 	fmt.Println("  FLYMQ_LOG_LEVEL          Log level: debug, info, warn, error")
-	fmt.Println("  FLYMQ_LOG_JSON           Enable JSON log output (true/false)")
+	fmt.Println("  FLYMQ_LOG_JSON           Enable JSON log output (default: true)")
 	fmt.Println("  FLYMQ_SEGMENT_BYTES      Log segment size in bytes")
 	fmt.Println("  FLYMQ_TLS_ENABLED        Enable TLS (true/false)")
 	fmt.Println("  FLYMQ_TLS_CERT_FILE      Path to TLS certificate file")
@@ -95,14 +97,17 @@ func printHelp() {
 	fmt.Println("  FLYMQ_ENCRYPTION_KEY     AES-256 encryption key (64 hex chars)")
 	fmt.Println()
 	fmt.Println("\033[1;36mExamples:\033[0m")
-	fmt.Println("  # Start with default settings")
+	fmt.Println("  # Start with default settings (JSON logs)")
 	fmt.Println("  flymq")
+	fmt.Println()
+	fmt.Println("  # Start with human-readable logs for development")
+	fmt.Println("  flymq -human-readable")
+	fmt.Println()
+	fmt.Println("  # Start in quiet mode (logs only, no banner)")
+	fmt.Println("  flymq -quiet")
 	fmt.Println()
 	fmt.Println("  # Start with custom config file")
 	fmt.Println("  flymq -config /etc/flymq/flymq.json")
-	fmt.Println()
-	fmt.Println("  # Start with environment variables")
-	fmt.Println("  FLYMQ_BIND_ADDR=:9092 FLYMQ_LOG_LEVEL=debug flymq")
 	fmt.Println()
 }
 
@@ -117,6 +122,8 @@ func main() {
 
 	// Parse flags
 	configPath := flag.String("config", "", "Path to configuration file")
+	humanReadable := flag.Bool("human-readable", false, "Use human-readable log format instead of JSON")
+	quietMode := flag.Bool("quiet", false, "Skip banner and config display, output logs only")
 	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Usage = printHelp
 	flag.Parse()
@@ -127,10 +134,7 @@ func main() {
 		return
 	}
 
-	// Display startup banner
-	banner.PrintServer()
-
-	// Load configuration
+	// Load configuration first (before banner, so we can display it)
 	cfgMgr := config.Global()
 	if *configPath != "" {
 		if err := cfgMgr.LoadFromFile(*configPath); err != nil {
@@ -143,6 +147,16 @@ func main() {
 
 	// Finalize config (auto-enable linked settings)
 	cfg.Finalize()
+
+	// Override log format if --human-readable flag is set
+	if *humanReadable {
+		cfg.LogJSON = false
+	}
+
+	// Display startup banner with full configuration (unless quiet mode)
+	if !*quietMode {
+		banner.PrintServerWithConfig(cfg)
+	}
 
 	// Setup logging
 	logging.SetGlobalLevel(logging.ParseLevel(cfg.LogLevel))
