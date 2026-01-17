@@ -592,18 +592,18 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		perfLogger:     logging.NewPerformanceLogger(logging.NewLogger("performance")),
 		errorLogger:    logging.NewErrorLogger(logging.NewLogger("error")),
 		// Create unbuffered channel - closing broadcasts to all receivers
-		stopCh:           make(chan struct{}),
-		schemaRegistry:   registry,
-		schemaValidator:  validator,
-		authorizer:       authorizer,
-		asyncIO:          asyncIO,
-		bufferPool:       bufferPool,
-		pipeline:         pipeline,
-		delayedManager:   delayedManager,
-		ttlManager:       ttlManager,
-		dlqManager:       dlqManager,
-		txnCoordinator:   txnCoordinator,
-		auditStore:       auditStore,
+		stopCh:          make(chan struct{}),
+		schemaRegistry:  registry,
+		schemaValidator: validator,
+		authorizer:      authorizer,
+		asyncIO:         asyncIO,
+		bufferPool:      bufferPool,
+		pipeline:        pipeline,
+		delayedManager:  delayedManager,
+		ttlManager:      ttlManager,
+		dlqManager:      dlqManager,
+		txnCoordinator:  txnCoordinator,
+		auditStore:      auditStore,
 	}
 }
 
@@ -2891,6 +2891,11 @@ func (s *Server) handleACLSet(w io.Writer, payload []byte) error {
 		return s.sendErrorResponse(w, fmt.Errorf("invalid request: %w", err))
 	}
 
+	// Validate: if public is true, allow_anonymous must be enabled
+	if req.Public && !s.authorizer.AllowAnonymous() {
+		return s.sendErrorResponse(w, fmt.Errorf("cannot make topic public because anonymous access is disabled in server configuration"))
+	}
+
 	// In cluster mode, route through Raft consensus
 	if s.broker.IsClusterMode() {
 		if err := s.broker.ProposeSetACL(req.Topic, req.Public, req.AllowedUsers, req.AllowedRoles); err != nil {
@@ -3192,8 +3197,8 @@ func (s *Server) handleAuditExport(w io.Writer, payload []byte) error {
 
 // sendErrorResponse sends an error response to the client.
 func (s *Server) sendErrorResponse(w io.Writer, err error) error {
-	resp := protocol.EncodeBinarySuccessResponse(&protocol.BinarySuccessResponse{
-		Success: false,
+	resp := protocol.EncodeBinaryErrorResponse(&protocol.BinaryErrorResponse{
+		Code:    1,
 		Message: err.Error(),
 	})
 	return protocol.WriteBinaryMessage(w, protocol.OpError, resp)

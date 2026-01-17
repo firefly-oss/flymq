@@ -80,6 +80,37 @@ public final class BinaryProtocol {
     }
 
     // =========================================================================
+    // Error Response
+    // =========================================================================
+
+    /**
+     * Represents a binary error response.
+     */
+    public static record ErrorResult(int code, String message) {}
+
+    /**
+     * Decodes a binary error response.
+     */
+    public static ErrorResult decodeErrorResponse(byte[] data) {
+        if (data == null || data.length < 6) {
+            String msg = data != null ? new String(data, StandardCharsets.UTF_8) : "Unknown error";
+            return new ErrorResult(1, msg);
+        }
+
+        ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+        int code = buf.getInt();
+        int msgLen = buf.getShort() & 0xFFFF;
+
+        if (6 + msgLen > data.length) {
+             return new ErrorResult(code, new String(data, 6, data.length - 6, StandardCharsets.UTF_8));
+        }
+
+        byte[] msgBytes = new byte[msgLen];
+        buf.get(msgBytes);
+        return new ErrorResult(code, new String(msgBytes, StandardCharsets.UTF_8));
+    }
+
+    // =========================================================================
     // Produce Request/Response
     // =========================================================================
 

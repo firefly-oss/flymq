@@ -85,6 +85,7 @@ from .binary import (
     decode_list_groups_response,
     encode_describe_group_request,
     decode_describe_group_response,
+    decode_error_response,
     encode_get_lag_request,
     decode_get_lag_response,
     encode_delete_group_request,
@@ -351,8 +352,8 @@ class FlyMQClient:
                 response = read_message(sock_file)
 
                 if response.op == OpCode.ERROR:
-                    error_msg = response.payload.decode("utf-8")
-                    self._handle_server_error(error_msg)
+                    err_resp = decode_error_response(response.payload)
+                    self._handle_server_error(err_resp.message)
 
                 return response.payload
 

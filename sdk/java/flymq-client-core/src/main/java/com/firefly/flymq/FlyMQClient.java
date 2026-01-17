@@ -374,8 +374,8 @@ public class FlyMQClient implements AutoCloseable {
             Protocol.Message response = Protocol.readMessage(inputStream);
 
             if (response.op() == OpCode.ERROR) {
-                String errorMsg = response.payloadAsString();
-                handleServerError(errorMsg);
+                BinaryProtocol.ErrorResult errorResult = BinaryProtocol.decodeErrorResponse(response.payload());
+                handleServerError(errorResult.message());
             }
 
             return response.payload();
@@ -1252,7 +1252,8 @@ public class FlyMQClient implements AutoCloseable {
             // Read response
             Protocol.Message response = Protocol.readMessage(inputStream);
             if (response.op() == OpCode.ERROR) {
-                throw new FlyMQException(new String(response.payload(), StandardCharsets.UTF_8));
+                BinaryProtocol.ErrorResult errorResult = BinaryProtocol.decodeErrorResponse(response.payload());
+                throw new FlyMQException(errorResult.message());
             }
 
             // Parse response
@@ -1378,7 +1379,8 @@ public class FlyMQClient implements AutoCloseable {
             // Read response
             Protocol.Message response = Protocol.readMessage(inputStream);
             if (response.op() == OpCode.ERROR) {
-                throw new FlyMQException(new String(response.payload(), StandardCharsets.UTF_8));
+                BinaryProtocol.ErrorResult errorResult = BinaryProtocol.decodeErrorResponse(response.payload());
+                throw new FlyMQException(errorResult.message());
             }
 
             return response.payload();

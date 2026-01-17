@@ -449,6 +449,15 @@ func parseLeaderAddr(errMsg string) string {
 	return ""
 }
 
+func (c *Client) decodeError(payload []byte) error {
+	resp, err := protocol.DecodeBinaryErrorResponse(payload)
+	if err != nil {
+		// Fallback for cases where server might still send raw string (though we should avoid this)
+		return fmt.Errorf("server error: %s", string(payload))
+	}
+	return fmt.Errorf("server error: %s", resp.Message)
+}
+
 // isNotLeaderError checks if an error is a "not leader" error.
 func isNotLeaderError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "not leader")
@@ -645,7 +654,7 @@ func (c *Client) doProduceRequest(topic string, key, data []byte, partition int)
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	return protocol.DecodeRecordMetadata(respMsg.Payload)
@@ -694,7 +703,7 @@ func (c *Client) ConsumeFromPartition(topic string, partition int, offset uint64
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	// Parse binary response (binary-only protocol)
@@ -725,7 +734,7 @@ func (c *Client) CreateTopic(topic string, partitions int) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -756,7 +765,7 @@ func (c *Client) Subscribe(topic, groupID string, partition int, mode string) (u
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 
 		// Parse binary response
@@ -793,7 +802,7 @@ func (c *Client) CommitOffset(topic, groupID string, partition int, offset uint6
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -842,7 +851,7 @@ func (c *Client) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 		return nil, 0, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, 0, c.decodeError(respMsg.Payload)
 	}
 
 	// Parse binary response
@@ -878,7 +887,7 @@ func (c *Client) ListTopics() ([]string, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	// Parse binary response
@@ -907,7 +916,7 @@ func (c *Client) DeleteTopic(topic string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -965,7 +974,7 @@ func (c *Client) GetCommittedOffset(topic, groupID string, partition int) (uint6
 		return 0, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return 0, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return 0, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryGetOffsetResponse(respMsg.Payload)
@@ -999,7 +1008,7 @@ func (c *Client) ResetOffset(topic, groupID string, partition int, mode string, 
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1035,7 +1044,7 @@ func (c *Client) GetLag(topic, groupID string, partition int) (*ConsumerLag, err
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryGetLagResponse(respMsg.Payload)
@@ -1067,7 +1076,7 @@ func (c *Client) ListConsumerGroups() ([]ConsumerGroupInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryListGroupsResponse(respMsg.Payload)
@@ -1117,7 +1126,7 @@ func (c *Client) DescribeConsumerGroup(groupID string) (*ConsumerGroupInfo, erro
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryDescribeGroupResponse(respMsg.Payload)
@@ -1163,7 +1172,7 @@ func (c *Client) DeleteConsumerGroup(groupID string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1194,7 +1203,7 @@ func (c *Client) BeginTransaction() (*Transaction, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryTxnResponse(respMsg.Payload)
@@ -1233,7 +1242,7 @@ func (t *Transaction) Produce(topic string, data []byte) (*protocol.RecordMetada
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, t.client.decodeError(respMsg.Payload)
 	}
 
 	return protocol.DecodeRecordMetadata(respMsg.Payload)
@@ -1259,7 +1268,7 @@ func (t *Transaction) Commit() error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return t.client.decodeError(respMsg.Payload)
 	}
 
 	t.active = false
@@ -1286,7 +1295,7 @@ func (t *Transaction) Rollback() error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return t.client.decodeError(respMsg.Payload)
 	}
 
 	t.active = false
@@ -1322,7 +1331,7 @@ func (c *Client) ProduceDelayedWithMetadata(topic string, data []byte, delayMs i
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	return protocol.DecodeRecordMetadata(respMsg.Payload)
@@ -1357,7 +1366,7 @@ func (c *Client) ProduceWithTTLAndMetadata(topic string, data []byte, ttlMs int6
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	return protocol.DecodeRecordMetadata(respMsg.Payload)
@@ -1392,7 +1401,7 @@ func (c *Client) ProduceWithSchemaAndMetadata(topic string, data []byte, schemaN
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	return protocol.DecodeRecordMetadata(respMsg.Payload)
@@ -1427,7 +1436,7 @@ func (c *Client) FetchDLQ(topic string, maxMessages int) ([]DLQMessage, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryDLQResponse(respMsg.Payload)
@@ -1466,7 +1475,7 @@ func (c *Client) ReplayDLQ(topic, messageID string) error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return c.decodeError(respMsg.Payload)
 	}
 	return nil
 }
@@ -1487,7 +1496,7 @@ func (c *Client) PurgeDLQ(topic string) error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return c.decodeError(respMsg.Payload)
 	}
 	return nil
 }
@@ -1513,7 +1522,7 @@ func (c *Client) RegisterSchema(name string, schemaType string, schema []byte) e
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1542,7 +1551,7 @@ func (c *Client) ListSchemas() ([]SchemaInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryListSchemasResponse(respMsg.Payload)
@@ -1579,7 +1588,7 @@ func (c *Client) ValidateSchema(name string, message []byte) (bool, error) {
 		return false, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return false, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return false, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryValidateSchemaResponse(respMsg.Payload)
@@ -1609,7 +1618,7 @@ func (c *Client) DeleteSchema(name string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1631,7 +1640,7 @@ func (c *Client) ClusterJoin(peerAddr string) error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return c.decodeError(respMsg.Payload)
 	}
 	return nil
 }
@@ -1650,7 +1659,7 @@ func (c *Client) ClusterLeave() error {
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return c.decodeError(respMsg.Payload)
 	}
 	return nil
 }
@@ -1683,7 +1692,7 @@ func (c *Client) ListUsers() ([]UserInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryUserListResponse(respMsg.Payload)
@@ -1727,7 +1736,7 @@ func (c *Client) CreateUser(username, password string, roles []string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1750,7 +1759,7 @@ func (c *Client) DeleteUser(username string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1785,7 +1794,7 @@ func (c *Client) UpdateUser(username string, roles []string, enabled *bool) erro
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1807,7 +1816,7 @@ func (c *Client) GetUser(username string) (*UserInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryUserInfo(respMsg.Payload)
@@ -1845,7 +1854,7 @@ func (c *Client) ChangePassword(username, oldPassword, newPassword string) error
 		return err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return c.decodeError(respMsg.Payload)
 	}
 	return nil
 }
@@ -1878,7 +1887,7 @@ func (c *Client) ListACLs() ([]ACLInfo, bool, error) {
 		return nil, false, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, false, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, false, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryACLListResponse(respMsg.Payload)
@@ -1914,7 +1923,7 @@ func (c *Client) GetACL(topic string) (*ACLInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryACLInfo(respMsg.Payload)
@@ -1960,7 +1969,7 @@ func (c *Client) SetACL(topic string, public bool, allowedUsers, allowedRoles []
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -1983,7 +1992,7 @@ func (c *Client) DeleteACL(topic string) error {
 			return err
 		}
 		if respMsg.Header.Op == protocol.OpError {
-			return fmt.Errorf("server error: %s", string(respMsg.Payload))
+			return c.decodeError(respMsg.Payload)
 		}
 		return nil
 	})
@@ -2010,7 +2019,7 @@ func (c *Client) ListRoles() ([]RoleInfo, error) {
 		return nil, err
 	}
 	if respMsg.Header.Op == protocol.OpError {
-		return nil, fmt.Errorf("server error: %s", string(respMsg.Payload))
+		return nil, c.decodeError(respMsg.Payload)
 	}
 
 	resp, err := protocol.DecodeBinaryRoleListResponse(respMsg.Payload)

@@ -796,6 +796,33 @@ def encode_delete_group_request(req: BinaryDeleteGroupRequest) -> bytes:
 
 
 # =============================================================================
+# Error Response
+# =============================================================================
+
+@dataclass
+class BinaryErrorResponse:
+    """Binary error response from server."""
+    code: int
+    message: str
+
+
+def decode_error_response(data: bytes) -> BinaryErrorResponse:
+    """Decode a binary error response."""
+    if len(data) < 6:
+        # Fallback for old servers sending plain text
+        return BinaryErrorResponse(code=1, message=data.decode("utf-8", errors="replace"))
+
+    code = struct.unpack(">I", data[:4])[0]
+    msg_len = struct.unpack(">H", data[4:6])[0]
+
+    if len(data) < 6 + msg_len:
+        return BinaryErrorResponse(code=code, message=data[6:].decode("utf-8", errors="replace"))
+
+    message = data[6 : 6 + msg_len].decode("utf-8")
+    return BinaryErrorResponse(code=code, message=message)
+
+
+# =============================================================================
 # Advanced Produce: Delayed / TTL
 # =============================================================================
 
