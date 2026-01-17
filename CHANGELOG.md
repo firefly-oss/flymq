@@ -42,12 +42,31 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
   - `getPartitionLeader(topic, partition)` for direct leader lookup
   - `getTopicPartitions(topic)` for all partition info
 
+#### Platform-Specific Zero-Copy I/O
+- **Linux Zero-Copy** - Full zero-copy support using kernel syscalls
+  - `sendfile()` for file-to-socket transfers (consuming messages)
+  - `splice()` for socket-to-file transfers (receiving replicated data)
+  - Uses `golang.org/x/sys/unix` for cross-compilation support
+- **macOS/Darwin Zero-Copy** - Native sendfile support
+  - Darwin-specific `sendfile()` syscall (different signature than Linux)
+  - Falls back to buffered I/O for socket-to-file (no splice on Darwin)
+- **Windows/Others Fallback** - Graceful degradation
+  - Automatic fallback to buffered I/O on unsupported platforms
+  - `IsZeroCopySupported()` API to check platform capabilities
+- **Build Tags** - Platform-specific files with Go build constraints
+  - `zerocopy_linux.go` - Linux implementation
+  - `zerocopy_darwin.go` - macOS implementation
+  - `zerocopy_others.go` - Fallback for Windows, BSD, etc.
+
 ### Changed
 - **Broker Interface** - Extended `Cluster` interface with partition-level leadership methods
   - `IsPartitionLeader()`, `GetPartitionLeaderInfo()`, `GetAllPartitionLeaders()`
   - `ProposeAssignPartition()`, `TriggerRebalance()`, `ReassignPartition()`
 - **Swagger/OpenAPI** - Added cluster metadata and partition endpoints to API spec
 - **Installer** - Enhanced with mDNS discovery integration for cluster setup
+- **Zero-Copy Architecture** - Refactored to platform-specific implementations
+  - Moved from single `zerocopy.go` to platform-specific files
+  - Improved cross-compilation support for all target platforms
 
 ---
 
