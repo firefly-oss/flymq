@@ -903,6 +903,9 @@ FlyMQ provides official client SDKs for Go, Python, and Java. All SDKs support t
 | Basic Produce/Consume | ✅ | ✅ | ✅ |
 | Key-Based Partitioning | ✅ | ✅ | ✅ |
 | Consumer Groups | ✅ | ✅ | ✅ |
+| Topic Wildcards (+, #) | ✅ | ✅ | ✅ |
+| Server-Side Filtering | ✅ | ✅ | ✅ |
+| Plug-and-Play SerDes | ✅ | ✅ | ✅ |
 | Transactions | ✅ | ✅ | ✅ |
 | Encryption (AES-256-GCM) | ✅ | ✅ | ✅ |
 | TLS/mTLS | ✅ | ✅ | ✅ |

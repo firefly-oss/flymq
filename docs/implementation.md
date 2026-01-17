@@ -121,6 +121,94 @@ func (s *Segment) Read(offset uint64) (*protocol.Record, error) {
 }
 ```
 
+## Topic Filtering Implementation
+
+FlyMQ implements a high-performance topic filtering engine in the `internal/topic` package. It uses a Trie (prefix tree) data structure to support efficient MQTT-style wildcard matching.
+
+### Trie-based Matcher
+
+The Trie structure allows matching a topic against thousands of patterns in near-constant time. Each node in the Trie represents a topic level (separated by `/`).
+
+```go
+type Node struct {
+    children map[string]*Node
+    patterns []string // Patterns that end at this node
+}
+```
+
+**Matching Logic:**
+1. Split the incoming topic into levels (e.g., `sensors/room1/temp` -> `["sensors", "room1", "temp"]`).
+2. Traverse the Trie recursively, following matching level names, `+` (single-level wildcard), and `#` (multi-level wildcard).
+3. Collect all patterns encountered during the traversal.
+
+### Server-Side Message Filtering
+
+To reduce network bandwidth and client-side load, FlyMQ performs message filtering directly on the broker during `Fetch` requests.
+
+**Implementation in Broker:**
+When a `Fetch` request includes a `Filter` field, the broker applies the filter to each message before including it in the response batch.
+
+```go
+func (b *Broker) Fetch(req *protocol.BinaryFetchRequest) (*protocol.BinaryFetchResponse, error) {
+    // ... get messages from storage ...
+    
+    var filteredMessages []*protocol.Message
+    for _, msg := range messages {
+        if req.Filter != "" {
+            // Case-insensitive substring or regex match
+            matched, _ := regexp.MatchString("(?i)"+req.Filter, string(msg.Value))
+            if !matched {
+                continue
+            }
+        }
+        filteredMessages = append(filteredMessages, msg)
+    }
+    // ...
+}
+```
+
+*Note: The actual implementation is optimized to avoid redundant allocations and uses a pre-compiled regex where possible.*
+
+## Plug-and-Play SerDe System
+
+The SerDe (Serializer/Deserializer) system provides a unified way to handle typed data across all SDKs.
+
+### Architecture
+
+All SDKs follow a common pattern for SerDe implementation:
+
+1. **Interface Definition**:
+    - `Serializer<T>`: Converts an object to bytes.
+    - `Deserializer<T>`: Converts bytes back to an object.
+
+2. **Registry**: A central registry in the client allows switching between encoders/decoders by name (e.g., `json`, `string`, `binary`).
+
+3. **Pipeline Integration**:
+    - **Producer**: Automatically calls the selected Serializer before sending the payload.
+    - **Consumer**: Provides a `Decode()` or `Value()` method that uses the selected Deserializer to return the typed object.
+
+### Implementation Details (Go)
+
+In the Go SDK, the SerDe system is implemented in `pkg/client/serde.go`.
+
+```go
+type Serializer interface {
+    Encode(v interface{}) ([]byte, error)
+}
+
+type Deserializer interface {
+    Decode(data []byte, v interface{}) error
+}
+
+var registry = map[string]SerDe{
+    "json":   {JSONSerializer{}, JSONDeserializer{}},
+    "string": {StringSerializer{}, StringDeserializer{}},
+    "binary": {BinarySerializer{}, BinaryDeserializer{}},
+}
+```
+
+Clients can register custom SerDes to support proprietary formats (e.g., Protobuf, Avro) while maintaining a clean API.
+
 ## Consumer Group Coordination
 
 ### Group State Machine

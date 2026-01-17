@@ -448,6 +448,51 @@ client = FlyMQClient("localhost:9092")
 client.produce_with_ttl("my-topic", b"Expiring message", ttl_ms=60000)
 ```
 
+### Topic Filtering (MQTT-style)
+
+FlyMQ supports powerful MQTT-style wildcards for topic subscriptions:
+
+- `+`: Matches exactly one topic level.
+- `#`: Matches zero or more topic levels at the end.
+
+```python
+# Subscribe to multiple topics using patterns
+with client.consumer(["sensors/+/temp", "logs/#"], group_id="monitor") as consumer:
+    for msg in consumer:
+        print(f"Topic: {msg.topic}, Data: {msg.decode()}")
+```
+
+### Server-Side Message Filtering
+
+Reduce bandwidth by filtering messages on the server before they are sent to the client:
+
+```python
+# Only receive messages containing "ERROR" (regex supported)
+with client.consumer("app-logs", group_id="error-mon", filter="ERROR") as consumer:
+    for msg in consumer:
+        process_error(msg)
+```
+
+### Plug-and-Play SerDe System
+
+Seamlessly handle structured data with built-in or custom Serializers/Deserializers:
+
+```python
+from pyflymq.serde import JSONSerializer, JSONDeserializer
+
+# Set global SerDe for the client
+client.set_serde("json")
+
+# Produce dictionary directly
+client.produce("users", {"id": 1, "name": "Alice"})
+
+# Consumer will automatically decode based on the set SerDe
+with client.consumer("users", group_id="user-processor") as consumer:
+    for msg in consumer:
+        user = msg.decode() # returns dict
+        print(f"User: {user['name']}")
+```
+
 ### Encryption (AES-256-GCM)
 
 The SDK supports AES-256-GCM encryption:

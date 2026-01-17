@@ -322,18 +322,20 @@ Response (RecordMetadata):
 [int32]  partition
 [uint64] offset
 [int32]  max_messages
+[uint16] filter length (optional, v1.1+)
+[bytes]  filter (Regex or substring, optional)
 ```
 
 **Response:**
 ```
 [uint32] message_count
+[uint64] next_offset
 For each message:
+  [uint64] offset
   [uint32] key length
   [bytes]  key data
   [uint32] value length
   [bytes]  value data
-  [uint64] offset
-[uint64] next_offset
 ```
 
 ### CREATE_TOPIC (0x03)

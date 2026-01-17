@@ -74,7 +74,7 @@ The broker is the heart of FlyMQ, managing topics, partitions, and message flow.
 
 Defines the FlyMQ **binary-only** wire protocol for efficient client-server communication.
 
-> **IMPORTANT**: All payloads use binary encoding. There is NO JSON support.
+> **IMPORTANT**: All payloads use binary encoding. There is NO JSON support at the protocol level (though clients can use the SerDe system to encode objects as binary).
 
 **Protocol format:**
 ```
@@ -86,6 +86,9 @@ Defines the FlyMQ **binary-only** wire protocol for efficient client-server comm
 - Byte slices: `[uint32 length][raw bytes]`
 - Integers: Big-endian encoding
 - See `docs/protocol.md` for complete specification
+
+**Best-in-Class Filtering:**
+The protocol supports server-side message filtering during `Fetch` requests. Clients can provide a regex or substring filter, and the broker will only return matching messages, significantly reducing bandwidth and client-side processing.
 
 **Operation categories:**
 - Core (0x01-0x0F): Produce, Consume, Topics, Subscribe, Commit, Fetch
@@ -401,6 +404,27 @@ Low-level optimizations for high throughput.
 - Linux: Full zero-copy with `sendfile()` and `splice()`
 - macOS: Zero-copy reads with Darwin `sendfile()`
 - Others: Graceful fallback to buffered I/O
+
+### 14. Topic Filtering (`internal/topic/`)
+
+High-performance topic matching engine supporting MQTT-style wildcards.
+
+**Key features:**
+- **Trie-based Matcher**: Efficiently matches topic patterns against actual topics using a prefix-tree structure.
+- **MQTT Wildcards**:
+    - `+`: Matches exactly one topic level (e.g., `sensors/+/temp` matches `sensors/room1/temp`).
+    - `#`: Matches zero or more topic levels at the end of the pattern (e.g., `logs/#` matches `logs/app1`, `logs/app2/error`).
+- **Best-in-Class Efficiency**: Designed for constant-time lookup regardless of the number of patterns, ensuring high throughput even with thousands of subscriptions.
+
+### 15. Plug-and-Play SerDe System
+
+A flexible serialization/deserialization framework integrated into all official SDKs.
+
+**Key features:**
+- **Unified Interface**: Common `Serializer` and `Deserializer` interfaces across Go, Java, and Python.
+- **Built-in Support**: Native implementations for `json`, `string`, and `binary` (raw bytes).
+- **Global Default**: Configure `DefaultSerDe` at the server level to enforce consistent encoding across the cluster.
+- **CLI Integration**: Use `--encoder` and `--decoder` flags in the CLI to interact with typed messages seamlessly.
 
 ## Thread Safety
 

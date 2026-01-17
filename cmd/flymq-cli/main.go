@@ -318,6 +318,7 @@ func printUsage() {
 	fmt.Println("    " + cli.Green + "produce" + cli.Reset + " <topic> <msg>    Send a message")
 	fmt.Println("    " + cli.Green + "consume" + cli.Reset + " <topic>          Fetch messages (batch)")
 	fmt.Println("    " + cli.Green + "subscribe" + cli.Reset + " <topic>        Stream messages (like tail -f)")
+	fmt.Println("    " + cli.Green + "explore" + cli.Reset + " <topic>          Interactive topic explorer")
 	fmt.Println()
 
 	fmt.Println(cli.Dim + "  Topics" + cli.Reset)

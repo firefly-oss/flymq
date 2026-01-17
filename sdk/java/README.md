@@ -507,6 +507,64 @@ Set expiration time for messages:
 client.produceWithTTL("my-topic", "Expiring message".getBytes(), 60000);
 ```
 
+### Topic Filtering (MQTT-style)
+
+FlyMQ supports powerful MQTT-style wildcards for topic subscriptions:
+
+- `+`: Matches exactly one topic level.
+- `#`: Matches zero or more topic levels at the end.
+
+```java
+// Subscribe to multiple topics using patterns
+try (var consumer = client.consumerGroup(List.of("sensors/+/temp", "logs/#"), "monitor")) {
+    consumer.subscribe();
+    var messages = consumer.poll(Duration.ofSeconds(1));
+    for (var msg : messages) {
+        System.out.println("Topic: " + msg.topic() + ", Data: " + msg.dataAsString());
+    }
+}
+```
+
+### Server-Side Message Filtering
+
+Reduce bandwidth by filtering messages on the server before they are sent to the client:
+
+```java
+// Only receive messages containing "ERROR" (regex supported)
+ConsumerConfig config = ConsumerConfig.builder()
+    .filter("ERROR")
+    .build();
+
+try (var consumer = client.consumer("app-logs", "error-mon", 0, config)) {
+    consumer.subscribe();
+    // Only matching messages will be returned by poll()
+}
+```
+
+### Plug-and-Play SerDe System
+
+Seamlessly handle structured data with built-in or custom Serializers/Deserializers:
+
+```java
+import com.firefly.flymq.serialization.Serdes;
+
+// Use the built-in SerDe helper
+var userSerde = Serdes.json(User.class);
+
+// Produce object directly
+client.produceObject("users", new User(1, "Alice"), userSerde.serializer());
+
+// Consume and decode automatically
+try (var consumer = client.consumer("users", "user-processor")) {
+    consumer.subscribe();
+    var messages = consumer.poll(Duration.ofSeconds(1));
+    for (var msg : messages) {
+        User user = msg.decode(userSerde.deserializer());
+        System.out.println("User: " + user.getName());
+    }
+}
+```
+
 ### Encryption (AES-256-GCM)
 
 The SDK supports AES-256-GCM encryption:
