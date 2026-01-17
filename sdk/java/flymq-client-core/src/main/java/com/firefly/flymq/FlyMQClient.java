@@ -23,6 +23,8 @@ import com.firefly.flymq.protocol.ClusterMetadata;
 import com.firefly.flymq.protocol.OpCode;
 import com.firefly.flymq.protocol.Protocol;
 import com.firefly.flymq.protocol.Records.*;
+import com.firefly.flymq.serialization.Deserializer;
+import com.firefly.flymq.serialization.Serializer;
 import com.firefly.flymq.transaction.Transaction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -501,6 +503,34 @@ public class FlyMQClient implements AutoCloseable {
      * @return RecordMetadata with topic, partition, offset, timestamp, key_size, value_size
      * @throws FlyMQException if the operation fails
      */
+    /**
+     * Produces an object using the default serializer from configuration.
+     *
+     * @param topic topic name
+     * @param value object to produce
+     * @return record metadata
+     * @throws FlyMQException if production fails
+     */
+    @SuppressWarnings("unchecked")
+    public <T> BinaryProtocol.RecordMetadata produceObject(String topic, T value) throws FlyMQException {
+        Serializer<T> serializer = (Serializer<T>) config.getValueSerializer();
+        return produce(topic, serializer.serialize(topic, value));
+    }
+
+    /**
+     * Produces an object using the provided serializer.
+     *
+     * @param topic topic name
+     * @param value object to produce
+     * @param serializer serializer to use
+     * @return record metadata
+     * @param <T> value type
+     * @throws FlyMQException if production fails
+     */
+    public <T> BinaryProtocol.RecordMetadata produceObject(String topic, T value, Serializer<T> serializer) throws FlyMQException {
+        return produce(topic, serializer.serialize(topic, value));
+    }
+
     public BinaryProtocol.RecordMetadata produce(String topic, byte[] data) throws FlyMQException {
         byte[] payload = BinaryProtocol.encodeProduceRequest(topic, data);
         byte[] response = sendBinaryRequest(OpCode.PRODUCE, payload);
@@ -598,6 +628,37 @@ public class FlyMQClient implements AutoCloseable {
      * @return message data
      * @throws FlyMQException if the operation fails
      */
+    /**
+     * Consumes a message and decodes it using the default deserializer from configuration.
+     *
+     * @param topic topic name
+     * @param offset message offset
+     * @return decoded object
+     * @param <T> object type
+     * @throws FlyMQException if consumption fails
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T consumeObject(String topic, long offset) throws FlyMQException {
+        byte[] data = consume(topic, offset);
+        Deserializer<T> deserializer = (Deserializer<T>) config.getValueDeserializer();
+        return deserializer.deserialize(topic, data);
+    }
+
+    /**
+     * Consumes a message and decodes it using the provided deserializer.
+     *
+     * @param topic topic name
+     * @param offset message offset
+     * @param deserializer deserializer to use
+     * @return decoded object
+     * @param <T> object type
+     * @throws FlyMQException if consumption fails
+     */
+    public <T> T consumeObject(String topic, long offset, Deserializer<T> deserializer) throws FlyMQException {
+        byte[] data = consume(topic, offset);
+        return deserializer.deserialize(topic, data);
+    }
+
     public byte[] consume(String topic, long offset) throws FlyMQException {
         return consumeFromPartition(topic, 0, offset).data();
     }
@@ -639,13 +700,14 @@ public class FlyMQClient implements AutoCloseable {
      * @param partition   partition to fetch from
      * @param offset      starting offset
      * @param maxMessages maximum messages to fetch
+     * @param filter      optional regex filter to apply server-side
      * @return fetch result with messages and next offset
      * @throws FlyMQException if the operation fails
      */
-    public FetchResult fetch(String topic, int partition, long offset, int maxMessages)
+    public FetchResult fetch(String topic, int partition, long offset, int maxMessages, String filter)
             throws FlyMQException {
-        // Use binary fetch request with correct format: topic, partition, offset, maxMessages
-        byte[] payload = BinaryProtocol.encodeFetchRequest(topic, partition, offset, maxMessages);
+        // Use binary fetch request with correct format: topic, partition, offset, maxMessages, filter
+        byte[] payload = BinaryProtocol.encodeFetchRequest(topic, partition, offset, maxMessages, filter);
         byte[] response = sendBinaryRequest(OpCode.FETCH, payload);
 
         List<BinaryProtocol.FetchedMessage> fetched = BinaryProtocol.decodeFetchResponse(response);
@@ -660,6 +722,21 @@ public class FlyMQClient implements AutoCloseable {
         }
 
         return new FetchResult(messages, nextOffset);
+    }
+
+    /**
+     * Fetches multiple messages from a topic.
+     *
+     * @param topic       topic to fetch from
+     * @param partition   partition to fetch from
+     * @param offset      starting offset
+     * @param maxMessages maximum messages to fetch
+     * @return fetch result with messages and next offset
+     * @throws FlyMQException if the operation fails
+     */
+    public FetchResult fetch(String topic, int partition, long offset, int maxMessages)
+            throws FlyMQException {
+        return fetch(topic, partition, offset, maxMessages, null);
     }
 
     /**
@@ -1461,5 +1538,29 @@ public class FlyMQClient implements AutoCloseable {
             String topic, String groupId, int partition,
             com.firefly.flymq.consumer.ConsumerConfig config) {
         return new com.firefly.flymq.consumer.Consumer(this, topic, groupId, partition, config);
+    }
+
+    /**
+     * Creates a high-level consumer group that supports multiple topics and pattern matching.
+     *
+     * @param topics  list of topics or patterns to consume from
+     * @param groupId consumer group ID
+     * @return a new ConsumerGroup instance
+     */
+    public com.firefly.flymq.consumer.ConsumerGroup consumerGroup(List<String> topics, String groupId) {
+        return new com.firefly.flymq.consumer.ConsumerGroup(this, topics, groupId);
+    }
+
+    /**
+     * Creates a high-level consumer group with custom configuration.
+     *
+     * @param topics  list of topics or patterns to consume from
+     * @param groupId consumer group ID
+     * @param config  consumer configuration
+     * @return a new ConsumerGroup instance
+     */
+    public com.firefly.flymq.consumer.ConsumerGroup consumerGroup(
+            List<String> topics, String groupId, com.firefly.flymq.consumer.ConsumerConfig config) {
+        return new com.firefly.flymq.consumer.ConsumerGroup(this, topics, groupId, config);
     }
 }

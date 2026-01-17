@@ -15,6 +15,9 @@
  */
 package com.firefly.flymq.config;
 
+import com.firefly.flymq.serialization.Deserializer;
+import com.firefly.flymq.serialization.Serdes;
+import com.firefly.flymq.serialization.Serializer;
 import lombok.Builder;
 import lombok.Data;
 
@@ -77,6 +80,14 @@ public class ClientConfig {
     /** Client identifier. */
     @Builder.Default
     private String clientId = "flymq-java-client";
+
+    /** Default serializer for values. */
+    @Builder.Default
+    private Serializer<?> valueSerializer = Serdes.BytesSerializer();
+
+    /** Default deserializer for values. */
+    @Builder.Default
+    private Deserializer<?> valueDeserializer = Serdes.BytesDeserializer();
 
     /**
      * Gets the list of bootstrap servers.

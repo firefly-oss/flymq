@@ -26,6 +26,7 @@ package com.firefly.flymq.consumer;
  * @param sessionTimeoutMs     session timeout in milliseconds
  * @param heartbeatIntervalMs  heartbeat interval in milliseconds
  * @param autoOffsetReset      what to do when there is no initial offset ("earliest", "latest")
+ * @param messageFilter        regex pattern to filter messages by content
  */
 public record ConsumerConfig(
         boolean enableAutoCommit,
@@ -33,7 +34,8 @@ public record ConsumerConfig(
         int maxPollRecords,
         int sessionTimeoutMs,
         int heartbeatIntervalMs,
-        String autoOffsetReset
+        String autoOffsetReset,
+        String messageFilter
 ) {
 
     /**
@@ -68,7 +70,8 @@ public record ConsumerConfig(
                 DEFAULT_MAX_POLL_RECORDS,
                 DEFAULT_SESSION_TIMEOUT_MS,
                 DEFAULT_HEARTBEAT_INTERVAL_MS,
-                "earliest"
+                "earliest",
+                null
         );
     }
 
@@ -91,6 +94,7 @@ public record ConsumerConfig(
         private int sessionTimeoutMs = DEFAULT_SESSION_TIMEOUT_MS;
         private int heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
         private String autoOffsetReset = "earliest";
+        private String messageFilter = null;
 
         public Builder enableAutoCommit(boolean enable) {
             this.enableAutoCommit = enable;
@@ -122,6 +126,11 @@ public record ConsumerConfig(
             return this;
         }
 
+        public Builder messageFilter(String filter) {
+            this.messageFilter = filter;
+            return this;
+        }
+
         public ConsumerConfig build() {
             return new ConsumerConfig(
                     enableAutoCommit,
@@ -129,7 +138,8 @@ public record ConsumerConfig(
                     maxPollRecords,
                     sessionTimeoutMs,
                     heartbeatIntervalMs,
-                    autoOffsetReset
+                    autoOffsetReset,
+                    messageFilter
             );
         }
     }

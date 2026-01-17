@@ -52,12 +52,14 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"flymq/internal/crypto"
 	"flymq/internal/protocol"
+	"flymq/internal/topic"
 )
 
 // ClientOptions configures the client connection.
@@ -80,6 +82,10 @@ type ClientOptions struct {
 	MaxRetries     int // Maximum connection retries per server (default: 3)
 	RetryDelayMs   int // Delay between retries in milliseconds (default: 1000)
 	ConnectTimeout int // Connection timeout in seconds (default: 10)
+
+	// SerDe (Serializer/Deserializer)
+	Encoder Encoder // Default encoder for payloads
+	Decoder Decoder // Default decoder for payloads
 }
 
 // Client represents a FlyMQ client connection with HA support.
@@ -93,6 +99,8 @@ type Client struct {
 	leaderAddr    string        // Cached leader address (if known)
 	authenticated bool          // Whether the client is authenticated
 	username      string        // Authenticated username
+	encoder       Encoder       // Current encoder
+	decoder       Decoder       // Current decoder
 }
 
 // NewClient creates a new client connected to the specified address.
@@ -175,6 +183,12 @@ func NewClientWithOptions(addr string, opts ClientOptions) (*Client, error) {
 	if opts.ConnectTimeout == 0 {
 		opts.ConnectTimeout = 10
 	}
+	if opts.Encoder == nil {
+		opts.Encoder = BinarySerde
+	}
+	if opts.Decoder == nil {
+		opts.Decoder = BinarySerde
+	}
 
 	// Build server list
 	servers := opts.BootstrapServers
@@ -186,6 +200,8 @@ func NewClientWithOptions(addr string, opts ClientOptions) (*Client, error) {
 		servers:       servers,
 		currentServer: 0,
 		opts:          opts,
+		encoder:       opts.Encoder,
+		decoder:       opts.Decoder,
 	}
 
 	// Configure TLS if enabled
@@ -541,6 +557,71 @@ func (c *Client) executeWithLeaderFailover(fn func() error) error {
 //   - Timestamp: server timestamp when message was stored
 //   - KeySize: size of key (-1 if no key)
 //   - ValueSize: size of value
+//
+// SetEncoder sets the default encoder for this client.
+func (c *Client) SetEncoder(e Encoder) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.encoder = e
+}
+
+// SetDecoder sets the default decoder for this client.
+func (c *Client) SetDecoder(d Decoder) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.decoder = d
+}
+
+// SetSerde sets both the encoder and decoder by name ("json", "string", "binary").
+func (c *Client) SetSerde(name string) error {
+	e, d, err := GetSerde(name)
+	if err != nil {
+		return err
+	}
+	c.SetEncoder(e)
+	c.SetDecoder(d)
+	return nil
+}
+
+// GetDecoderName returns the name of the current decoder.
+func (c *Client) GetDecoderName() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.decoder == nil {
+		return "binary"
+	}
+	return c.decoder.Name()
+}
+
+// GetEncoderName returns the name of the current encoder.
+func (c *Client) GetEncoderName() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.encoder == nil {
+		return "binary"
+	}
+	return c.encoder.Name()
+}
+
+// ProduceObject encodes the value using the current encoder and produces it.
+func (c *Client) ProduceObject(topic string, value interface{}) (*protocol.RecordMetadata, error) {
+	data, err := c.encoder.Encode(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode error: %v", err)
+	}
+	return c.Produce(topic, data)
+}
+
+// ProduceObjectWithKey encodes the value using the current encoder and produces it with a key.
+func (c *Client) ProduceObjectWithKey(topic string, key []byte, value interface{}) (*protocol.RecordMetadata, error) {
+	data, err := c.encoder.Encode(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode error: %v", err)
+	}
+	return c.ProduceWithKey(topic, key, data)
+}
+
+// Produce sends a raw byte slice to a topic.
 func (c *Client) Produce(topic string, data []byte) (*protocol.RecordMetadata, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -817,7 +898,7 @@ type FetchedMessage struct {
 
 // Fetch retrieves multiple messages from a topic (values only for backward compatibility).
 func (c *Client) Fetch(topic string, partition int, offset uint64, maxMessages int) ([][]byte, uint64, error) {
-	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, maxMessages)
+	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, maxMessages, "")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -830,7 +911,8 @@ func (c *Client) Fetch(topic string, partition int, offset uint64, maxMessages i
 }
 
 // FetchWithKeys retrieves multiple messages from a topic with their keys.
-func (c *Client) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int) ([]FetchedMessage, uint64, error) {
+// It optionally filters messages server-side.
+func (c *Client) FetchWithKeys(topic string, partition int, offset uint64, maxMessages int, filter string) ([]FetchedMessage, uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -840,6 +922,7 @@ func (c *Client) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 		Partition:   int32(partition),
 		Offset:      offset,
 		MaxMessages: int32(maxMessages),
+		Filter:      filter,
 	}
 	payload := protocol.EncodeBinaryFetchRequest(req)
 	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpFetch, payload); err != nil {
@@ -870,6 +953,74 @@ func (c *Client) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 		}
 	}
 	return messages, resp.NextOffset, nil
+}
+
+// TopicMetadata contains information about a topic and its partitions.
+type TopicMetadata struct {
+	Name       string
+	Partitions []PartitionMetadata
+}
+
+// PartitionMetadata contains information about a partition.
+type PartitionMetadata struct {
+	ID       int32
+	Leader   string
+	Replicas []string
+	ISR      []string
+	Epoch    uint64
+	State    string
+}
+
+// GetTopicMetadata returns metadata for the specified topic.
+func (c *Client) GetTopicMetadata(topic string) (*TopicMetadata, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var tm *TopicMetadata
+	err := c.executeWithLeaderFailover(func() error {
+		payload := protocol.EncodeBinaryClusterMetadataRequest(&protocol.BinaryClusterMetadataRequest{Topic: topic})
+
+		if err := protocol.WriteBinaryMessage(c.conn, protocol.OpClusterMetadata, payload); err != nil {
+			return err
+		}
+
+		respMsg, err := protocol.ReadMessage(c.conn)
+		if err != nil {
+			return err
+		}
+
+		if respMsg.Header.Op == protocol.OpError {
+			return c.decodeError(respMsg.Payload)
+		}
+
+		resp, err := protocol.DecodeBinaryClusterMetadataResponse(respMsg.Payload)
+		if err != nil {
+			return err
+		}
+
+		// Find the topic in the response
+		for _, t := range resp.Topics {
+			if t.Topic == topic {
+				tm = &TopicMetadata{
+					Name: t.Topic,
+				}
+				for _, p := range t.Partitions {
+					tm.Partitions = append(tm.Partitions, PartitionMetadata{
+						ID:       p.Partition,
+						Leader:   p.LeaderAddr,
+						Replicas: p.Replicas,
+						ISR:      p.ISR,
+						Epoch:    p.Epoch,
+						State:    p.State,
+					})
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("topic not found in metadata: %s", topic)
+	})
+
+	return tm, err
 }
 
 // ListTopics returns all available topics.
@@ -2058,6 +2209,10 @@ type ConsumerConfig struct {
 
 	// MaxPollRecords is the maximum records to return per poll.
 	MaxPollRecords int
+
+	// MessageFilter is a regex pattern to filter messages by content (key or value).
+	// If set, only messages matching the pattern will be returned by Poll.
+	MessageFilter string
 }
 
 // DefaultConsumerConfig returns a ConsumerConfig with sensible defaults.
@@ -2127,29 +2282,50 @@ func (hc *HighLevelConsumer) initialize() {
 		mode = string(protocol.SubscribeFromEarliest)
 	}
 
-	for _, topic := range hc.topics {
-		hc.offsets[topic] = make(map[int]uint64)
-
-		// Subscribe to partition 0 first
-		offset, err := hc.client.Subscribe(topic, hc.config.GroupID, 0, mode)
-		if err != nil {
-			continue
-		}
-		hc.offsets[topic][0] = offset
-		numPartitions := 1
-
-		// Try to discover more partitions (up to 64)
-		for partition := 1; partition < 64; partition++ {
-			offset, err := hc.client.Subscribe(topic, hc.config.GroupID, partition, mode)
-			if err != nil {
-				break
+	// Resolve patterns to actual topics
+	var resolvedTopics []string
+	allTopics, err := hc.client.ListTopics()
+	if err == nil {
+		for _, t := range hc.topics {
+			if topic.IsPattern(t) {
+				for _, at := range allTopics {
+					if topic.MatchPattern(t, at) {
+						resolvedTopics = append(resolvedTopics, at)
+					}
+				}
+			} else {
+				resolvedTopics = append(resolvedTopics, t)
 			}
-			hc.offsets[topic][partition] = offset
-			numPartitions = partition + 1
+		}
+	} else {
+		resolvedTopics = hc.topics
+	}
+
+	for _, topicName := range resolvedTopics {
+		hc.offsets[topicName] = make(map[int]uint64)
+
+		// Get metadata to know partition count
+		meta, err := hc.client.GetTopicMetadata(topicName)
+		numPartitions := 1
+		if err == nil {
+			numPartitions = len(meta.Partitions)
+		} else {
+			// Fallback: Try to discover partition 0 at least
+			numPartitions = 1
 		}
 
-		hc.partitionCounts[topic] = numPartitions
+		for partition := 0; partition < numPartitions; partition++ {
+			offset, err := hc.client.Subscribe(topicName, hc.config.GroupID, partition, mode)
+			if err != nil {
+				// If we failed to subscribe to a partition we thought existed, skip it
+				continue
+			}
+			hc.offsets[topicName][partition] = offset
+		}
+
+		hc.partitionCounts[topicName] = numPartitions
 	}
+	hc.topics = resolvedTopics
 }
 
 // ConsumerMessage represents a consumed message with metadata.
@@ -2159,6 +2335,28 @@ type ConsumerMessage struct {
 	Offset    uint64
 	Key       []byte
 	Value     []byte
+}
+
+// Decode decodes the message value using the client's current decoder.
+func (m *ConsumerMessage) Decode(c *Client, v interface{}) error {
+	return c.decoder.Decode(m.Value, v)
+}
+
+func (hc *HighLevelConsumer) matchesFilter(key, value []byte) bool {
+	if hc.config.MessageFilter == "" {
+		return true
+	}
+	// Try case-insensitive substring match first
+	if strings.Contains(strings.ToLower(string(value)), strings.ToLower(hc.config.MessageFilter)) ||
+		strings.Contains(strings.ToLower(string(key)), strings.ToLower(hc.config.MessageFilter)) {
+		return true
+	}
+	// Try regex match
+	re, err := regexp.Compile(hc.config.MessageFilter)
+	if err != nil {
+		return false
+	}
+	return re.Match(value) || re.Match(key)
 }
 
 // Poll fetches messages from all subscribed topics and partitions.
@@ -2186,7 +2384,7 @@ func (hc *HighLevelConsumer) Poll(timeout time.Duration) []ConsumerMessage {
 		for partition := 0; partition < partitions; partition++ {
 			offset := hc.offsets[topic][partition]
 
-			messages, nextOffset, err := hc.client.FetchWithKeys(topic, partition, offset, perPartition)
+			messages, nextOffset, err := hc.client.FetchWithKeys(topic, partition, offset, perPartition, hc.config.MessageFilter)
 			if err != nil {
 				continue
 			}
@@ -2195,11 +2393,10 @@ func (hc *HighLevelConsumer) Poll(timeout time.Duration) []ConsumerMessage {
 				allMessages = append(allMessages, ConsumerMessage{
 					Topic:     topic,
 					Partition: partition,
-					Offset:    offset,
+					Offset:    msg.Offset,
 					Key:       msg.Key,
 					Value:     msg.Value,
 				})
-				offset++
 			}
 
 			hc.offsets[topic][partition] = nextOffset

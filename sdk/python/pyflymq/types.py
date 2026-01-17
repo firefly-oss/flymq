@@ -8,7 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .serde import Serializer, Deserializer
 
 
 class SchemaType(str, Enum):
@@ -209,6 +212,10 @@ class ClientConfig:
     # Client identification
     client_id: str = "pyflymq-client"
 
+    # Default serializer and deserializer
+    value_serializer: Serializer | None = None
+    value_deserializer: Deserializer | None = None
+
     def get_servers(self) -> list[str]:
         """Get list of bootstrap servers."""
         if isinstance(self.bootstrap_servers, str):
@@ -274,6 +281,9 @@ class ConsumerConfig:
     # Session management
     session_timeout_ms: int = 30000
     heartbeat_interval_ms: int = 3000
+
+    # Message filtering
+    message_filter: str | None = None  # Regex pattern to filter messages
 
 
 @dataclass(frozen=True)
