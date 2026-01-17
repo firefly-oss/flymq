@@ -91,7 +91,7 @@ func TestSetColorsEnabled(t *testing.T) {
 func TestColorize(t *testing.T) {
 	// Test with colors enabled
 	SetColorsEnabled(true)
-	result := colorize(Red, "test")
+	result := Colorize(Red, "test")
 	if !strings.Contains(result, "test") {
 		t.Error("Expected result to contain 'test'")
 	}
@@ -104,7 +104,7 @@ func TestColorize(t *testing.T) {
 
 	// Test with colors disabled
 	SetColorsEnabled(false)
-	result = colorize(Red, "test")
+	result = Colorize(Red, "test")
 	if result != "test" {
 		t.Errorf("Expected 'test' without colors, got '%s'", result)
 	}

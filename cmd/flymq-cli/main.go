@@ -23,6 +23,7 @@ COMMANDS:
 	produce, pub     Produce messages to a topic
 	consume, sub     Consume messages from a topic
 	topics           Manage topics (list, create, delete, describe)
+	explore          Interactive topic explorer
 	groups           Manage consumer groups
 	cluster          View cluster information and manage partitions
 	health           Check server health
@@ -66,12 +67,14 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -146,6 +149,8 @@ func main() {
 		cmdCluster(args)
 	case "groups":
 		cmdGroups(args)
+	case "explore":
+		cmdExplore(args)
 	case "auth":
 		cmdAuth(args)
 	case "whoami":
@@ -613,6 +618,7 @@ func cmdProduce(args []string) {
 	message := args[1]
 	var key []byte
 	partition := -1 // -1 means auto-select
+	encoderName := "binary"
 
 	// Parse optional flags
 	for i := 2; i < len(args); i++ {
@@ -631,11 +637,21 @@ func cmdProduce(args []string) {
 			if v, err := strconv.Atoi(strings.TrimPrefix(args[i], "--partition=")); err == nil {
 				partition = v
 			}
+		case (args[i] == "--encoder" || args[i] == "-e") && i+1 < len(args):
+			encoderName = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--encoder="):
+			encoderName = strings.TrimPrefix(args[i], "--encoder=")
 		}
 	}
 
 	c := connect(args)
 	defer c.Close()
+
+	if err := c.SetSerde(encoderName); err != nil {
+		cli.Error("Invalid encoder: %v", err)
+		os.Exit(1)
+	}
 
 	// Use ProduceWithMetadata to get full RecordMetadata
 	// Note: partition flag is parsed but currently the server handles partitioning
@@ -644,10 +660,20 @@ func cmdProduce(args []string) {
 
 	var meta *protocol.RecordMetadata
 	var err error
+
+	// If encoder is JSON, try to parse message as JSON to ensure it's valid if needed,
+	// but ProduceObject will just encode it anyway.
+	var value interface{} = []byte(message)
+	if encoderName == "json" {
+		value = json.RawMessage(message)
+	} else if encoderName == "string" {
+		value = message
+	}
+
 	if len(key) > 0 {
-		meta, err = c.ProduceWithKey(topic, key, []byte(message))
+		meta, err = c.ProduceObjectWithKey(topic, key, value)
 	} else {
-		meta, err = c.Produce(topic, []byte(message))
+		meta, err = c.ProduceObject(topic, value)
 	}
 	if err != nil {
 		errStr := err.Error()
@@ -708,6 +734,8 @@ func cmdConsume(args []string) {
 	quiet := false
 	showOffset := true
 	showKey := false
+	decoderName := "binary"
+	filter := ""
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -742,13 +770,28 @@ func cmdConsume(args []string) {
 			showOffset = false
 		case "--show-key", "-k":
 			showKey = true
+		case "--decoder", "-d":
+			if i+1 < len(args) {
+				decoderName = args[i+1]
+				i++
+			}
+		case "--filter", "-F":
+			if i+1 < len(args) {
+				filter = args[i+1]
+				i++
+			}
 		}
 	}
 
 	c := connect(args)
 	defer c.Close()
 
-	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, count)
+	if err := c.SetSerde(decoderName); err != nil {
+		cli.Error("Invalid decoder: %v", err)
+		os.Exit(1)
+	}
+
+	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, count, filter)
 	if err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "topic not found") || strings.Contains(errStr, "unknown topic") {
@@ -776,9 +819,15 @@ func cmdConsume(args []string) {
 
 	if !quiet {
 		cli.Header(fmt.Sprintf("Messages from %s (offset %d-%d):", topic, offset, nextOffset-1))
+		if filter != "" {
+			cli.Info("Filter: %q", filter)
+		}
 		cli.Separator()
 	}
 	for _, msg := range messages {
+		if !matchesFilter(msg.Key, msg.Value, filter) {
+			continue
+		}
 		var output string
 		if showOffset && showKey && len(msg.Key) > 0 {
 			output = fmt.Sprintf("[%d] key=%s: %s", msg.Offset, string(msg.Key), string(msg.Value))
@@ -823,6 +872,7 @@ func cmdSubscribe(args []string) {
 	showOffset := true
 	showKey := false
 	showLag := false
+	filter := ""
 
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -865,6 +915,11 @@ func cmdSubscribe(args []string) {
 			showKey = true
 		case "--show-lag", "-l":
 			showLag = true
+		case "--filter", "-F":
+			if i+1 < len(args) {
+				filter = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -900,7 +955,7 @@ func cmdSubscribe(args []string) {
 	// Continuous consumption loop
 	lastLagDisplay := time.Now()
 	for {
-		messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, 10)
+		messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, 10, filter)
 		if err != nil {
 			if !quiet {
 				cli.Error("Fetch error: %v", err)
@@ -910,6 +965,9 @@ func cmdSubscribe(args []string) {
 		}
 
 		for _, msg := range messages {
+			if !matchesFilter(msg.Key, msg.Value, filter) {
+				continue
+			}
 			var output string
 			timePart := ""
 			if showTimestamp {
@@ -3135,6 +3193,7 @@ func printConsumeHelp() {
 	fmt.Println("  --count, -n <n>         Number of messages to fetch (default: 10)")
 	fmt.Println("  --partition, -p <n>     Partition to consume from (default: 0)")
 	fmt.Println("  --show-key, -k          Display message keys in output")
+	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring or regex)")
 	fmt.Println("  --quiet, -q             Suppress headers and info messages")
 	fmt.Println("  --raw, -r               Raw output: just message content")
 	fmt.Println("  --no-offset             Hide offset prefix in output")
@@ -3184,6 +3243,7 @@ func printSubscribeHelp() {
 	fmt.Println("Other Options:")
 	fmt.Println("  --partition, -p <n>     Partition number (default: 0)")
 	fmt.Println("  --show-key, -k          Display message keys in output")
+	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring or regex)")
 	fmt.Println("  --show-lag, -l          Show consumer lag periodically")
 	fmt.Println("  --quiet, -q             Suppress headers and info messages")
 	fmt.Println("  --raw, -r               Raw output: just message content")
@@ -3531,5 +3591,312 @@ func cmdAuditExport(args []string) {
 		cli.Success("Exported audit events to %s", output)
 	} else {
 		fmt.Print(string(data))
+	}
+}
+
+func printExploreHelp() {
+	fmt.Println("Usage: flymq-cli explore [flags]")
+	fmt.Println()
+	fmt.Println("Interactive topic explorer and message browser.")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  -d, --decoder <name>    Decoder to use for message payloads (string, json, binary). Default: string")
+	fmt.Println("  -a, --addr <addr>       Server address (default: localhost:9092)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  flymq-cli explore")
+	fmt.Println("  flymq-cli explore --decoder json")
+}
+
+func cmdExplore(args []string) {
+	// Check for help flag
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			printExploreHelp()
+			return
+		}
+	}
+
+	c := connect(args)
+	defer c.Close()
+
+	// Default to string decoder for explorer to be more user-friendly
+	decoderName := "string"
+	for i, arg := range args {
+		if (arg == "--decoder" || arg == "-d") && i+1 < len(args) {
+			decoderName = args[i+1]
+			break
+		}
+	}
+	c.SetSerde(decoderName)
+
+	for {
+		cli.Separator()
+		fmt.Printf("%s%s Topic Explorer %s\n", cli.Bold+cli.BrightCyan, cli.IconDot, cli.Reset)
+		cli.Separator()
+
+		topics, err := c.ListTopics()
+		if err != nil {
+			cli.Error("Failed to list topics: %v", err)
+			return
+		}
+
+		if len(topics) == 0 {
+			cli.Info("No topics found.")
+			return
+		}
+
+		fmt.Println("\nAvailable Topics:")
+		for i, t := range topics {
+			fmt.Printf("  [%2d] %s\n", i+1, t)
+		}
+		fmt.Printf("  [ q] Quit\n")
+
+		fmt.Print("\nSelect topic number to explore (or 'q'): ")
+		var input string
+		fmt.Scanln(&input)
+
+		if strings.ToLower(input) == "q" {
+			return
+		}
+
+		idx, err := strconv.Atoi(input)
+		if err != nil || idx < 1 || idx > len(topics) {
+			cli.Warning("Invalid selection")
+			continue
+		}
+
+		exploreTopicMenu(c, topics[idx-1])
+	}
+}
+
+func exploreTopicMenu(c *client.Client, topic string) {
+	for {
+		fmt.Println()
+		cli.Header("Topic: " + topic)
+		cli.Separator()
+		fmt.Println("  1. View Metadata & Partitions")
+		fmt.Println("  2. Browse Messages (Interactive)")
+		fmt.Println("  3. Live Tail")
+		fmt.Println("  4. Manual Offset Commit")
+		fmt.Println("  5. Back")
+
+		fmt.Print("\nSelection: ")
+		var input string
+		fmt.Scanln(&input)
+
+		switch input {
+		case "1":
+			showTopicMetadata(c, topic)
+		case "2":
+			browseMessages(c, topic)
+		case "3":
+			tailTopicInteractive(c, topic)
+		case "4":
+			manualCommit(c, topic)
+		case "5":
+			return
+		default:
+			cli.Warning("Invalid selection")
+		}
+	}
+}
+
+func showTopicMetadata(c *client.Client, topic string) {
+	metadata, err := c.GetTopicMetadata(topic)
+	if err != nil {
+		cli.Error("Failed to fetch metadata: %v", err)
+		return
+	}
+
+	cli.Header("\nMetadata for " + topic)
+	cli.KeyValue("Partitions", len(metadata.Partitions))
+	cli.Separator()
+
+	for _, p := range metadata.Partitions {
+		fmt.Printf("Partition [%d]:\n", p.ID)
+		cli.KeyValue("  Leader", p.Leader)
+		cli.KeyValue("  State", p.State)
+		cli.KeyValue("  Epoch", p.Epoch)
+		cli.KeyValue("  Replicas", strings.Join(p.Replicas, ", "))
+		cli.KeyValue("  ISR", strings.Join(p.ISR, ", "))
+	}
+}
+
+func matchesFilter(key, value []byte, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	// Try case-insensitive substring match first (most common)
+	if strings.Contains(strings.ToLower(string(value)), strings.ToLower(filter)) ||
+		strings.Contains(strings.ToLower(string(key)), strings.ToLower(filter)) {
+		return true
+	}
+	// Try regex match
+	re, err := regexp.Compile(filter)
+	if err != nil {
+		return false
+	}
+	return re.Match(value) || re.Match(key)
+}
+
+func formatMessage(c *client.Client, data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	// Try to use the configured decoder
+	switch c.GetDecoderName() {
+	case "json":
+		var v interface{}
+		if err := json.Unmarshal(data, &v); err == nil {
+			pretty, _ := json.MarshalIndent(v, "", "  ")
+			return string(pretty)
+		}
+	case "string":
+		return string(data)
+	}
+
+	// Fallback to string if printable, otherwise hex or binary description
+	s := string(data)
+	isPrintable := true
+	for _, r := range s {
+		if r < 32 && r != '\n' && r != '\r' && r != '\t' {
+			isPrintable = false
+			break
+		}
+	}
+
+	if isPrintable {
+		return s
+	}
+
+	return fmt.Sprintf("<binary: %d bytes>", len(data))
+}
+
+func browseMessages(c *client.Client, topic string) {
+	partition := 0
+	offset := uint64(0)
+	filter := ""
+
+	for {
+		cli.Header(fmt.Sprintf("\nBrowsing %s [P%d] starting at offset %d", topic, partition, offset))
+		if filter != "" {
+			cli.Info("Filter active: %q", filter)
+		}
+
+		messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, 10, filter)
+		if err != nil {
+			cli.Error("Fetch failed: %v", err)
+			return
+		}
+
+		if len(messages) == 0 {
+			cli.Info("No messages found from this offset.")
+		} else {
+			for _, m := range messages {
+				if !matchesFilter(m.Key, m.Value, filter) {
+					continue
+				}
+				fmt.Printf("[%d] %s | %s\n", m.Offset, cli.Colorize(cli.Dim, string(m.Key)), formatMessage(c, m.Value))
+			}
+		}
+
+		cli.Separator()
+		fmt.Println("  [n] Next 10    [p] Prev 10    [g] Go to offset    [s] Select partition")
+		fmt.Println("  [f] Set filter  [c] Clear filter  [b] Back")
+		fmt.Print("\nNavigation: ")
+		var input string
+		fmt.Scanln(&input)
+
+		switch strings.ToLower(input) {
+		case "n":
+			offset = nextOffset
+		case "p":
+			if offset >= 10 {
+				offset -= 10
+			} else {
+				offset = 0
+			}
+		case "g":
+			fmt.Print("Enter offset: ")
+			var offStr string
+			fmt.Scanln(&offStr)
+			if v, err := strconv.ParseUint(offStr, 10, 64); err == nil {
+				offset = v
+			}
+		case "s":
+			fmt.Print("Enter partition number: ")
+			var partStr string
+			fmt.Scanln(&partStr)
+			if v, err := strconv.Atoi(partStr); err == nil {
+				partition = v
+				offset = 0 // Reset offset when changing partition
+			}
+		case "f":
+			fmt.Print("Enter filter string: ")
+			fmt.Scanln(&filter)
+		case "c":
+			filter = ""
+		case "b":
+			return
+		}
+	}
+}
+
+func tailTopicInteractive(c *client.Client, topic string) {
+	cli.Info("Live tailing %s... Press Enter to stop.", topic)
+
+	stop := make(chan struct{})
+	go func() {
+		fmt.Scanln()
+		close(stop)
+	}()
+
+	config := client.DefaultConsumerConfig("cli-tail-" + strconv.FormatInt(time.Now().Unix(), 10))
+	config.AutoOffsetReset = "latest"
+	consumer := c.Consumer([]string{topic}, config)
+
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+			msgs := consumer.Poll(200 * time.Millisecond)
+			for _, m := range msgs {
+				fmt.Printf("[%s] P%d@%d | %s\n",
+					time.Now().Format("15:04:05"), m.Partition, m.Offset, formatMessage(c, m.Value))
+			}
+		}
+	}
+}
+
+func manualCommit(c *client.Client, topic string) {
+	fmt.Print("Enter Consumer Group ID: ")
+	var groupID string
+	fmt.Scanln(&groupID)
+	if groupID == "" {
+		cli.Warning("Group ID cannot be empty")
+		return
+	}
+
+	fmt.Print("Enter Partition: ")
+	var partStr string
+	fmt.Scanln(&partStr)
+	partition, _ := strconv.Atoi(partStr)
+
+	fmt.Print("Enter Offset to commit: ")
+	var offStr string
+	fmt.Scanln(&offStr)
+	offset, err := strconv.ParseUint(offStr, 10, 64)
+	if err != nil {
+		cli.Error("Invalid offset")
+		return
+	}
+
+	if err := c.CommitOffset(topic, groupID, partition, offset); err != nil {
+		cli.Error("Commit failed: %v", err)
+	} else {
+		cli.Success("Offset %d committed for group %s on partition %d", offset, groupID, partition)
 	}
 }
