@@ -199,8 +199,10 @@ func NewCluster(cfg *config.Config) (*Cluster, error) {
 		HeartbeatInterval: 200 * time.Millisecond,
 		// Enable async replication for high performance (similar to Kafka's acks=1)
 		// Messages are acknowledged after local write, replicated in background
-		AsyncReplication:   true,
-		ReplicationTimeout: 5 * time.Second,
+		AsyncReplication:         true,
+		ReplicationTimeout:       5 * time.Second,
+		EncryptionEnabled:        clusterConfig.EncryptionEnabled,
+		EncryptionKeyFingerprint: clusterConfig.EncryptionKeyFingerprint,
 	}
 
 	applyCh := make(chan LogEntry, 10000)

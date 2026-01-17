@@ -17,6 +17,7 @@
 package cluster
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -333,6 +334,74 @@ func TestMembershipManagerEventChannels(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Error("Timeout waiting for leave event")
+	}
+}
+
+func TestMembershipEncryptionValidation(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a manager with encryption enabled
+	config := MembershipConfig{
+		NodeID:                   "node-1",
+		Address:                  "127.0.0.1:9000",
+		ClusterAddr:              "127.0.0.1:9001",
+		DataDir:                  dir,
+		GossipInterval:           1 * time.Second,
+		SuspectTimeout:           5 * time.Second,
+		DeadTimeout:              30 * time.Second,
+		EncryptionEnabled:        true,
+		EncryptionKeyFingerprint: "abc123def456",
+	}
+
+	mm, err := NewMembershipManager(config)
+	if err != nil {
+		t.Fatalf("NewMembershipManager failed: %v", err)
+	}
+
+	// Test 1: Member with matching encryption should succeed
+	matchingMember := &Member{
+		ID:          "node-2",
+		Address:     "127.0.0.1:9002",
+		ClusterAddr: "127.0.0.1:9003",
+		Metadata: map[string]string{
+			"encryption_enabled":     "true",
+			"encryption_fingerprint": "abc123def456",
+		},
+	}
+	if err := mm.Join(matchingMember); err != nil {
+		t.Errorf("Join with matching encryption should succeed: %v", err)
+	}
+	mm.Leave("node-2")
+
+	// Test 2: Member with encryption disabled should fail
+	noEncMember := &Member{
+		ID:          "node-3",
+		Address:     "127.0.0.1:9004",
+		ClusterAddr: "127.0.0.1:9005",
+		Metadata: map[string]string{
+			"encryption_enabled": "false",
+		},
+	}
+	if err := mm.Join(noEncMember); err == nil {
+		t.Error("Join with encryption disabled should fail")
+	} else if !errors.Is(err, ErrEncryptionMismatch) {
+		t.Errorf("Expected ErrEncryptionMismatch, got: %v", err)
+	}
+
+	// Test 3: Member with different key fingerprint should fail
+	diffKeyMember := &Member{
+		ID:          "node-4",
+		Address:     "127.0.0.1:9006",
+		ClusterAddr: "127.0.0.1:9007",
+		Metadata: map[string]string{
+			"encryption_enabled":     "true",
+			"encryption_fingerprint": "different_key",
+		},
+	}
+	if err := mm.Join(diffKeyMember); err == nil {
+		t.Error("Join with different encryption key should fail")
+	} else if !errors.Is(err, ErrEncryptionMismatch) {
+		t.Errorf("Expected ErrEncryptionMismatch, got: %v", err)
 	}
 }
 

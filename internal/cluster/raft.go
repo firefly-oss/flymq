@@ -111,6 +111,9 @@ type RaftConfig struct {
 	AsyncReplication bool
 	// ReplicationTimeout is the timeout for waiting for replication acknowledgments.
 	ReplicationTimeout time.Duration
+	// Encryption settings for cluster validation
+	EncryptionEnabled        bool   // Whether encryption is enabled
+	EncryptionKeyFingerprint string // Fingerprint of encryption key
 }
 
 // DefaultRaftConfig returns default Raft configuration.
@@ -202,6 +205,9 @@ type AppendEntriesRequest struct {
 	PrevLogTerm      uint64     `json:"prev_log_term"`
 	Entries          []LogEntry `json:"entries"`
 	LeaderCommit     uint64     `json:"leader_commit"`
+	// Encryption metadata for cluster validation
+	EncryptionEnabled     bool   `json:"encryption_enabled,omitempty"`
+	EncryptionFingerprint string `json:"encryption_fingerprint,omitempty"`
 }
 
 // AppendEntriesResponse represents an AppendEntries RPC response.
@@ -211,6 +217,11 @@ type AppendEntriesResponse struct {
 	NodeStats     *NodeStats `json:"node_stats,omitempty"`
 	ResponderID   string     `json:"responder_id,omitempty"`   // Responder's node ID
 	ResponderAddr string     `json:"responder_addr,omitempty"` // Responder's advertised cluster address
+	// Encryption metadata for cluster validation
+	EncryptionEnabled     bool   `json:"encryption_enabled,omitempty"`
+	EncryptionFingerprint string `json:"encryption_fingerprint,omitempty"`
+	// Error message when request is rejected due to encryption mismatch
+	EncryptionError string `json:"encryption_error,omitempty"`
 }
 
 // NodeStats contains runtime statistics for a node.
@@ -293,6 +304,25 @@ func NewRaftNode(config RaftConfig, transport Transport, applyCh chan LogEntry) 
 	transport.SetAppendHandler(node.handleAppendEntries)
 
 	return node, nil
+}
+
+// validateEncryption checks if a peer's encryption config matches ours.
+// Returns an error message if there's a mismatch, empty string if OK.
+func (n *RaftNode) validateEncryption(peerID string, peerEncEnabled bool, peerFingerprint string) string {
+	// Check encryption enabled/disabled matches
+	if n.config.EncryptionEnabled != peerEncEnabled {
+		if n.config.EncryptionEnabled {
+			return fmt.Sprintf("encryption mismatch: this node has encryption enabled but %s does not - all cluster nodes must have the same encryption setting", peerID)
+		}
+		return fmt.Sprintf("encryption mismatch: %s has encryption enabled but this node does not - all cluster nodes must have the same encryption setting", peerID)
+	}
+
+	// If encryption is enabled, check fingerprints match
+	if n.config.EncryptionEnabled && n.config.EncryptionKeyFingerprint != peerFingerprint {
+		return fmt.Sprintf("encryption key mismatch: %s has a different encryption key (fingerprint: %s vs %s) - all cluster nodes must use the same FLYMQ_ENCRYPTION_KEY", peerID, peerFingerprint, n.config.EncryptionKeyFingerprint)
+	}
+
+	return ""
 }
 
 // Start begins the Raft node operation.
@@ -704,19 +734,37 @@ func (n *RaftNode) sendHeartbeats() {
 			n.mu.RUnlock()
 
 			req := &AppendEntriesRequest{
-				Term:             term,
-				LeaderID:         n.config.NodeID,
-				LeaderAddr:       n.config.AdvertiseAddr,
-				LeaderClientAddr: n.config.ClientAddr,
-				PrevLogIndex:     prevLogIndex,
-				PrevLogTerm:      prevLogTerm,
-				Entries:          entries,
-				LeaderCommit:     commitIndex,
+				Term:                  term,
+				LeaderID:              n.config.NodeID,
+				LeaderAddr:            n.config.AdvertiseAddr,
+				LeaderClientAddr:      n.config.ClientAddr,
+				PrevLogIndex:          prevLogIndex,
+				PrevLogTerm:           prevLogTerm,
+				Entries:               entries,
+				LeaderCommit:          commitIndex,
+				EncryptionEnabled:     n.config.EncryptionEnabled,
+				EncryptionFingerprint: n.config.EncryptionKeyFingerprint,
 			}
 			n.logger.Debug("Sending AppendEntries", "to", p.Address, "leaderClientAddr", n.config.ClientAddr)
 
 			resp, err := n.transport.SendAppendEntries(p.Address, req)
 			if err != nil {
+				return
+			}
+
+			// Check for encryption mismatch error
+			if resp.EncryptionError != "" {
+				n.logger.Error("Peer rejected due to encryption mismatch",
+					"peer", p.Address,
+					"error", resp.EncryptionError)
+				return
+			}
+
+			// Validate peer's encryption config
+			if encErr := n.validateEncryption(resp.ResponderID, resp.EncryptionEnabled, resp.EncryptionFingerprint); encErr != "" {
+				n.logger.Error("Encryption mismatch with peer",
+					"peer", p.Address,
+					"error", encErr)
 				return
 			}
 
@@ -800,10 +848,20 @@ func (n *RaftNode) handleAppendEntries(req *AppendEntriesRequest) *AppendEntries
 	n.logger.Debug("Handling AppendEntries", "from", req.LeaderID, "reqTerm", req.Term, "currentTerm", n.currentTerm, "state", n.state.String())
 
 	resp := &AppendEntriesResponse{
-		Term:          n.currentTerm,
-		Success:       false,
-		ResponderID:   n.config.NodeID,
-		ResponderAddr: n.config.AdvertiseAddr,
+		Term:                  n.currentTerm,
+		Success:               false,
+		ResponderID:           n.config.NodeID,
+		ResponderAddr:         n.config.AdvertiseAddr,
+		EncryptionEnabled:     n.config.EncryptionEnabled,
+		EncryptionFingerprint: n.config.EncryptionKeyFingerprint,
+	}
+
+	// Validate encryption configuration matches
+	if encErr := n.validateEncryption(req.LeaderID, req.EncryptionEnabled, req.EncryptionFingerprint); encErr != "" {
+		n.logger.Error("Encryption mismatch with leader", "leader", req.LeaderID, "error", encErr)
+		resp.EncryptionError = encErr
+		n.mu.Unlock()
+		return resp
 	}
 
 	// Reject requests from older terms
@@ -1078,18 +1136,38 @@ func (n *RaftNode) startReplication(successCh chan bool) {
 			n.mu.RUnlock()
 
 			req := &AppendEntriesRequest{
-				Term:             term,
-				LeaderID:         n.config.NodeID,
-				LeaderAddr:       n.config.AdvertiseAddr,
-				LeaderClientAddr: n.config.ClientAddr,
-				PrevLogIndex:     prevLogIndex,
-				PrevLogTerm:      prevLogTerm,
-				Entries:          entries,
-				LeaderCommit:     commitIndex,
+				Term:                  term,
+				LeaderID:              n.config.NodeID,
+				LeaderAddr:            n.config.AdvertiseAddr,
+				LeaderClientAddr:      n.config.ClientAddr,
+				PrevLogIndex:          prevLogIndex,
+				PrevLogTerm:           prevLogTerm,
+				Entries:               entries,
+				LeaderCommit:          commitIndex,
+				EncryptionEnabled:     n.config.EncryptionEnabled,
+				EncryptionFingerprint: n.config.EncryptionKeyFingerprint,
 			}
 
 			resp, err := n.transport.SendAppendEntries(p.Address, req)
 			if err != nil {
+				successCh <- false
+				return
+			}
+
+			// Check for encryption mismatch error
+			if resp.EncryptionError != "" {
+				n.logger.Error("Peer rejected due to encryption mismatch",
+					"peer", p.Address,
+					"error", resp.EncryptionError)
+				successCh <- false
+				return
+			}
+
+			// Validate peer's encryption config
+			if encErr := n.validateEncryption(resp.ResponderID, resp.EncryptionEnabled, resp.EncryptionFingerprint); encErr != "" {
+				n.logger.Error("Encryption mismatch with peer",
+					"peer", p.Address,
+					"error", encErr)
 				successCh <- false
 				return
 			}
@@ -1203,18 +1281,36 @@ func (n *RaftNode) replicateLog() {
 			n.mu.RUnlock()
 
 			req := &AppendEntriesRequest{
-				Term:             term,
-				LeaderID:         n.config.NodeID,
-				LeaderAddr:       n.config.AdvertiseAddr,
-				LeaderClientAddr: n.config.ClientAddr,
-				PrevLogIndex:     prevLogIndex,
-				PrevLogTerm:      prevLogTerm,
-				Entries:          entries,
-				LeaderCommit:     commitIndex,
+				Term:                  term,
+				LeaderID:              n.config.NodeID,
+				LeaderAddr:            n.config.AdvertiseAddr,
+				LeaderClientAddr:      n.config.ClientAddr,
+				PrevLogIndex:          prevLogIndex,
+				PrevLogTerm:           prevLogTerm,
+				Entries:               entries,
+				LeaderCommit:          commitIndex,
+				EncryptionEnabled:     n.config.EncryptionEnabled,
+				EncryptionFingerprint: n.config.EncryptionKeyFingerprint,
 			}
 
 			resp, err := n.transport.SendAppendEntries(p.Address, req)
 			if err != nil {
+				return
+			}
+
+			// Check for encryption mismatch error
+			if resp.EncryptionError != "" {
+				n.logger.Error("Peer rejected due to encryption mismatch",
+					"peer", p.Address,
+					"error", resp.EncryptionError)
+				return
+			}
+
+			// Validate peer's encryption config
+			if encErr := n.validateEncryption(resp.ResponderID, resp.EncryptionEnabled, resp.EncryptionFingerprint); encErr != "" {
+				n.logger.Error("Encryption mismatch with peer",
+					"peer", p.Address,
+					"error", encErr)
 				return
 			}
 
