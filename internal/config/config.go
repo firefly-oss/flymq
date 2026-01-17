@@ -128,6 +128,14 @@ const (
 	EnvAuthDefaultPublic = "FLYMQ_AUTH_DEFAULT_PUBLIC"
 	EnvAuthAdminUsername = "FLYMQ_AUTH_ADMIN_USERNAME"
 	EnvAuthAdminPassword = "FLYMQ_AUTH_ADMIN_PASSWORD"
+
+	// Partition management configuration (horizontal scaling)
+	EnvPartitionDistributionStrategy = "FLYMQ_PARTITION_DISTRIBUTION_STRATEGY"
+	EnvDefaultReplicationFactor      = "FLYMQ_DEFAULT_REPLICATION_FACTOR"
+	EnvDefaultPartitions             = "FLYMQ_DEFAULT_PARTITIONS"
+	EnvAutoRebalanceEnabled          = "FLYMQ_AUTO_REBALANCE_ENABLED"
+	EnvAutoRebalanceInterval         = "FLYMQ_AUTO_REBALANCE_INTERVAL"
+	EnvRebalanceThreshold            = "FLYMQ_REBALANCE_THRESHOLD"
 )
 
 // Default paths
@@ -181,6 +189,43 @@ type DelayedConfig struct {
 type TransactionConfig struct {
 	Enabled bool  `toml:"enabled" json:"enabled"` // Enable transaction support
 	Timeout int64 `toml:"timeout" json:"timeout"` // Transaction timeout in seconds
+}
+
+// PartitionConfig holds partition management configuration for horizontal scaling.
+//
+// IMPORTANT: This configures how partition LEADERS are distributed across cluster nodes,
+// NOT how messages are assigned to partitions. Message partitioning uses:
+//   - Key-based partitioning: hash(key) % num_partitions (FNV-1a)
+//   - Round-robin: when no key is provided
+//
+// Leader distribution enables horizontal scaling by spreading write load across nodes.
+type PartitionConfig struct {
+	// LeaderDistributionStrategy determines how partition leaders are distributed across nodes.
+	// This affects cluster-level load balancing, not message-to-partition assignment.
+	// Options:
+	//   - "round-robin" (default): Distribute leaders evenly in order
+	//   - "least-loaded": Assign to node with fewest leaders
+	//   - "rack-aware": Consider rack placement for fault tolerance
+	DistributionStrategy string `toml:"distribution_strategy" json:"distribution_strategy"`
+
+	// DefaultReplicationFactor is the default number of replicas for new topics.
+	// Must be <= number of nodes in the cluster. Higher values improve durability.
+	DefaultReplicationFactor int `toml:"default_replication_factor" json:"default_replication_factor"`
+
+	// DefaultPartitions is the default number of partitions for new topics.
+	// More partitions = more parallelism but more overhead.
+	// Messages are assigned to partitions via key-based hashing or round-robin.
+	DefaultPartitions int `toml:"default_partitions" json:"default_partitions"`
+
+	// AutoRebalanceEnabled enables automatic partition leader rebalancing when nodes join/leave.
+	AutoRebalanceEnabled bool `toml:"auto_rebalance_enabled" json:"auto_rebalance_enabled"`
+
+	// AutoRebalanceInterval is the interval in seconds between automatic rebalance checks.
+	AutoRebalanceInterval int64 `toml:"auto_rebalance_interval" json:"auto_rebalance_interval"`
+
+	// RebalanceThreshold is the maximum allowed imbalance ratio before triggering rebalance.
+	// For example, 0.2 means rebalance if any node has 20% more leaders than average.
+	RebalanceThreshold float64 `toml:"rebalance_threshold" json:"rebalance_threshold"`
 }
 
 // MetricsConfig holds Prometheus metrics configuration.
@@ -299,6 +344,12 @@ type PerformanceConfig struct {
 	LargeMessageThreshold int `toml:"large_message_threshold" json:"large_message_threshold"`
 }
 
+// DiscoveryConfig holds configuration for mDNS service discovery.
+type DiscoveryConfig struct {
+	Enabled   bool   `toml:"enabled" json:"enabled"`       // Enable mDNS service discovery
+	ClusterID string `toml:"cluster_id" json:"cluster_id"` // Cluster identifier for discovery filtering
+}
+
 // Config holds the configuration for FlyMQ.
 type Config struct {
 	// Network
@@ -331,6 +382,12 @@ type Config struct {
 	Delayed     DelayedConfig     `toml:"delayed" json:"delayed"`
 	Transaction TransactionConfig `toml:"transaction" json:"transaction"`
 
+	// Partition Management (Horizontal Scaling)
+	Partition PartitionConfig `toml:"partition" json:"partition"`
+
+	// Service Discovery
+	Discovery DiscoveryConfig `toml:"discovery" json:"discovery"`
+
 	// Observability
 	Observability ObservabilityConfig `toml:"observability" json:"observability"`
 
@@ -353,7 +410,7 @@ func DefaultConfig() *Config {
 		Retention:    0,                // Unlimited
 		SegmentBytes: 1024 * 1024 * 64, // 64MB
 		LogLevel:     "info",
-		LogJSON:      false,
+		LogJSON:      true, // JSON by default for production/parsing
 		Schema: SchemaConfig{
 			Enabled:    false,
 			Validation: "strict",
@@ -382,6 +439,18 @@ func DefaultConfig() *Config {
 			AllowAnonymous: false, // Require authentication by default (secure default)
 			DefaultPublic:  true,  // Backward compatible: topics are public by default
 			AdminUsername:  "admin",
+		},
+		Partition: PartitionConfig{
+			DistributionStrategy:    "round-robin",
+			DefaultReplicationFactor: 1,  // Single replica by default (increase for production)
+			DefaultPartitions:        1,  // Single partition by default
+			AutoRebalanceEnabled:     false,
+			AutoRebalanceInterval:    300, // 5 minutes
+			RebalanceThreshold:       0.2, // 20% imbalance triggers rebalance
+		},
+		Discovery: DiscoveryConfig{
+			Enabled:   false, // Disabled by default, enable for cluster auto-discovery
+			ClusterID: "",    // Empty means accept any cluster
 		},
 		Observability: ObservabilityConfig{
 			Metrics: MetricsConfig{

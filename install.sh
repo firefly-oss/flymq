@@ -17,8 +17,8 @@ set -euo pipefail
 # Configuration
 # =============================================================================
 
-readonly SCRIPT_VERSION="1.26.8"
-readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.8}"
+readonly SCRIPT_VERSION="1.26.9"
+readonly FLYMQ_VERSION="${FLYMQ_VERSION:-1.26.9}"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Installation options
@@ -55,6 +55,8 @@ CFG_ENCRYPTION_KEY=""
 CFG_DEPLOYMENT_MODE="standalone"  # standalone or cluster
 CFG_CLUSTER_PEERS=""              # comma-separated list of peer addresses
 CFG_ADVERTISE_CLUSTER=""          # advertised cluster address
+CFG_REPLICATION_FACTOR="1"        # number of replicas for data
+CFG_CLUSTER_ENABLED="false"       # whether clustering is enabled
 
 # Performance Configuration
 CFG_ACKS="leader"                 # Durability mode: all, leader, none
@@ -113,6 +115,18 @@ CFG_AUTH_ENABLED="true"
 CFG_AUTH_ADMIN_USER="admin"
 CFG_AUTH_ADMIN_PASS=""
 CFG_AUTH_ALLOW_ANONYMOUS="false"
+
+# Partition Management (Horizontal Scaling) - Sensible defaults
+CFG_PARTITION_DISTRIBUTION_STRATEGY="round-robin"
+CFG_PARTITION_DEFAULT_REPLICATION_FACTOR="1"
+CFG_PARTITION_DEFAULT_PARTITIONS="1"
+CFG_PARTITION_AUTO_REBALANCE_ENABLED="false"
+CFG_PARTITION_AUTO_REBALANCE_INTERVAL="300"
+CFG_PARTITION_REBALANCE_THRESHOLD="0.2"
+
+# Service Discovery - Enable for cluster auto-discovery
+CFG_DISCOVERY_ENABLED="false"
+CFG_DISCOVERY_CLUSTER_ID=""
 
 # System service installation
 INSTALL_SYSTEMD="false"
@@ -468,6 +482,67 @@ configure_cluster_mode() {
     else
         configure_cluster_bootstrap
     fi
+
+    # Configure partition management for horizontal scaling
+    configure_partition_management
+}
+
+configure_partition_management() {
+    print_section "Partition Management (Horizontal Scaling)"
+    echo -e "  ${DIM}FlyMQ distributes partition leaders across cluster nodes for horizontal scaling.${RESET}"
+    echo -e "  ${DIM}Each partition can have a different leader, enabling parallel writes.${RESET}"
+    echo ""
+
+    if prompt_yes_no "Configure partition management settings" "n"; then
+        echo ""
+        echo -e "  ${BOLD}Default Topic Settings${RESET}"
+        echo -e "  ${DIM}These defaults apply when creating new topics.${RESET}"
+        echo ""
+
+        CFG_PARTITION_DEFAULT_PARTITIONS=$(prompt_value "Default partitions per topic" "${CFG_PARTITION_DEFAULT_PARTITIONS}")
+        CFG_PARTITION_DEFAULT_REPLICATION_FACTOR=$(prompt_value "Default replication factor" "${CFG_PARTITION_DEFAULT_REPLICATION_FACTOR}")
+        echo ""
+
+        echo -e "  ${BOLD}Distribution Strategy${RESET}"
+        echo -e "  ${DIM}How partition leaders are distributed across nodes:${RESET}"
+        echo -e "    ${CYAN}round-robin${RESET} - Distribute evenly in order (default)"
+        echo -e "    ${CYAN}least-loaded${RESET} - Assign to node with fewest leaders"
+        echo -e "    ${CYAN}rack-aware${RESET} - Consider rack placement for fault tolerance"
+        echo ""
+
+        local strategy_choice
+        strategy_choice=$(prompt_choice "Distribution strategy (1=round-robin, 2=least-loaded, 3=rack-aware)" "1" "1" "2" "3" "round-robin" "least-loaded" "rack-aware")
+        case "$strategy_choice" in
+            1|round-robin) CFG_PARTITION_DISTRIBUTION_STRATEGY="round-robin" ;;
+            2|least-loaded) CFG_PARTITION_DISTRIBUTION_STRATEGY="least-loaded" ;;
+            3|rack-aware) CFG_PARTITION_DISTRIBUTION_STRATEGY="rack-aware" ;;
+        esac
+        echo ""
+
+        echo -e "  ${BOLD}Automatic Rebalancing${RESET}"
+        echo -e "  ${DIM}Automatically redistribute partition leaders when nodes join/leave.${RESET}"
+        echo ""
+
+        if prompt_yes_no "Enable automatic rebalancing" "n"; then
+            CFG_PARTITION_AUTO_REBALANCE_ENABLED="true"
+            CFG_PARTITION_AUTO_REBALANCE_INTERVAL=$(prompt_value "Rebalance check interval (seconds)" "${CFG_PARTITION_AUTO_REBALANCE_INTERVAL}")
+            CFG_PARTITION_REBALANCE_THRESHOLD=$(prompt_value "Imbalance threshold (0.0-1.0, e.g., 0.2 = 20%)" "${CFG_PARTITION_REBALANCE_THRESHOLD}")
+        else
+            CFG_PARTITION_AUTO_REBALANCE_ENABLED="false"
+        fi
+        echo ""
+
+        print_success "Partition management configured"
+        echo ""
+        echo -e "  ${BOLD}Partition Settings:${RESET}"
+        echo -e "    Default Partitions:     ${CYAN}${CFG_PARTITION_DEFAULT_PARTITIONS}${RESET}"
+        echo -e "    Replication Factor:     ${CYAN}${CFG_PARTITION_DEFAULT_REPLICATION_FACTOR}${RESET}"
+        echo -e "    Distribution Strategy:  ${CYAN}${CFG_PARTITION_DISTRIBUTION_STRATEGY}${RESET}"
+        echo -e "    Auto Rebalance:         ${CYAN}${CFG_PARTITION_AUTO_REBALANCE_ENABLED}${RESET}"
+        echo ""
+    else
+        print_info "Using default partition settings (1 partition, 1 replica, round-robin)"
+    fi
 }
 
 configure_cluster_bootstrap() {
@@ -695,8 +770,195 @@ get_local_ip() {
     if [[ -z "$ip" ]] || [[ "$ip" == "127."* ]]; then
         ip="localhost"
     fi
-    
+
     echo "$ip"
+}
+
+# =============================================================================
+# Service Discovery Functions
+# =============================================================================
+
+# Check if flymq-discover tool is available
+has_discovery_tool() {
+    command -v flymq-discover &> /dev/null || [[ -x "${SCRIPT_DIR}/flymq-discover" ]]
+}
+
+# Discover FlyMQ nodes on the network using mDNS
+discover_nodes_mdns() {
+    local timeout="${1:-5}"
+    local discover_cmd=""
+
+    if command -v flymq-discover &> /dev/null; then
+        discover_cmd="flymq-discover"
+    elif [[ -x "${SCRIPT_DIR}/flymq-discover" ]]; then
+        discover_cmd="${SCRIPT_DIR}/flymq-discover"
+    else
+        return 1
+    fi
+
+    "$discover_cmd" --timeout "$timeout" --quiet 2>/dev/null
+}
+
+# Discover nodes using network scanning (fallback)
+discover_nodes_scan() {
+    local subnet="${1:-}"
+    local port="${2:-9093}"
+
+    if [[ -z "$subnet" ]]; then
+        # Try to detect local subnet
+        local local_ip=$(get_local_ip)
+        if [[ "$local_ip" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            subnet="${BASH_REMATCH[1]}"
+        else
+            return 1
+        fi
+    fi
+
+    local found_nodes=""
+
+    # Quick scan of common IPs in subnet
+    for i in {1..254}; do
+        local target="${subnet}.${i}:${port}"
+        # Use timeout to quickly check if port is open
+        if (echo >/dev/tcp/${subnet}.${i}/${port}) 2>/dev/null; then
+            if [[ -n "$found_nodes" ]]; then
+                found_nodes+=","
+            fi
+            found_nodes+="$target"
+        fi
+    done &
+
+    # Wait with timeout
+    local pid=$!
+    sleep 3
+    kill $pid 2>/dev/null || true
+
+    echo "$found_nodes"
+}
+
+# Interactive node discovery
+discover_cluster_nodes() {
+    print_section "Cluster Node Discovery"
+    echo -e "  ${DIM}FlyMQ can automatically discover existing cluster nodes on your network.${RESET}"
+    echo ""
+
+    local discovered_nodes=""
+    local discovery_method=""
+
+    # Try mDNS discovery first
+    if has_discovery_tool; then
+        echo -e "  ${CYAN}Scanning for FlyMQ nodes using mDNS...${RESET}"
+        discovered_nodes=$(discover_nodes_mdns 5)
+        if [[ -n "$discovered_nodes" ]]; then
+            discovery_method="mdns"
+        fi
+    fi
+
+    # Show results
+    if [[ -n "$discovered_nodes" ]]; then
+        echo ""
+        echo -e "  ${GREEN}${BOLD}✓ Found existing FlyMQ nodes:${RESET}"
+        echo ""
+
+        local i=1
+        IFS=',' read -ra node_array <<< "$discovered_nodes"
+        for node in "${node_array[@]}"; do
+            echo -e "    ${CYAN}[$i]${RESET} $node"
+            ((i++))
+        done
+        echo ""
+
+        if prompt_yes_no "Use discovered nodes as cluster peers" "y"; then
+            CFG_CLUSTER_PEERS="$discovered_nodes"
+            print_success "Using discovered nodes: $discovered_nodes"
+            return 0
+        fi
+    else
+        echo -e "  ${YELLOW}No FlyMQ nodes found on the network.${RESET}"
+        echo ""
+        echo -e "  ${DIM}This could mean:${RESET}"
+        echo -e "    ${DIM}- No cluster exists yet (you're setting up the first node)${RESET}"
+        echo -e "    ${DIM}- Existing nodes are on a different network${RESET}"
+        echo -e "    ${DIM}- mDNS/Bonjour is blocked by firewall${RESET}"
+        echo ""
+    fi
+
+    # Manual entry option
+    echo -e "  ${BOLD}Enter peer addresses manually:${RESET}"
+    echo -e "  ${DIM}Format: host1:port,host2:port (e.g., 192.168.1.10:9093,192.168.1.11:9093)${RESET}"
+    echo -e "  ${DIM}Leave empty if this is the first node in the cluster.${RESET}"
+    echo ""
+
+    CFG_CLUSTER_PEERS=$(prompt_value "Peer addresses" "")
+
+    return 0
+}
+
+# Test connectivity to a peer node
+test_peer_connectivity() {
+    local peer="$1"
+    local host="${peer%:*}"
+    local port="${peer##*:}"
+
+    # Try to connect with timeout
+    if command -v nc &> /dev/null; then
+        nc -z -w 2 "$host" "$port" 2>/dev/null
+        return $?
+    elif command -v timeout &> /dev/null; then
+        timeout 2 bash -c "echo >/dev/tcp/$host/$port" 2>/dev/null
+        return $?
+    else
+        # Fallback: just try to connect
+        (echo >/dev/tcp/$host/$port) 2>/dev/null
+        return $?
+    fi
+}
+
+# Validate connectivity to all configured peers
+validate_peer_connectivity() {
+    if [[ -z "$CFG_CLUSTER_PEERS" ]]; then
+        return 0
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Testing connectivity to peers...${RESET}"
+
+    local all_ok=true
+    IFS=',' read -ra peer_array <<< "$CFG_CLUSTER_PEERS"
+
+    for peer in "${peer_array[@]}"; do
+        peer=$(echo "$peer" | xargs)  # trim whitespace
+        if [[ -z "$peer" ]]; then
+            continue
+        fi
+
+        echo -n "    Testing $peer... "
+        if test_peer_connectivity "$peer"; then
+            echo -e "${GREEN}✓ OK${RESET}"
+        else
+            echo -e "${RED}✗ UNREACHABLE${RESET}"
+            all_ok=false
+        fi
+    done
+
+    if [[ "$all_ok" == false ]]; then
+        echo ""
+        print_warning "Some peers are unreachable. This may cause issues when starting the cluster."
+        echo -e "  ${DIM}Possible causes:${RESET}"
+        echo -e "    ${DIM}- Peer nodes are not running yet${RESET}"
+        echo -e "    ${DIM}- Firewall blocking port 9093${RESET}"
+        echo -e "    ${DIM}- Incorrect peer addresses${RESET}"
+        echo ""
+
+        if ! prompt_yes_no "Continue anyway" "y"; then
+            return 1
+        fi
+    else
+        echo ""
+        print_success "All peers are reachable"
+    fi
+
+    return 0
 }
 
 # =============================================================================
@@ -815,6 +1077,20 @@ generate_config() {
   "transaction": {
     "enabled": ${CFG_TXN_ENABLED},
     "timeout": ${CFG_TXN_TIMEOUT}
+  },
+
+  "partition": {
+    "distribution_strategy": "${CFG_PARTITION_DISTRIBUTION_STRATEGY}",
+    "default_replication_factor": ${CFG_PARTITION_DEFAULT_REPLICATION_FACTOR},
+    "default_partitions": ${CFG_PARTITION_DEFAULT_PARTITIONS},
+    "auto_rebalance_enabled": ${CFG_PARTITION_AUTO_REBALANCE_ENABLED},
+    "auto_rebalance_interval": ${CFG_PARTITION_AUTO_REBALANCE_INTERVAL},
+    "rebalance_threshold": ${CFG_PARTITION_REBALANCE_THRESHOLD}
+  },
+
+  "discovery": {
+    "enabled": ${CFG_DISCOVERY_ENABLED:-false},
+    "cluster_id": "${CFG_DISCOVERY_CLUSTER_ID:-}"
   },
 
   "observability": {
@@ -954,6 +1230,18 @@ build_binaries() {
         exit 1
     fi
     print_success "Built flymq-cli"
+
+    # Build discovery tool
+    local discover_bin="bin/flymq-discover"
+    if [[ "$OS" == "windows" ]]; then
+        discover_bin="bin/flymq-discover.exe"
+    fi
+    echo -n "  "
+    if ! GOOS="${OS}" GOARCH="${ARCH}" go build -o "$discover_bin" cmd/flymq-discover/main.go 2>&1; then
+        print_warning "Failed to build flymq-discover (optional)"
+    else
+        print_success "Built flymq-discover"
+    fi
 }
 
 install_binaries() {
@@ -987,7 +1275,20 @@ install_binaries() {
     cp "$cli_src" "$cli_dst"
     [[ "$OS" != "windows" ]] && chmod +x "$cli_dst"
     print_success "Installed flymq-cli"
-    
+
+    # Install discovery tool if it was built
+    local discover_src="bin/flymq-discover"
+    local discover_dst="$bin_dir/flymq-discover"
+    if [[ "$OS" == "windows" ]]; then
+        discover_src="bin/flymq-discover.exe"
+        discover_dst="$bin_dir/flymq-discover.exe"
+    fi
+    if [[ -f "$discover_src" ]]; then
+        cp "$discover_src" "$discover_dst"
+        [[ "$OS" != "windows" ]] && chmod +x "$discover_dst"
+        print_success "Installed flymq-discover"
+    fi
+
     # On Windows, add a note about PATH
     if [[ "$OS" == "windows" ]]; then
         echo ""
@@ -1128,7 +1429,7 @@ print_post_install() {
 
     if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
         if [[ -z "$CFG_CLUSTER_PEERS" ]]; then
-            echo -e "  ${DIM}# Start bootstrap node${RESET}"
+            echo -e "  ${DIM}# Start bootstrap node (JSON logs by default)${RESET}"
             echo -e "  flymq --config $config_dir/flymq.json"
             echo ""
             echo -e "  ${DIM}# Other nodes join with:${RESET} ${CYAN}${CFG_ADVERTISE_CLUSTER}${RESET}"
@@ -1137,9 +1438,15 @@ print_post_install() {
             echo -e "  flymq --config $config_dir/flymq.json"
         fi
     else
-        echo -e "  ${DIM}# Start server${RESET}"
+        echo -e "  ${DIM}# Start server (JSON logs by default)${RESET}"
         echo -e "  flymq --config $config_dir/flymq.json"
     fi
+    echo ""
+    echo -e "  ${DIM}# Start with human-readable logs (for development)${RESET}"
+    echo -e "  flymq --config $config_dir/flymq.json -human-readable"
+    echo ""
+    echo -e "  ${DIM}# Start in quiet mode (logs only, no banner)${RESET}"
+    echo -e "  flymq --config $config_dir/flymq.json -quiet"
     echo ""
     echo -e "  ${DIM}# Send a message${RESET}"
     echo -e "  flymq-cli produce my-topic \"Hello World\""
@@ -1209,6 +1516,27 @@ uninstall() {
     if [[ -f "$bin_dir/flymq-cli" ]]; then
         rm -f "$bin_dir/flymq-cli"
         print_success "Removed flymq-cli"
+    fi
+
+    if [[ -f "$bin_dir/flymq-discover" ]]; then
+        rm -f "$bin_dir/flymq-discover"
+        print_success "Removed flymq-discover"
+    fi
+
+    # Also check for Windows executables
+    if [[ -f "$bin_dir/flymq.exe" ]]; then
+        rm -f "$bin_dir/flymq.exe"
+        print_success "Removed flymq.exe"
+    fi
+
+    if [[ -f "$bin_dir/flymq-cli.exe" ]]; then
+        rm -f "$bin_dir/flymq-cli.exe"
+        print_success "Removed flymq-cli.exe"
+    fi
+
+    if [[ -f "$bin_dir/flymq-discover.exe" ]]; then
+        rm -f "$bin_dir/flymq-discover.exe"
+        print_success "Removed flymq-discover.exe"
     fi
 
     print_success "FlyMQ uninstalled"
@@ -1372,23 +1700,50 @@ configure_by_sections() {
 configure_section_deployment() {
     print_section "Deployment Configuration"
 
-    echo -e "  ${BOLD}Deployment Mode${RESET}"
-    echo -e "    ${CYAN}1${RESET}) Standalone - Single node ${DIM}(development/testing/small production)${RESET}"
-    echo -e "    ${CYAN}2${RESET}) Cluster    - Multi-node with Raft consensus ${DIM}(high availability)${RESET}"
+    # Allow changing deployment mode
+    echo -e "  ${BOLD}Current Mode:${RESET} ${CYAN}${CFG_DEPLOYMENT_MODE}${RESET}"
     echo ""
 
-    local mode_choice
-    mode_choice=$(prompt_choice "Deployment mode (1=standalone, 2=cluster)" "1" "1" "2" "standalone" "cluster")
-
-    if [[ "$mode_choice" == "2" ]] || [[ "$mode_choice" == "cluster" ]]; then
-        CFG_DEPLOYMENT_MODE="cluster"
-        configure_cluster_mode
-    else
-        CFG_DEPLOYMENT_MODE="standalone"
+    if prompt_yes_no "Change deployment mode" "n"; then
         echo ""
-        echo -e "  ${BOLD}Network Settings${RESET}"
-        CFG_BIND_ADDR=$(prompt_value "Client bind address" "${CFG_BIND_ADDR}")
-        CFG_NODE_ID=$(prompt_value "Node ID" "${CFG_NODE_ID}")
+        echo -e "  ${BOLD}Deployment Mode${RESET}"
+        echo -e "    ${CYAN}1${RESET}) Standalone - Single node ${DIM}(development/testing/small production)${RESET}"
+        echo -e "    ${CYAN}2${RESET}) Cluster    - Multi-node with Raft consensus ${DIM}(high availability)${RESET}"
+        echo ""
+
+        local mode_choice
+        mode_choice=$(prompt_choice "Deployment mode (1=standalone, 2=cluster)" "1" "1" "2" "standalone" "cluster")
+
+        if [[ "$mode_choice" == "2" ]] || [[ "$mode_choice" == "cluster" ]]; then
+            CFG_DEPLOYMENT_MODE="cluster"
+            configure_cluster_deployment
+        else
+            CFG_DEPLOYMENT_MODE="standalone"
+            configure_standalone_deployment
+        fi
+    fi
+
+    # Common settings for both modes
+    echo ""
+    echo -e "  ${BOLD}Network Settings${RESET}"
+    CFG_BIND_ADDR=$(prompt_value "Client bind address" "${CFG_BIND_ADDR}")
+    CFG_NODE_ID=$(prompt_value "Node ID" "${CFG_NODE_ID}")
+
+    # Cluster-specific settings
+    if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
+        echo ""
+        echo -e "  ${BOLD}Cluster Settings${RESET}"
+        CFG_CLUSTER_ADDR=$(prompt_value "Cluster bind address" "${CFG_CLUSTER_ADDR}")
+
+        echo ""
+        if prompt_yes_no "Modify peer nodes" "n"; then
+            discover_cluster_nodes
+            if [[ -n "$CFG_CLUSTER_PEERS" ]]; then
+                validate_peer_connectivity
+            fi
+        fi
+
+        CFG_REPLICATION_FACTOR=$(prompt_value "Replication factor" "${CFG_REPLICATION_FACTOR}")
     fi
 
     echo ""
@@ -1617,6 +1972,346 @@ show_final_configuration() {
     fi
 }
 
+# =============================================================================
+# Deployment Mode Selection (First Step)
+# =============================================================================
+
+select_deployment_mode() {
+    print_section "Deployment Mode"
+    echo -e "  ${DIM}Choose how you want to deploy FlyMQ:${RESET}"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}[1]${RESET} ${BOLD}Standalone${RESET}"
+    echo -e "      ${DIM}Single node deployment for development, testing, or small workloads.${RESET}"
+    echo -e "      ${DIM}Simple setup, no clustering overhead.${RESET}"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}[2]${RESET} ${BOLD}Cluster${RESET}"
+    echo -e "      ${DIM}Multi-node deployment with Raft consensus for high availability.${RESET}"
+    echo -e "      ${DIM}Automatic failover, data replication, and horizontal scaling.${RESET}"
+    echo ""
+
+    local mode_choice
+    mode_choice=$(prompt_choice "Select deployment mode" "1" "1" "2" "standalone" "cluster")
+
+    if [[ "$mode_choice" == "2" ]] || [[ "$mode_choice" == "cluster" ]]; then
+        CFG_DEPLOYMENT_MODE="cluster"
+        configure_cluster_deployment
+    else
+        CFG_DEPLOYMENT_MODE="standalone"
+        configure_standalone_deployment
+    fi
+}
+
+configure_standalone_deployment() {
+    echo ""
+    print_success "Standalone mode selected"
+    echo ""
+
+    # Set standalone-specific defaults
+    CFG_CLUSTER_ENABLED="false"
+    CFG_CLUSTER_PEERS=""
+    CFG_REPLICATION_FACTOR="1"
+}
+
+configure_cluster_deployment() {
+    echo ""
+    print_success "Cluster mode selected"
+    echo ""
+
+    # Enable clustering
+    CFG_CLUSTER_ENABLED="true"
+
+    # Determine if this is the first node or joining existing cluster
+    echo -e "  ${BOLD}Is this the first node in a new cluster, or joining an existing cluster?${RESET}"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}[1]${RESET} ${BOLD}Bootstrap new cluster${RESET}"
+    echo -e "      ${DIM}This is the first node. Other nodes will join this one.${RESET}"
+    echo ""
+    echo -e "  ${CYAN}${BOLD}[2]${RESET} ${BOLD}Join existing cluster${RESET}"
+    echo -e "      ${DIM}Connect to an existing FlyMQ cluster.${RESET}"
+    echo ""
+
+    local cluster_choice
+    cluster_choice=$(prompt_choice "Cluster role" "1" "1" "2" "bootstrap" "join")
+
+    if [[ "$cluster_choice" == "2" ]] || [[ "$cluster_choice" == "join" ]]; then
+        # Joining existing cluster - try to discover nodes
+        discover_cluster_nodes
+
+        # Validate connectivity if peers were specified
+        if [[ -n "$CFG_CLUSTER_PEERS" ]]; then
+            validate_peer_connectivity
+        fi
+    else
+        # Bootstrap mode - this is the first node
+        CFG_CLUSTER_PEERS=""
+        echo ""
+        print_info "Bootstrap mode: This node will start a new cluster."
+        echo -e "  ${DIM}Other nodes can join by specifying this node's address as a peer.${RESET}"
+    fi
+
+    # Configure cluster-specific settings
+    echo ""
+    echo -e "  ${BOLD}Cluster Network Settings${RESET}"
+
+    local local_ip=$(get_local_ip)
+    CFG_CLUSTER_ADDR=$(prompt_value "Cluster bind address" "${local_ip}:9093")
+    CFG_NODE_ID=$(prompt_value "Node ID (unique in cluster)" "${CFG_NODE_ID}")
+
+    # Replication factor
+    echo ""
+    echo -e "  ${BOLD}Replication Settings${RESET}"
+    echo -e "  ${DIM}Replication factor determines how many copies of data are stored.${RESET}"
+    echo -e "  ${DIM}Recommended: 3 for production (tolerates 1 node failure).${RESET}"
+    echo ""
+
+    if [[ -z "$CFG_CLUSTER_PEERS" ]]; then
+        # Bootstrap mode - start with 1, can increase later
+        CFG_REPLICATION_FACTOR=$(prompt_value "Replication factor" "1")
+        echo -e "  ${DIM}Note: Increase replication factor after more nodes join.${RESET}"
+    else
+        CFG_REPLICATION_FACTOR=$(prompt_value "Replication factor" "3")
+    fi
+
+    # Enable service discovery for cluster mode
+    echo ""
+    echo -e "  ${BOLD}Service Discovery${RESET}"
+    echo -e "  ${DIM}mDNS service discovery allows nodes to automatically find each other.${RESET}"
+    echo ""
+
+    if prompt_yes_no "Enable service discovery (mDNS/Bonjour)" "y"; then
+        CFG_DISCOVERY_ENABLED="true"
+        CFG_DISCOVERY_CLUSTER_ID=$(prompt_value "Cluster ID (for filtering)" "${CFG_DISCOVERY_CLUSTER_ID:-flymq-cluster}")
+    else
+        CFG_DISCOVERY_ENABLED="false"
+    fi
+}
+
+# =============================================================================
+# Iterative Configuration Loop
+# =============================================================================
+
+show_configuration_summary() {
+    local config_dir="$1"
+
+    clear_screen_if_interactive
+
+    echo ""
+    echo -e "  ${GREEN}${BOLD}CONFIGURATION SUMMARY${RESET}"
+    echo -e "  ${DIM}Review your settings. Select a section number to modify, or confirm to proceed.${RESET}"
+    echo ""
+
+    # Section 1: Deployment
+    echo -e "  ${WHITE}${BOLD}[${CYAN}1${WHITE}]${RESET} ${BOLD}DEPLOYMENT${RESET}"
+    if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
+        echo -e "      Mode:              ${GREEN}Cluster${RESET} ${DIM}(high availability)${RESET}"
+        echo -e "      Cluster Address:   ${CYAN}${CFG_CLUSTER_ADDR}${RESET}"
+        if [[ -n "$CFG_CLUSTER_PEERS" ]]; then
+            echo -e "      Peers:             ${CYAN}${CFG_CLUSTER_PEERS}${RESET}"
+        else
+            echo -e "      Peers:             ${YELLOW}Bootstrap mode (first node)${RESET}"
+        fi
+        echo -e "      Replication:       ${CYAN}${CFG_REPLICATION_FACTOR}x${RESET}"
+        if [[ "$CFG_DISCOVERY_ENABLED" == "true" ]]; then
+            echo -e "      Service Discovery: ${GREEN}Enabled${RESET} ${DIM}(mDNS)${RESET}"
+            [[ -n "$CFG_DISCOVERY_CLUSTER_ID" ]] && echo -e "      Cluster ID:        ${CYAN}${CFG_DISCOVERY_CLUSTER_ID}${RESET}"
+        else
+            echo -e "      Service Discovery: ${YELLOW}Disabled${RESET}"
+        fi
+    else
+        echo -e "      Mode:              ${GREEN}Standalone${RESET} ${DIM}(single node)${RESET}"
+    fi
+    echo -e "      Bind Address:      ${CYAN}${CFG_BIND_ADDR}${RESET}"
+    echo -e "      Data Directory:    ${CYAN}${CFG_DATA_DIR}${RESET}"
+    echo -e "      Node ID:           ${CYAN}${CFG_NODE_ID}${RESET}"
+    echo ""
+
+    # Section 2: Security
+    echo -e "  ${WHITE}${BOLD}[${CYAN}2${WHITE}]${RESET} ${BOLD}SECURITY${RESET}"
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        echo -e "      TLS/SSL:           ${GREEN}Enabled${RESET}"
+        [[ -n "$CFG_TLS_CERT_FILE" ]] && echo -e "      TLS Cert:          ${CYAN}${CFG_TLS_CERT_FILE}${RESET}"
+    else
+        echo -e "      TLS/SSL:           ${YELLOW}Disabled${RESET} ${DIM}(use reverse proxy for TLS)${RESET}"
+    fi
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        echo -e "      Data Encryption:   ${GREEN}Enabled${RESET} ${DIM}(AES-256-GCM)${RESET}"
+    else
+        echo -e "      Data Encryption:   ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+        echo -e "      Authentication:    ${GREEN}Enabled${RESET}"
+        echo -e "      Admin User:        ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
+        if [[ -n "$CFG_AUTH_ADMIN_PASS" ]]; then
+            # Check if password was auto-generated (will be set in main)
+            echo -e "      Admin Password:    ${CYAN}(configured)${RESET}"
+        else
+            echo -e "      Admin Password:    ${YELLOW}(will be auto-generated)${RESET}"
+        fi
+    else
+        echo -e "      Authentication:    ${YELLOW}Disabled${RESET}"
+    fi
+    echo ""
+
+    # Section 3: Advanced Features
+    echo -e "  ${WHITE}${BOLD}[${CYAN}3${WHITE}]${RESET} ${BOLD}ADVANCED FEATURES${RESET}"
+    if [[ "$CFG_SCHEMA_ENABLED" == "true" ]]; then
+        echo -e "      Schema Validation: ${GREEN}Enabled${RESET} ${DIM}(${CFG_SCHEMA_VALIDATION} mode)${RESET}"
+    else
+        echo -e "      Schema Validation: ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_DLQ_ENABLED" == "true" ]]; then
+        echo -e "      Dead Letter Queue: ${GREEN}Enabled${RESET} ${DIM}(${CFG_DLQ_MAX_RETRIES} retries)${RESET}"
+    else
+        echo -e "      Dead Letter Queue: ${YELLOW}Disabled${RESET}"
+    fi
+    # Format TTL nicely (convert seconds to days if large)
+    local ttl_display="${CFG_TTL_DEFAULT}s"
+    if [[ "$CFG_TTL_DEFAULT" -ge 86400 ]]; then
+        ttl_display="$((CFG_TTL_DEFAULT / 86400)) days"
+    elif [[ "$CFG_TTL_DEFAULT" -ge 3600 ]]; then
+        ttl_display="$((CFG_TTL_DEFAULT / 3600)) hours"
+    fi
+    echo -e "      Message TTL:       ${GREEN}Enabled${RESET} ${DIM}(${ttl_display})${RESET}"
+    if [[ "$CFG_DELAYED_ENABLED" == "true" ]]; then
+        echo -e "      Delayed Delivery:  ${GREEN}Enabled${RESET}"
+    else
+        echo -e "      Delayed Delivery:  ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_TXN_ENABLED" == "true" ]]; then
+        echo -e "      Transactions:      ${GREEN}Enabled${RESET} ${DIM}(${CFG_TXN_TIMEOUT}s timeout)${RESET}"
+    else
+        echo -e "      Transactions:      ${YELLOW}Disabled${RESET}"
+    fi
+    echo ""
+
+    # Section 4: Observability
+    echo -e "  ${WHITE}${BOLD}[${CYAN}4${WHITE}]${RESET} ${BOLD}OBSERVABILITY${RESET}"
+    if [[ "$CFG_METRICS_ENABLED" == "true" ]]; then
+        echo -e "      Prometheus Metrics: ${GREEN}Enabled${RESET} ${DIM}(${CFG_METRICS_ADDR})${RESET}"
+    else
+        echo -e "      Prometheus Metrics: ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_TRACING_ENABLED" == "true" ]]; then
+        echo -e "      OpenTelemetry:      ${GREEN}Enabled${RESET} ${DIM}(${CFG_TRACING_ENDPOINT})${RESET}"
+    else
+        echo -e "      OpenTelemetry:      ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_HEALTH_ENABLED" == "true" ]]; then
+        echo -e "      Health Checks:      ${GREEN}Enabled${RESET} ${DIM}(${CFG_HEALTH_ADDR})${RESET}"
+    else
+        echo -e "      Health Checks:      ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
+        if [[ "$CFG_ADMIN_TLS_ENABLED" == "true" ]]; then
+            echo -e "      Admin API:          ${GREEN}Enabled${RESET} ${DIM}(${CFG_ADMIN_ADDR}, HTTPS)${RESET}"
+        else
+            echo -e "      Admin API:          ${GREEN}Enabled${RESET} ${DIM}(${CFG_ADMIN_ADDR}, HTTP)${RESET}"
+        fi
+    else
+        echo -e "      Admin API:          ${YELLOW}Disabled${RESET}"
+    fi
+    echo ""
+
+    # Section 5: Performance
+    echo -e "  ${WHITE}${BOLD}[${CYAN}5${WHITE}]${RESET} ${BOLD}PERFORMANCE${RESET}"
+    echo -e "      Acks Mode:         ${CYAN}${CFG_ACKS}${RESET}"
+    # Format segment size nicely
+    local segment_display="${CFG_SEGMENT_BYTES} bytes"
+    if [[ "$CFG_SEGMENT_BYTES" -ge 1073741824 ]]; then
+        segment_display="$((CFG_SEGMENT_BYTES / 1073741824)) GB"
+    elif [[ "$CFG_SEGMENT_BYTES" -ge 1048576 ]]; then
+        segment_display="$((CFG_SEGMENT_BYTES / 1048576)) MB"
+    fi
+    echo -e "      Segment Size:      ${CYAN}${segment_display}${RESET}"
+    echo -e "      Log Level:         ${CYAN}${CFG_LOG_LEVEL}${RESET}"
+    echo ""
+
+    # Show credentials reminder if auth is enabled
+    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+        echo -e "  ${YELLOW}${BOLD}⚠ CREDENTIALS${RESET}"
+        echo -e "      Admin Username:    ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
+        if [[ -n "$CFG_AUTH_ADMIN_PASS" ]]; then
+            echo -e "      Admin Password:    ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
+        else
+            echo -e "      Admin Password:    ${DIM}(will be auto-generated during install)${RESET}"
+        fi
+        echo ""
+    fi
+
+    # Show encryption key reminder if encryption is enabled
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && [[ -n "$CFG_ENCRYPTION_KEY" ]]; then
+        echo -e "  ${YELLOW}${BOLD}⚠ ENCRYPTION KEY${RESET}"
+        echo -e "      ${DIM}${CFG_ENCRYPTION_KEY}${RESET}"
+        echo -e "      ${DIM}(Save this key securely - required for data recovery)${RESET}"
+        echo ""
+    fi
+}
+
+clear_screen_if_interactive() {
+    # Only clear screen if we're in an interactive terminal
+    if [[ -t 1 ]] && [[ "$AUTO_CONFIRM" != true ]]; then
+        # Use tput if available, otherwise ANSI escape
+        if command -v tput &> /dev/null; then
+            tput clear 2>/dev/null || true
+        else
+            echo -e "\033[2J\033[H" 2>/dev/null || true
+        fi
+    fi
+}
+
+iterative_configuration_loop() {
+    local config_dir="$1"
+
+    while true; do
+        show_configuration_summary "$config_dir"
+
+        echo -e "  ${BOLD}Options:${RESET}"
+        echo -e "    ${CYAN}1-5${RESET}  Modify a section"
+        echo -e "    ${CYAN}c${RESET}    Confirm and proceed with installation"
+        echo -e "    ${CYAN}q${RESET}    Cancel installation"
+        echo ""
+
+        local choice
+        choice=$(prompt_value "Enter choice" "c")
+
+        case "$choice" in
+            1)
+                configure_section_deployment
+                ;;
+            2)
+                configure_section_security
+                ;;
+            3)
+                configure_section_advanced
+                ;;
+            4)
+                configure_section_observability
+                ;;
+            5)
+                configure_section_performance
+                ;;
+            c|C|confirm)
+                echo ""
+                if prompt_yes_no "Proceed with installation" "y"; then
+                    return 0
+                fi
+                ;;
+            q|Q|quit|cancel)
+                print_info "Installation cancelled"
+                exit 0
+                ;;
+            *)
+                print_warning "Invalid choice: $choice"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
 main() {
     parse_args "$@"
 
@@ -1652,24 +2347,11 @@ main() {
 
     # Interactive configuration or use defaults
     if [[ "$AUTO_CONFIRM" != true ]]; then
-        # Show default configuration first
-        show_default_configuration "$config_dir"
+        # STEP 1: Ask deployment mode first (most important decision)
+        select_deployment_mode
 
-        echo ""
-        if prompt_yes_no "Would you like to customize this configuration" "n"; then
-            configure_by_sections
-        else
-            print_success "Using production-ready defaults"
-        fi
-
-        echo ""
-        show_final_configuration "$config_dir"
-        echo ""
-
-        if ! prompt_yes_no "Proceed with installation" "y"; then
-            print_info "Installation cancelled"
-            exit 0
-        fi
+        # STEP 2: Show configuration summary and allow iterative modification
+        iterative_configuration_loop "$config_dir"
     fi
 
     echo ""

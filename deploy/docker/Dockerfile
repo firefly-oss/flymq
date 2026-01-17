@@ -52,6 +52,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-w -s" \
     -o /build/bin/flymq-cli cmd/flymq-cli/main.go 2>/dev/null || true
 
+# Build discovery tool
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s" \
+    -o /build/bin/flymq-discover cmd/flymq-discover/main.go 2>/dev/null || true
+
 # -----------------------------------------------------------------------------
 # Stage 2: Runtime
 # -----------------------------------------------------------------------------
@@ -88,13 +93,14 @@ WORKDIR /app
 # Copy binaries from builder
 COPY --from=builder /build/bin/flymq /app/flymq
 COPY --from=builder /build/bin/flymq-cli /app/flymq-cli
+COPY --from=builder /build/bin/flymq-discover /app/flymq-discover
 
 # Copy banner for display
 COPY --from=builder /build/internal/banner/banner.txt /app/banner.txt
 
 # Copy entrypoint scripts
 COPY deploy/docker/docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh /app/flymq /app/flymq-cli
+RUN chmod +x /app/docker-entrypoint.sh /app/flymq /app/flymq-cli /app/flymq-discover
 
 # Add to PATH
 ENV PATH="/app:${PATH}"

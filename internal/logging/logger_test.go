@@ -151,11 +151,18 @@ func TestLoggerJSONMode(t *testing.T) {
 	logger.Info("json test", "foo", "bar")
 
 	output := buf.String()
-	if !strings.Contains(output, `"message":"json test"`) {
-		t.Errorf("Expected JSON output with message field, got: %s", output)
+	// Check for new field names: "msg" instead of "message", "logger" instead of "component"
+	if !strings.Contains(output, `"msg":"json test"`) {
+		t.Errorf("Expected JSON output with msg field, got: %s", output)
 	}
-	if !strings.Contains(output, `"component":"test"`) {
-		t.Errorf("Expected JSON output with component field, got: %s", output)
+	if !strings.Contains(output, `"logger":"test"`) {
+		t.Errorf("Expected JSON output with logger field, got: %s", output)
+	}
+	if !strings.Contains(output, `"ts":`) {
+		t.Errorf("Expected JSON output with ts field, got: %s", output)
+	}
+	if !strings.Contains(output, `"foo":"bar"`) {
+		t.Errorf("Expected JSON output with flattened field foo=bar, got: %s", output)
 	}
 }
 

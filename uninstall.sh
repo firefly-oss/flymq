@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-readonly SCRIPT_VERSION="1.26.8"
+readonly SCRIPT_VERSION="1.26.9"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detected system info
@@ -241,6 +241,7 @@ show_installation_summary() {
     if [[ -n "$PREFIX" ]]; then
         echo -e "  ${ICON_ARROW} Binaries:      ${CYAN}$PREFIX/bin/flymq${RESET}"
         echo -e "  ${ICON_ARROW}                ${CYAN}$PREFIX/bin/flymq-cli${RESET}"
+        echo -e "  ${ICON_ARROW}                ${CYAN}$PREFIX/bin/flymq-discover${RESET}"
     fi
 
     if [[ -n "$CONFIG_DIR" ]]; then
@@ -393,10 +394,12 @@ remove_binaries() {
     # Platform-specific binary names
     local server_bin="flymq"
     local cli_bin="flymq-cli"
-    
+    local discover_bin="flymq-discover"
+
     if [[ "$OS" == "windows" ]]; then
         server_bin="flymq.exe"
         cli_bin="flymq-cli.exe"
+        discover_bin="flymq-discover.exe"
     fi
 
     if [[ -f "$bin_dir/$server_bin" ]]; then
@@ -414,6 +417,15 @@ remove_binaries() {
         else
             rm -f "$bin_dir/$cli_bin"
             print_success "Removed $bin_dir/$cli_bin"
+        fi
+    fi
+
+    if [[ -f "$bin_dir/$discover_bin" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            print_info "[DRY RUN] Would remove: $bin_dir/$discover_bin"
+        else
+            rm -f "$bin_dir/$discover_bin"
+            print_success "Removed $bin_dir/$discover_bin"
         fi
     fi
 }
@@ -624,6 +636,7 @@ main() {
         [[ "$OS" == "windows" ]] && binary_suffix=".exe"
         echo -e "    ${ICON_ARROW} $PREFIX/bin/flymq$binary_suffix"
         echo -e "    ${ICON_ARROW} $PREFIX/bin/flymq-cli$binary_suffix"
+        echo -e "    ${ICON_ARROW} $PREFIX/bin/flymq-discover$binary_suffix"
         [[ -n "$SYSTEMD_SERVICE" ]] && echo -e "    ${ICON_ARROW} Systemd: $SYSTEMD_SERVICE"
         [[ -n "$LAUNCHD_PLIST" ]] && echo -e "    ${ICON_ARROW} LaunchAgent: com.firefly.flymq"
         [[ "$REMOVE_DATA" == true ]] && echo -e "    ${ICON_ARROW} Data: $DATA_DIR"

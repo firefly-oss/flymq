@@ -20,8 +20,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Script version
-$SCRIPT_VERSION = "1.26.1"
-$FLYMQ_VERSION = if ($env:FLYMQ_VERSION) { $env:FLYMQ_VERSION } else { "1.26.1" }
+$SCRIPT_VERSION = "1.26.9"
+$FLYMQ_VERSION = if ($env:FLYMQ_VERSION) { $env:FLYMQ_VERSION } else { "1.26.9" }
 
 # Configuration variables
 $script:CFG_DEPLOYMENT_MODE = "standalone"

@@ -76,12 +76,29 @@ func ParseLevel(s string) Level {
 }
 
 // Entry represents a single log entry with all its metadata.
+// Uses standard field names for compatibility with log aggregators (ELK, Loki, etc.)
 type Entry struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Level     string                 `json:"level"`
-	Component string                 `json:"component"`
-	Message   string                 `json:"message"`
-	Fields    map[string]interface{} `json:"fields,omitempty"`
+	Timestamp string                 `json:"ts"`        // ISO8601 timestamp
+	Level     string                 `json:"level"`     // Log level
+	Logger    string                 `json:"logger"`    // Component/logger name
+	Message   string                 `json:"msg"`       // Log message
+	Fields    map[string]interface{} `json:"-"`         // Additional fields (flattened in JSON)
+}
+
+// MarshalJSON implements custom JSON marshaling to flatten fields into the root object.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	// Create a map with base fields
+	m := map[string]interface{}{
+		"ts":     e.Timestamp,
+		"level":  e.Level,
+		"logger": e.Logger,
+		"msg":    e.Message,
+	}
+	// Flatten additional fields into the root
+	for k, v := range e.Fields {
+		m[k] = v
+	}
+	return json.Marshal(m)
 }
 
 // Logger provides structured logging capabilities.
@@ -161,11 +178,11 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 		return
 	}
 
-	// Build the entry
+	// Build the entry with ISO8601 timestamp
 	entry := Entry{
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Level:     level.String(),
-		Component: l.component,
+		Logger:    l.component,
 		Message:   msg,
 	}
 
@@ -207,8 +224,15 @@ func (l *Logger) writeJSON(w io.Writer, entry Entry) {
 
 // writeText writes the entry in human-readable text format.
 func (l *Logger) writeText(w io.Writer, entry Entry) {
-	// Format: 2006-01-02T15:04:05.000Z [LEVEL] [component] message key=value ...
-	timestamp := entry.Timestamp.Format("2006-01-02T15:04:05.000Z")
+	// Format: 2006-01-02T15:04:05.000Z [LEVEL] [logger] message key=value ...
+	// Parse and reformat timestamp for consistent display
+	ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+	var timestamp string
+	if err != nil {
+		timestamp = entry.Timestamp
+	} else {
+		timestamp = ts.Format("2006-01-02T15:04:05.000Z")
+	}
 
 	// Color codes for different levels
 	var levelColor string
@@ -225,16 +249,27 @@ func (l *Logger) writeText(w io.Writer, entry Entry) {
 		levelColor = "\033[0m"
 	}
 	resetColor := "\033[0m"
+	dimColor := "\033[2m"
 
 	// Build the log line
-	line := fmt.Sprintf("%s %s[%-5s]%s [%s] %s",
-		timestamp, levelColor, entry.Level, resetColor, entry.Component, entry.Message)
+	line := fmt.Sprintf("%s%s%s %s%-5s%s %s[%s]%s %s",
+		dimColor, timestamp, resetColor,
+		levelColor, entry.Level, resetColor,
+		dimColor, entry.Logger, resetColor,
+		entry.Message)
 
-	// Append fields
+	// Append fields in a cleaner format
 	if len(entry.Fields) > 0 {
+		line += " " + dimColor
+		first := true
 		for k, v := range entry.Fields {
-			line += fmt.Sprintf(" %s=%v", k, v)
+			if !first {
+				line += " "
+			}
+			line += fmt.Sprintf("%s=%v", k, v)
+			first = false
 		}
+		line += resetColor
 	}
 
 	fmt.Fprintln(w, line)
