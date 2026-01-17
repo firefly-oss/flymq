@@ -1954,9 +1954,10 @@ configure_section_security() {
     if prompt_yes_no "Enable authentication" "y"; then
         CFG_AUTH_ENABLED="true"
         CFG_AUTH_ADMIN_USER=$(prompt_value "Admin username" "${CFG_AUTH_ADMIN_USER}")
-        local custom_pass
+        local custom_pass=""
         echo -e "  ${DIM}Leave empty to use auto-generated password${RESET}"
-        read -sp "  Admin password: " custom_pass
+        # Use || true to prevent exit on empty input (read returns 1 on EOF/empty with -s)
+        read -sp "  Admin password: " custom_pass </dev/tty || true
         echo ""
         if [[ -n "$custom_pass" ]]; then
             CFG_AUTH_ADMIN_PASS="$custom_pass"
