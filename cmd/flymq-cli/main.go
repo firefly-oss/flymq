@@ -140,7 +140,7 @@ func main() {
 	case "schema":
 		cmdSchema(args)
 	case "txn":
-		cmdTransaction(args)
+		cmdTxn(args)
 	case "health":
 		cmdHealth(args)
 	case "admin":
@@ -312,45 +312,41 @@ func printUsage() {
 	cli.Section("Commands")
 
 	cli.SubCommandSection("Messaging")
-	cli.Command("produce", "<topic> <msg>", "Send a message to a topic")
-	cli.Command("consume", "<topic>", "Fetch messages from a topic (batch)")
-	cli.Command("subscribe", "<topic>", "Stream messages from a topic (tail)")
-	cli.Command("explore", "", "Interactive topic explorer and message browser")
+	cli.SubCommand("produce", "<topic> <msg>", "Send a message to a topic")
+	cli.SubCommand("consume", "<topic>", "Fetch messages from a topic (batch)")
+	cli.SubCommand("subscribe", "<topic>", "Stream messages from a topic (tail)")
+	cli.SubCommand("explore", "", "Interactive topic explorer and message browser")
 	fmt.Println()
 
 	cli.SubCommandSection("Topics")
-	cli.Command("topics", "", "List all topics")
-	cli.Command("create", "<topic>", "Create a new topic")
-	cli.Command("delete", "<topic>", "Delete an existing topic")
-	cli.Command("info", "<topic>", "Show detailed topic information")
+	cli.SubCommand("topics", "", "List all topics")
+	cli.SubCommand("create", "<topic>", "Create a new topic")
+	cli.SubCommand("delete", "<topic>", "Delete an existing topic")
+	cli.SubCommand("info", "<topic>", "Show detailed topic information")
 	fmt.Println()
 
 	cli.SubCommandSection("Consumer Groups")
-	cli.Command("groups list", "", "List all consumer groups")
-	cli.Command("groups describe", "<grp>", "Show group members and state")
-	cli.Command("groups lag", "<grp>", "Show consumer lag for a group")
-	cli.Command("groups reset", "<grp>", "Reset group offsets")
-	cli.Command("groups delete", "<grp>", "Delete a consumer group")
+	cli.SubCommand("groups", "<command>", "Consumer group management (list, describe, lag, reset, delete)")
 	fmt.Println()
 
 	cli.SubCommandSection("Advanced")
-	cli.Command("produce-delayed", "<topic> <delay> <msg>", "Send a message with delayed delivery")
-	cli.Command("produce-ttl", "<topic> <ttl> <msg>", "Send a message with time-to-live")
-	cli.Command("txn", "", "Transactional messaging operations")
-	cli.Command("schema", "", "Schema registry management")
-	cli.Command("dlq", "", "Dead letter queue management")
+	cli.SubCommand("produce-delayed", "<topic> <delay> <msg>", "Send a message with delayed delivery")
+	cli.SubCommand("produce-ttl", "<topic> <ttl> <msg>", "Send a message with time-to-live")
+	cli.SubCommand("txn", "", "Transactional messaging operations")
+	cli.SubCommand("schema", "<command>", "Schema registry management")
+	cli.SubCommand("dlq", "<command>", "Dead letter queue management")
 	fmt.Println()
 
 	cli.SubCommandSection("Security & Admin")
-	cli.Command("auth", "", "Authenticate and save credentials")
-	cli.Command("whoami", "", "Display current authenticated user")
-	cli.Command("users", "", "Manage users and permissions")
-	cli.Command("roles", "", "Manage RBAC roles")
-	cli.Command("acl", "", "Manage access control lists")
-	cli.Command("audit", "", "Query and export audit logs")
-	cli.Command("cluster", "", "Cluster nodes and partition management")
-	cli.Command("admin", "", "Direct Admin API access")
-	cli.Command("health", "", "Check server health status")
+	cli.SubCommand("auth", "", "Authenticate and save credentials")
+	cli.SubCommand("whoami", "", "Display current authenticated user")
+	cli.SubCommand("users", "<command>", "Manage users and permissions")
+	cli.SubCommand("roles", "<command>", "Manage RBAC roles")
+	cli.SubCommand("acl", "<command>", "Manage access control lists")
+	cli.SubCommand("audit", "<command>", "Query and export audit logs")
+	cli.SubCommand("cluster", "<command>", "Cluster nodes and partition management")
+	cli.SubCommand("admin", "<command>", "Direct Admin API access")
+	cli.SubCommand("health", "<command>", "Check server health status")
 
 	cli.Section("Options")
 	cli.Option("-a", "--addr", "host:port", "Server address (default: localhost:9092)")
@@ -1017,6 +1013,10 @@ func cmdSubscribe(args []string) {
 }
 
 func cmdListTopics(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") || (len(args) > 0 && args[0] == "help") {
+		printTopicsHelp()
+		return
+	}
 	c := connect(args)
 	defer c.Close()
 
@@ -1038,6 +1038,10 @@ func cmdListTopics(args []string) {
 }
 
 func cmdCreateTopic(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printCreateHelp()
+		return
+	}
 	// Check for help flag
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
@@ -1075,6 +1079,10 @@ func cmdCreateTopic(args []string) {
 }
 
 func cmdDeleteTopic(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printDeleteHelp()
+		return
+	}
 	if len(args) < 1 {
 		cli.Error("Usage: flymq-cli delete <topic>")
 		os.Exit(1)
@@ -1094,6 +1102,10 @@ func cmdDeleteTopic(args []string) {
 }
 
 func cmdTopicInfo(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printInfoHelp()
+		return
+	}
 	if len(args) < 1 {
 		cli.Error("Usage: flymq-cli info <topic>")
 		os.Exit(1)
@@ -1453,8 +1465,8 @@ func cmdSchemaProduceWithSchema(args []string) {
 	cli.Success("Message produced to %s at offset %d (schema: %s)", topic, offset, schemaName)
 }
 
-func cmdTransaction(args []string) {
-	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+func cmdTxn(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") || (len(args) > 0 && args[0] == "help") {
 		printTxnHelp()
 		return
 	}
@@ -1611,31 +1623,8 @@ func cmdHealth(args []string) {
 		cmdHealthReady(subArgs)
 	default:
 		cli.Error("Unknown health subcommand: %s", subCmd)
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  status    Show overall health status")
-		fmt.Println("  live      Check liveness probe")
-		fmt.Println("  ready     Check readiness probe")
 		os.Exit(1)
 	}
-}
-
-func printHealthHelp() {
-	cli.Header("health - Check server health status")
-	fmt.Printf("\n%s flymq-cli health <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Commands")
-	cli.Command("status", "", "Show overall health status")
-	cli.Command("live", "", "Check liveness probe")
-	cli.Command("ready", "", "Check readiness probe")
-
-	cli.Section("Options")
-	cli.Option("-h", "--health-addr", "addr", "Health API address (default: localhost:9095)")
-	cli.Option("", "--health-tls", "", "Enable TLS for health checks")
-	cli.Option("", "--health-insecure", "", "Skip TLS verification")
-
-	cli.Section("Examples")
-	cli.Example("Check if server is ready", "flymq-cli health ready")
 }
 
 func cmdHealthStatus(args []string) {
@@ -1778,26 +1767,6 @@ func cmdAdmin(args []string) {
 		cli.Error("Unknown admin subcommand: %s", subCmd)
 		os.Exit(1)
 	}
-}
-
-func printAdminHelp() {
-	cli.Header("admin - Direct Admin API access")
-	fmt.Printf("\n%s flymq-cli admin <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Commands")
-	cli.Command("cluster", "", "Show cluster information")
-	cli.Command("topics", "", "List topics via Admin API")
-	cli.Command("groups", "", "List consumer groups")
-	cli.Command("schemas", "", "List schemas via Admin API")
-
-	cli.Section("Options")
-	cli.Option("", "--admin-user", "user", "Admin username")
-	cli.Option("", "--admin-pass", "pass", "Admin password")
-	cli.Option("-a", "--admin-addr", "addr", "Admin API address (default: localhost:9094)")
-	cli.Option("", "--admin-tls", "", "Enable TLS for Admin API")
-
-	cli.Section("Examples")
-	cli.Example("List topics via Admin API", "flymq-cli admin topics --admin-user admin --admin-pass secret")
 }
 
 func cmdAdminCluster(args []string) {
@@ -2144,29 +2113,6 @@ func cmdCluster(args []string) {
 	}
 }
 
-func printClusterHelp() {
-	cli.Header("cluster - Manage cluster and partitions")
-	fmt.Printf("\n%s flymq-cli cluster <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Node Management")
-	cli.Command("status", "", "Show cluster status and health")
-	cli.Command("members", "", "List all cluster members")
-	cli.Command("info", "", "Show detailed cluster information")
-	cli.Command("join", "--peer <addr>", "Join an existing cluster")
-	cli.Command("leave", "", "Leave the cluster gracefully")
-
-	cli.Section("Partition Management")
-	cli.Command("metadata", "", "Get partition-to-node mappings")
-	cli.Command("partitions", "", "List all partition assignments")
-	cli.Command("leaders", "", "Show leader distribution across nodes")
-	cli.Command("rebalance", "", "Trigger partition rebalance")
-	cli.Command("reassign", "--topic <t> --p <n> --to <node>", "Reassign a partition")
-
-	cli.Section("Examples")
-	cli.Example("Check cluster health", "flymq-cli cluster status")
-	cli.Example("Add new node to cluster", "flymq-cli cluster join --peer node1:9093")
-}
-
 func cmdClusterStatus(args []string) {
 	adminAddr := getAdminAddr(args)
 	tlsCfg := getAdminTLSConfig(args)
@@ -2433,16 +2379,9 @@ func cmdClusterReassign(args []string) {
 
 func cmdGroups(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		cli.Error("Usage: flymq-cli groups <list|describe|reset-offsets|lag|delete> [options]")
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  list                          List all consumer groups")
-		fmt.Println("  describe <group-id>           Describe a consumer group")
-		fmt.Println("  reset-offsets <group-id>      Reset offsets for a consumer group")
-		fmt.Println("  lag <group-id>                Show consumer lag for a group")
-		fmt.Println("  delete <group-id>             Delete a consumer group")
-		os.Exit(1)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printGroupsHelp()
+		return
 	}
 
 	switch subCmd {
@@ -2695,6 +2634,10 @@ func cmdGroupsDelete(args []string) {
 // =========================================================================
 
 func cmdAuth(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printAuthHelp()
+		return
+	}
 	username := getUsername(args)
 	password := getPassword(args)
 
@@ -2731,6 +2674,10 @@ func cmdAuth(args []string) {
 }
 
 func cmdWhoAmI(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printWhoAmIHelp()
+		return
+	}
 	c := connect(args)
 	defer c.Close()
 
@@ -2764,30 +2711,27 @@ func cmdWhoAmI(args []string) {
 // =========================================================================
 
 func cmdUsers(args []string) {
-	if len(args) == 0 {
-		printUsersUsage()
-		os.Exit(1)
+	subCmd, subArgs := extractSubcommand(args)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printUsersHelp()
+		return
 	}
 
-	subcmd := args[0]
-	subargs := args[1:]
-
-	switch subcmd {
+	switch subCmd {
 	case "list":
-		cmdUsersList(subargs)
+		cmdUsersList(subArgs)
 	case "create":
-		cmdUsersCreate(subargs)
+		cmdUsersCreate(subArgs)
 	case "delete":
-		cmdUsersDelete(subargs)
+		cmdUsersDelete(subArgs)
 	case "update":
-		cmdUsersUpdate(subargs)
+		cmdUsersUpdate(subArgs)
 	case "get":
-		cmdUsersGet(subargs)
+		cmdUsersGet(subArgs)
 	case "passwd":
-		cmdUsersPasswd(subargs)
+		cmdUsersPasswd(subArgs)
 	default:
-		cli.Error("Unknown users subcommand: %s", subcmd)
-		printUsersUsage()
+		cli.Error("Unknown users subcommand: %s", subCmd)
 		os.Exit(1)
 	}
 }
@@ -2993,48 +2937,25 @@ func connectWithAuth(args []string) *client.Client {
 // =========================================================================
 
 func cmdACL(args []string) {
-	if len(args) == 0 {
-		printACLUsage()
-		os.Exit(1)
+	subCmd, subArgs := extractSubcommand(args)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printACLHelp()
+		return
 	}
 
-	subcmd := args[0]
-	subargs := args[1:]
-
-	switch subcmd {
+	switch subCmd {
 	case "list":
-		cmdACLList(subargs)
+		cmdACLList(subArgs)
 	case "get":
-		cmdACLGet(subargs)
+		cmdACLGet(subArgs)
 	case "set":
-		cmdACLSet(subargs)
+		cmdACLSet(subArgs)
 	case "delete":
-		cmdACLDelete(subargs)
+		cmdACLDelete(subArgs)
 	default:
-		cli.Error("Unknown acl subcommand: %s", subcmd)
-		printACLUsage()
+		cli.Error("Unknown acl subcommand: %s", subCmd)
 		os.Exit(1)
 	}
-}
-
-func printACLUsage() {
-	cli.Header("acl - Manage access control lists")
-	fmt.Printf("\n%s flymq-cli acl <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Commands")
-	cli.Command("list", "", "List all topic ACLs")
-	cli.Command("get", "<topic>", "Get ACL for a topic")
-	cli.Command("set", "<topic>", "Set ACL for a topic")
-	cli.Command("delete", "<topic>", "Delete ACL for a topic")
-
-	cli.Section("Options")
-	cli.Option("", "--public", "", "Make topic accessible to everyone")
-	cli.Option("", "--users", "u1,u2", "Explicitly allowed users")
-	cli.Option("", "--roles", "r1,r2", "Explicitly allowed roles")
-
-	cli.Section("Examples")
-	cli.Example("Make a topic public", "flymq-cli acl set public-events --public")
-	cli.Example("Restrict topic to specific roles", "flymq-cli acl set secure-topic --roles admin,auditor")
 }
 
 func cmdACLList(args []string) {
@@ -3144,40 +3065,21 @@ func cmdACLDelete(args []string) {
 // ============================================================================
 
 func cmdRoles(args []string) {
-	if len(args) == 0 {
-		printRolesUsage()
+	subCmd, subArgs := extractSubcommand(args)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printRolesHelp()
 		return
 	}
 
-	switch args[0] {
+	switch subCmd {
 	case "list":
-		cmdRolesList(args[1:])
+		cmdRolesList(subArgs)
 	case "get":
-		cmdRolesGet(args[1:])
-	case "help", "--help", "-h":
-		printRolesUsage()
+		cmdRolesGet(subArgs)
 	default:
-		cli.Error("Unknown roles subcommand: %s", args[0])
-		printRolesUsage()
+		cli.Error("Unknown roles subcommand: %s", subCmd)
 		os.Exit(1)
 	}
-}
-
-func printRolesUsage() {
-	cli.Header("roles - Manage RBAC roles")
-	fmt.Printf("\n%s flymq-cli roles <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Commands")
-	cli.Command("list", "", "List all available roles")
-	cli.Command("get", "<role>", "Show detailed role permissions")
-
-	cli.Section("Description")
-	fmt.Println("  Roles define sets of permissions that can be assigned to users.")
-	fmt.Println("  Built-in roles: admin, producer, consumer, guest")
-
-	cli.Section("Examples")
-	cli.Example("List all roles", "flymq-cli roles list")
-	cli.Example("Check producer permissions", "flymq-cli roles get producer")
 }
 
 func cmdRolesList(args []string) {
@@ -3287,6 +3189,197 @@ func getStringArg(args []string, flag, defaultVal string) string {
 // Command Help Functions
 // ============================================================================
 
+func printTopicsHelp() {
+	cli.Header("topics - List all topics")
+	fmt.Printf("\n%s flymq-cli topics [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Options")
+	cli.Option("-a", "--addr", "host:port", "Server address")
+
+	cli.Section("Examples")
+	cli.Example("List all topics", "flymq-cli topics")
+	cli.Example("List topics on remote server", "flymq-cli --addr remote:9092 topics")
+}
+
+func printDeleteHelp() {
+	cli.Header("delete - Delete an existing topic")
+	fmt.Printf("\n%s flymq-cli delete <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Name of the topic to delete")
+
+	cli.Section("Examples")
+	cli.Example("Delete a topic", "flymq-cli delete old-topic")
+}
+
+func printInfoHelp() {
+	cli.Header("info - Show detailed topic information")
+	fmt.Printf("\n%s flymq-cli info <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Topic name to inspect")
+
+	cli.Section("Examples")
+	cli.Example("Show info for orders topic", "flymq-cli info orders")
+}
+
+func printGroupsHelp() {
+	cli.Header("groups - Consumer group management")
+	fmt.Printf("\n%s flymq-cli groups <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("list", "", "List all consumer groups")
+	cli.SubCommand("describe", "<group-id>", "Show group members, state and assignments")
+	cli.SubCommand("lag", "<group-id>", "Show consumer lag for each partition")
+	cli.SubCommand("reset", "<group-id>", "Reset group offsets for a topic")
+	cli.SubCommand("delete", "<group-id>", "Delete a consumer group")
+
+	cli.Section("Examples")
+	cli.Example("List all groups", "flymq-cli groups list")
+	cli.Example("Check lag for 'analytics' group", "flymq-cli groups lag analytics")
+}
+
+func printUsersHelp() {
+	cli.Header("users - Manage users and permissions")
+	fmt.Printf("\n%s flymq-cli users <command> [args]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("list", "", "List all registered users")
+	cli.SubCommand("create", "<user> <pass>", "Create a new user")
+	cli.SubCommand("delete", "<user>", "Delete an existing user")
+	cli.SubCommand("update", "<user>", "Update user roles or status")
+	cli.SubCommand("get", "<user>", "Show detailed user information")
+	cli.SubCommand("passwd", "<user>", "Change user password")
+
+	cli.Section("Examples")
+	cli.Example("Create a new admin user", "flymq-cli users create admin secret --roles admin")
+	cli.Example("List all users", "flymq-cli users list")
+}
+
+func printRolesHelp() {
+	cli.Header("roles - Manage RBAC roles")
+	fmt.Printf("\n%s flymq-cli roles <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("list", "", "List all available roles")
+	cli.SubCommand("get", "<role>", "Show detailed role permissions")
+
+	cli.Section("Examples")
+	cli.Example("List all roles", "flymq-cli roles list")
+}
+
+func printACLHelp() {
+	cli.Header("acl - Manage access control lists")
+	fmt.Printf("\n%s flymq-cli acl <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("list", "", "List all topic ACLs")
+	cli.SubCommand("get", "<topic>", "Get ACL for a specific topic")
+	cli.SubCommand("set", "<topic>", "Set ACL for a topic")
+	cli.SubCommand("delete", "<topic>", "Delete ACL for a topic")
+
+	cli.Section("Examples")
+	cli.Example("Make topic public", "flymq-cli acl set events --public")
+}
+
+func printAuditHelp() {
+	cli.Header("audit - Query and export audit logs")
+	fmt.Printf("\n%s flymq-cli audit <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("list", "", "List recent audit events")
+	cli.SubCommand("query", "", "Advanced query for audit events")
+	cli.SubCommand("tail", "", "Stream audit events in real-time")
+	cli.SubCommand("export", "", "Export audit logs to JSON/CSV")
+
+	cli.Section("Examples")
+	cli.Example("Tail audit logs", "flymq-cli audit tail")
+}
+
+func printClusterHelp() {
+	cli.Header("cluster - Cluster and partition management")
+	fmt.Printf("\n%s flymq-cli cluster <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Node Management")
+	cli.SubCommand("status", "", "Show cluster status and health")
+	cli.SubCommand("members", "", "List all cluster nodes")
+	cli.SubCommand("info", "", "Show detailed cluster information")
+	cli.SubCommand("join", "--peer <addr>", "Join an existing cluster")
+	cli.SubCommand("leave", "", "Leave the cluster gracefully")
+
+	cli.Section("Partition Management")
+	cli.SubCommand("metadata", "", "Get partition-to-node mappings")
+	cli.SubCommand("partitions", "", "List all partition assignments")
+	cli.SubCommand("leaders", "", "Show leader distribution across nodes")
+	cli.SubCommand("rebalance", "", "Trigger partition leader rebalancing")
+	cli.SubCommand("reassign", "--topic <t> --p <n> --to <node>", "Reassign a partition")
+
+	cli.Section("Examples")
+	cli.Example("Check cluster status", "flymq-cli cluster status")
+	cli.Example("Join existing cluster", "flymq-cli cluster join --peer node1:9093")
+}
+
+func printAdminHelp() {
+	cli.Header("admin - Direct Admin API access")
+	fmt.Printf("\n%s flymq-cli admin <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("cluster", "", "Show cluster information via Admin API")
+	cli.SubCommand("topics", "", "List topics with detailed metadata")
+	cli.SubCommand("groups", "", "List consumer groups and their states")
+	cli.SubCommand("schemas", "", "List all registered schemas")
+
+	cli.Section("Options")
+	cli.Option("", "--admin-addr", "addr", "Admin API address (default: localhost:9096)")
+	cli.Option("", "--admin-tls", "", "Enable TLS for Admin API")
+
+	cli.Section("Examples")
+	cli.Example("Check cluster via Admin API", "flymq-cli admin cluster")
+}
+
+func printHealthHelp() {
+	cli.Header("health - Check server health status")
+	fmt.Printf("\n%s flymq-cli health <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.SubCommand("status", "", "Show overall health status")
+	cli.SubCommand("live", "", "Check liveness probe")
+	cli.SubCommand("ready", "", "Check readiness probe")
+
+	cli.Section("Options")
+	cli.Option("-h", "--health-addr", "addr", "Health API address (default: localhost:9095)")
+
+	cli.Section("Examples")
+	cli.Example("Check if server is ready", "flymq-cli health ready")
+}
+
+func printAuthHelp() {
+	cli.Header("auth - Authenticate and save credentials")
+	fmt.Printf("\n%s flymq-cli auth --username <user> --password <pass>\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Description")
+	fmt.Println("  Authenticates with the FlyMQ server and saves credentials to ~/.flymq/credentials.")
+	fmt.Println("  Subsequent commands will use these credentials automatically.")
+
+	cli.Section("Options")
+	cli.Option("-u", "--username", "user", "Username")
+	cli.Option("-P", "--password", "pass", "Password")
+
+	cli.Section("Examples")
+	cli.Example("Login to server", "flymq-cli auth -u admin -P secret")
+}
+
+func printWhoAmIHelp() {
+	cli.Header("whoami - Display current authenticated user")
+	fmt.Printf("\n%s flymq-cli whoami [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Description")
+	fmt.Println("  Shows the current authentication status, username, and assigned roles/permissions.")
+
+	cli.Section("Examples")
+	cli.Example("Check current user", "flymq-cli whoami")
+}
+
 func printProduceHelp() {
 	cli.Header("produce - Send a message to a topic")
 	fmt.Printf("\n%s flymq-cli produce <topic> <message> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
@@ -3389,59 +3482,23 @@ func printCreateHelp() {
 // ============================================================================
 
 func cmdAudit(args []string) {
-	if len(args) == 0 {
-		printAuditUsage()
-		os.Exit(1)
+	subCmd, subArgs := extractSubcommand(args)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printAuditHelp()
+		return
 	}
 
-	subcmd := args[0]
-	subargs := args[1:]
-
-	switch subcmd {
+	switch subCmd {
 	case "list", "query":
-		cmdAuditQuery(subargs)
+		cmdAuditQuery(subArgs)
 	case "tail":
-		runAuditTail(subargs, "", "", "", "", "")
+		runAuditTail(subArgs, "", "", "", "", "")
 	case "export":
-		cmdAuditExport(subargs)
-	case "help", "--help", "-h":
-		printAuditUsage()
+		cmdAuditExport(subArgs)
 	default:
-		cli.Error("Unknown audit subcommand: %s", subcmd)
-		printAuditUsage()
+		cli.Error("Unknown audit subcommand: %s", subCmd)
 		os.Exit(1)
 	}
-}
-
-func printAuditUsage() {
-	cli.Header("audit - Query and export audit logs")
-	fmt.Printf("\n%s flymq-cli audit <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
-
-	cli.Section("Commands")
-	cli.Command("list", "", "List recent audit events")
-	cli.Command("query", "", "Query audit events with filters")
-	cli.Command("tail", "", "Tail audit events in real-time")
-	cli.Command("export", "", "Export audit events to file")
-
-	cli.Section("Query Options")
-	cli.Option("", "--user", "username", "Filter by user")
-	cli.Option("", "--resource", "resource", "Filter by resource (topic, user, etc.)")
-	cli.Option("", "--type", "type", "Filter by event type (e.g., auth.success)")
-	cli.Option("", "--result", "result", "Filter by result (success, failure, denied)")
-	cli.Option("", "--start", "RFC3339", "Start time (e.g., 2026-01-01T00:00:00Z)")
-	cli.Option("", "--end", "RFC3339", "End time")
-	cli.Option("", "--search", "text", "Full-text search")
-	cli.Option("", "--limit", "n", "Maximum events to return (default: 100)")
-	cli.Option("-f", "--follow", "", "Follow/tail audit events")
-
-	cli.Section("Export Options")
-	cli.Option("", "--format", "json|csv", "Export format (default: json)")
-	cli.Option("", "--output", "file", "Output file (default: stdout)")
-
-	cli.Section("Examples")
-	cli.Example("List recent audit events", "flymq-cli audit list")
-	cli.Example("Query auth failures", "flymq-cli audit query --type auth.failure")
-	cli.Example("Export events to CSV", "flymq-cli audit export --user admin --format csv --output audit.csv")
 }
 
 func cmdAuditQuery(args []string) {
@@ -3708,12 +3765,9 @@ func printExploreHelp() {
 }
 
 func cmdExplore(args []string) {
-	// Check for help flag
-	for _, arg := range args {
-		if arg == "--help" || arg == "-h" {
-			printExploreHelp()
-			return
-		}
+	if hasFlag(args, "--help") || hasFlag(args, "-h") || (len(args) > 0 && args[0] == "help") {
+		printExploreHelp()
+		return
 	}
 
 	c := connect(args)
