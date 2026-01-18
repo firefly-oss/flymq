@@ -531,6 +531,9 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
     "tls_enabled": true,
     "tls_cert_file": "/etc/flymq/server.crt",
     "tls_key_file": "/etc/flymq/server.key",
+    "tls_ca_file": "/etc/flymq/ca.crt",
+    "tls_client_auth": "require",  // none, request, require
+    "tls_insecure": false,
     "encryption_enabled": true
     // Note: encryption_key is set via FLYMQ_ENCRYPTION_KEY env var (never in config)
   },
@@ -619,6 +622,12 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
 | `FLYMQ_LOG_LEVEL` | Log level (debug, info, warn, error) | `info` |
 | `FLYMQ_LOG_JSON` | Output logs in JSON format | `true` |
 | `FLYMQ_TLS_ENABLED` | Enable TLS | `false` |
+| `FLYMQ_TLS_CERT_FILE` | TLS certificate file path | - |
+| `FLYMQ_TLS_KEY_FILE` | TLS private key file path | - |
+| `FLYMQ_TLS_CA_FILE` | TLS CA certificate file path | - |
+| `FLYMQ_TLS_SERVER_NAME` | Expected server name in certificate | - |
+| `FLYMQ_TLS_INSECURE` | Skip certificate verification | `false` |
+| `FLYMQ_TLS_CLIENT_AUTH` | Require client certificates | `false` |
 | `FLYMQ_ENCRYPTION_ENABLED` | Enable data encryption | `false` |
 | `FLYMQ_ENCRYPTION_KEY` | AES-256 encryption key (64 hex chars) | - |
 | `FLYMQ_AUTH_ENABLED` | Enable authentication | `false` |
@@ -712,7 +721,62 @@ openssl req -new -x509 -days 365 -key ca.key -out ca.crt
 openssl genrsa -out server.key 2048
 openssl req -new -key server.key -out server.csr
 openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key -out server.crt
+
+# Generate client certificate (for mutual TLS)
+openssl genrsa -out client.key 2048
+openssl req -new -key client.key -out client.csr
+openssl x509 -req -days 365 -in client.csr -CA ca.crt -CAkey ca.key -out client.crt
 ```
+
+**CLI TLS Options:**
+
+```bash
+# Connect with TLS (secure)
+flymq-cli --tls --ca-cert /path/to/ca.crt produce my-topic "Hello"
+
+# Connect with client certificates (mutual TLS)
+flymq-cli --tls --ca-cert /path/to/ca.crt \
+          --cert /path/to/client.crt --key /path/to/client.key \
+          produce my-topic "Hello"
+
+# Connect with insecure TLS (skip certificate verification)
+flymq-cli --tls --insecure produce my-topic "Hello"
+
+# Set server name for certificate validation
+flymq-cli --tls --ca-cert /path/to/ca.crt --server-name flymq-server \
+          produce my-topic "Hello"
+```
+
+**Environment Variables for TLS:**
+
+```bash
+export FLYMQ_TLS_ENABLED=true
+export FLYMQ_TLS_CA_CERT=/path/to/ca.crt
+export FLYMQ_TLS_CERT=/path/to/client.crt
+export FLYMQ_TLS_KEY=/path/to/client.key
+export FLYMQ_TLS_SERVER_NAME=flymq-server
+export FLYMQ_TLS_INSECURE=false  # Set to true to skip verification
+
+# Now CLI commands use TLS automatically
+flymq-cli produce my-topic "Hello"
+```
+
+**TLS Security Levels:**
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| **No TLS** | Plain text communication | Development only |
+| **TLS (Server Auth)** | Server certificate validation | Production (basic) |
+| **TLS + CA** | Custom CA certificate | Private PKI |
+| **Mutual TLS** | Client + server certificates | High security |
+| **Insecure TLS** | TLS without certificate validation | Testing/debugging |
+
+**Certificate Validation:**
+
+- **Secure (default)**: Validates server certificate against CA
+- **Insecure**: Skips certificate validation (use only for testing)
+- **Custom CA**: Uses provided CA certificate for validation
+- **System CA**: Uses operating system's certificate store
 
 ### Data-at-Rest Encryption
 
@@ -978,6 +1042,34 @@ if err != nil {
 }
 defer c.Close()
 
+// TLS Configuration
+// Secure TLS with certificate verification
+c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
+    TLS: &client.TLSConfig{
+        Enabled:    true,
+        CertFile:   "/path/to/client.crt",
+        KeyFile:    "/path/to/client.key",
+        CAFile:     "/path/to/ca.crt",
+        ServerName: "flymq-server", // Must match certificate
+    },
+})
+
+// Insecure TLS (skip certificate verification)
+c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
+    TLS: &client.TLSConfig{
+        Enabled:            true,
+        InsecureSkipVerify: true, // Skip cert verification
+    },
+})
+
+// System CA certificates
+c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
+    TLS: &client.TLSConfig{
+        Enabled: true,
+        // Uses system CA store automatically
+    },
+})
+
 // Authenticate (if auth is enabled)
 err = c.Authenticate("admin", "password")
 
@@ -1034,12 +1126,18 @@ meta, err = c.ProduceObject("users", User{ID: 1, Name: "Alice"})
 // var user User
 // err = consumer.Decode(msg.Value, &user)
 
-// With authentication and encryption
+// With authentication, TLS, and server-side encryption
 c, err = client.NewClientWithOptions("localhost:9092", client.ClientOptions{
     Username:      "admin",
     Password:      "password",
-    EncryptionKey: "your-64-char-hex-key",
+    TLS: &client.TLSConfig{
+        Enabled:    true,
+        CertFile:   "/etc/flymq/client.crt",
+        KeyFile:    "/etc/flymq/client.key",
+        CAFile:     "/etc/flymq/ca.crt",
+    },
 })
+// Note: Data-at-rest encryption is configured on the server with FLYMQ_ENCRYPTION_KEY
 
 // User management (admin only)
 users, err := c.ListUsers()
@@ -1114,17 +1212,58 @@ print(f"Key: {msg.decode_key()}, Value: {msg.decode()}")
 client.close()
 ```
 
-**With Authentication and Encryption:**
+**TLS Configuration:**
 
 ```python path=null start=null
 from pyflymq import connect
+from pyflymq.tls import TLSConfig
+
+# Secure TLS with certificate verification
+client = connect(
+    "localhost:9092",
+    tls=TLSConfig(
+        enabled=True,
+        cert_file="/path/to/client.crt",
+        key_file="/path/to/client.key",
+        ca_file="/path/to/ca.crt",
+        server_name="flymq-server"  # Must match certificate
+    )
+)
+
+# Insecure TLS (skip certificate verification)
+client = connect(
+    "localhost:9092",
+    tls=TLSConfig(
+        enabled=True,
+        insecure_skip_verify=True  # Skip cert verification
+    )
+)
+
+# System CA certificates
+client = connect(
+    "localhost:9092",
+    tls=TLSConfig(enabled=True)  # Uses system CA store
+)
+```
+
+**With Authentication, TLS, and Server-Side Encryption:**
+
+```python path=null start=null
+from pyflymq import connect
+from pyflymq.tls import TLSConfig
 
 client = connect(
     "localhost:9092",
     username="admin",
     password="password",
-    encryption_key="your-64-char-hex-key"  # AES-256-GCM
+    tls=TLSConfig(
+        enabled=True,
+        cert_file="/etc/flymq/client.crt",
+        key_file="/etc/flymq/client.key",
+        ca_file="/etc/flymq/ca.crt"
+    )
 )
+# Note: Data-at-rest encryption is configured on the server with FLYMQ_ENCRYPTION_KEY
 ```
 
 **Reactive Streams (RxPY):**
@@ -1182,6 +1321,47 @@ Add to your `pom.xml`:
 </dependency>
 ```
 
+**TLS Configuration:**
+
+```java path=null start=null
+import com.firefly.flymq.FlyMQClient;
+import com.firefly.flymq.config.TLSConfig;
+
+// Secure TLS with certificate verification
+TLSConfig tlsConfig = TLSConfig.builder()
+    .enabled(true)
+    .certFile("/path/to/client.crt")
+    .keyFile("/path/to/client.key")
+    .caFile("/path/to/ca.crt")
+    .serverName("flymq-server")  // Must match certificate
+    .build();
+
+try (FlyMQClient client = FlyMQClient.builder()
+        .address("localhost:9092")
+        .tls(tlsConfig)
+        .build()) {
+    // Use client...
+}
+
+// Insecure TLS (skip certificate verification)
+TLSConfig insecureTLS = TLSConfig.builder()
+    .enabled(true)
+    .insecureSkipVerify(true)  // Skip cert verification
+    .build();
+
+try (FlyMQClient client = FlyMQClient.builder()
+        .address("localhost:9092")
+        .tls(insecureTLS)
+        .build()) {
+    // Use client...
+}
+
+// System CA certificates
+TLSConfig systemCA = TLSConfig.builder()
+    .enabled(true)  // Uses system CA store automatically
+    .build();
+```
+
 **Quick Start (Kafka-like API):**
 
 ```java path=null start=null
@@ -1228,6 +1408,24 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
     // Avro Support
     String schema = "{\"type\":\"record\",\"name\":\"user\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}";
     client.setSerializer(Serdes.AvroSerializer(schema));
+
+    // With authentication, TLS, and server-side encryption
+    TLSConfig tlsConfig = TLSConfig.builder()
+        .enabled(true)
+        .certFile("/etc/flymq/client.crt")
+        .keyFile("/etc/flymq/client.key")
+        .caFile("/etc/flymq/ca.crt")
+        .build();
+
+    try (FlyMQClient secureClient = FlyMQClient.builder()
+            .address("localhost:9092")
+            .username("admin")
+            .password("password")
+            .tls(tlsConfig)
+            .build()) {
+        // Use secure client...
+    }
+    // Note: Data-at-rest encryption is configured on the server with FLYMQ_ENCRYPTION_KEY
     client.setDeserializer(Serdes.AvroDeserializer(schema));
     client.produce("users", Map.of("id", 1, "name", "Alice"));
 
