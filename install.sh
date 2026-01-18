@@ -2122,6 +2122,345 @@ print_post_install() {
 
     echo -e "  ${DIM}Docs: https://github.com/firefly-oss/flymq${RESET}"
     echo ""
+    
+    # Prompt for actions
+    prompt_post_install_actions "$prefix" "$config_dir"
+}
+
+# =============================================================================
+# Post-Install Actions
+# =============================================================================
+
+save_installation_summary() {
+    local prefix="$1"
+    local config_dir="$2"
+    local summary_file="$config_dir/INSTALLATION_SUMMARY.txt"
+    
+    print_step "Saving installation summary"
+    echo ""
+    
+    cat > "$summary_file" << EOF
+FlyMQ Installation Summary
+==========================
+Generated: $(date)
+Version: ${FLYMQ_VERSION}
+
+INSTALLATION PATHS
+------------------
+Binaries:       $prefix/bin
+Configuration:  $config_dir/flymq.json
+Data Directory: ${CFG_DATA_DIR}
+
+DEPLOYMENT
+----------
+Mode:           ${CFG_DEPLOYMENT_MODE}
+Bind Address:   ${CFG_BIND_ADDR}
+Node ID:        ${CFG_NODE_ID}
+EOF
+
+    if [[ "$CFG_DEPLOYMENT_MODE" == "cluster" ]]; then
+        cat >> "$summary_file" << EOF
+Cluster Address: ${CFG_ADVERTISE_CLUSTER}
+Peers:           ${CFG_CLUSTER_PEERS:-none (bootstrap mode)}
+EOF
+    fi
+
+    cat >> "$summary_file" << EOF
+
+SECURITY
+--------
+TLS:            ${CFG_TLS_ENABLED}
+EOF
+
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        cat >> "$summary_file" << EOF
+TLS Cert:       ${CFG_TLS_CERT_FILE}
+TLS Key:        ${CFG_TLS_KEY_FILE}
+EOF
+    fi
+
+    cat >> "$summary_file" << EOF
+Encryption:     ${CFG_ENCRYPTION_ENABLED}
+Authentication: ${CFG_AUTH_ENABLED}
+EOF
+
+    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+        cat >> "$summary_file" << EOF
+
+CREDENTIALS (SAVE SECURELY!)
+-----------------------------
+Admin Username: ${CFG_AUTH_ADMIN_USER}
+Admin Password: ${CFG_AUTH_ADMIN_PASS}
+EOF
+    fi
+
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        cat >> "$summary_file" << EOF
+
+ENCRYPTION KEY (SAVE SECURELY!)
+--------------------------------
+${CFG_ENCRYPTION_KEY}
+
+IMPORTANT: Export this key before starting FlyMQ:
+export FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}
+EOF
+    fi
+
+    cat >> "$summary_file" << EOF
+
+ENDPOINTS
+---------
+Client:         localhost${CFG_BIND_ADDR}
+EOF
+
+    [[ "$CFG_METRICS_ENABLED" == "true" ]] && echo "Metrics:        http://localhost${CFG_METRICS_ADDR}/metrics" >> "$summary_file"
+    [[ "$CFG_HEALTH_ENABLED" == "true" ]] && echo "Health:         http://localhost${CFG_HEALTH_ADDR}/health" >> "$summary_file"
+    [[ "$CFG_ADMIN_ENABLED" == "true" ]] && echo "Admin API:      http://localhost${CFG_ADMIN_ADDR}/api/v1" >> "$summary_file"
+    [[ "$CFG_GRPC_ENABLED" == "true" ]] && echo "gRPC:           localhost${CFG_GRPC_ADDR}" >> "$summary_file"
+    [[ "$CFG_WS_ENABLED" == "true" ]] && echo "WebSocket:      localhost${CFG_WS_ADDR}" >> "$summary_file"
+    [[ "$CFG_MQTT_ENABLED" == "true" ]] && echo "MQTT:           localhost${CFG_MQTT_ADDR}" >> "$summary_file"
+
+    cat >> "$summary_file" << EOF
+
+QUICK START COMMANDS
+--------------------
+EOF
+
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        cat >> "$summary_file" << EOF
+# Export encryption key (REQUIRED)
+export FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}
+
+EOF
+    fi
+
+    cat >> "$summary_file" << EOF
+# Start server
+flymq --config $config_dir/flymq.json
+
+# Send a message
+EOF
+
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]]; then
+            echo "flymq-cli --tls --insecure produce my-topic \"Hello World\"" >> "$summary_file"
+        else
+            echo "flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} produce my-topic \"Hello World\"" >> "$summary_file"
+        fi
+    else
+        echo "flymq-cli produce my-topic \"Hello World\"" >> "$summary_file"
+    fi
+
+    cat >> "$summary_file" << EOF
+
+# Subscribe to messages
+EOF
+
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]]; then
+            echo "flymq-cli --tls --insecure subscribe my-topic" >> "$summary_file"
+        else
+            echo "flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} subscribe my-topic" >> "$summary_file"
+        fi
+    else
+        echo "flymq-cli subscribe my-topic" >> "$summary_file"
+    fi
+
+    chmod 600 "$summary_file"
+    print_success "Saved installation summary: ${CYAN}$summary_file${RESET}"
+    echo ""
+}
+
+prompt_post_install_actions() {
+    local prefix="$1"
+    local config_dir="$2"
+    
+    echo -e "  ${CYAN}${BOLD}NEXT STEPS${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Would you like to:${RESET}"
+    echo ""
+    
+    if prompt_yes_no "1. Save installation summary to file" "y"; then
+        save_installation_summary "$prefix" "$config_dir"
+    fi
+    
+    echo ""
+    if prompt_yes_no "2. Generate environment variables file" "y"; then
+        save_env_file "$config_dir"
+    fi
+    
+    echo ""
+    if prompt_yes_no "3. Start FlyMQ now" "n"; then
+        start_flymq "$config_dir"
+    else
+        echo ""
+        print_info "To start FlyMQ later, run:"
+        if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+            echo -e "  ${CYAN}export FLYMQ_ENCRYPTION_KEY=${CFG_ENCRYPTION_KEY}${RESET}"
+        fi
+        echo -e "  ${CYAN}flymq --config $config_dir/flymq.json${RESET}"
+    fi
+}
+
+save_env_file() {
+    local config_dir="$1"
+    local env_file="$config_dir/flymq-env.sh"
+    
+    print_step "Generating environment file"
+    echo ""
+    
+    cat > "$env_file" << 'EOF'
+#!/bin/bash
+# FlyMQ Environment Variables
+# Source this file before starting FlyMQ: source flymq-env.sh
+
+EOF
+
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        cat >> "$env_file" << EOF
+# Encryption Key (REQUIRED)
+export FLYMQ_ENCRYPTION_KEY="${CFG_ENCRYPTION_KEY}"
+
+EOF
+    fi
+
+    cat >> "$env_file" << EOF
+# Optional: Override config file settings
+# export FLYMQ_BIND_ADDR="${CFG_BIND_ADDR}"
+# export FLYMQ_DATA_DIR="${CFG_DATA_DIR}"
+# export FLYMQ_LOG_LEVEL="${CFG_LOG_LEVEL}"
+
+EOF
+
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        cat >> "$env_file" << EOF
+# TLS Configuration
+# export FLYMQ_TLS_ENABLED="true"
+# export FLYMQ_TLS_CERT_FILE="${CFG_TLS_CERT_FILE}"
+# export FLYMQ_TLS_KEY_FILE="${CFG_TLS_KEY_FILE}"
+
+EOF
+    fi
+
+    cat >> "$env_file" << EOF
+echo "FlyMQ environment variables loaded"
+EOF
+
+    chmod 600 "$env_file"
+    print_success "Saved environment file: ${CYAN}$env_file${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Usage:${RESET}"
+    echo -e "  ${CYAN}source $env_file${RESET}"
+    echo -e "  ${CYAN}flymq --config $config_dir/flymq.json${RESET}"
+    echo ""
+}
+
+start_flymq() {
+    local config_dir="$1"
+    
+    print_step "Starting FlyMQ"
+    echo ""
+    
+    # Export encryption key if needed
+    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+        export FLYMQ_ENCRYPTION_KEY="${CFG_ENCRYPTION_KEY}"
+        print_info "Encryption key exported"
+    fi
+    
+    # Check if flymq is in PATH
+    local flymq_bin="$PREFIX/bin/flymq"
+    if [[ ! -x "$flymq_bin" ]]; then
+        print_error "flymq binary not found at $flymq_bin"
+        return 1
+    fi
+    
+    print_info "Starting FlyMQ..."
+    echo ""
+    
+    # Start in background
+    "$flymq_bin" --config "$config_dir/flymq.json" > "$config_dir/flymq.log" 2>&1 &
+    local pid=$!
+    
+    # Save PID immediately
+    echo $pid > "$config_dir/flymq.pid"
+    
+    # Show spinner while waiting for startup
+    local max_wait=10
+    local elapsed=0
+    
+    while [[ $elapsed -lt $max_wait ]]; do
+        if ! kill -0 $pid 2>/dev/null; then
+            echo ""
+            print_error "FlyMQ process died. Check logs: $config_dir/flymq.log"
+            tail -20 "$config_dir/flymq.log"
+            return 1
+        fi
+        
+        # Check if server is responding
+        if command -v flymq-cli &> /dev/null; then
+            if flymq-cli health live &> /dev/null 2>&1; then
+                echo ""
+                print_success "FlyMQ started successfully (PID: $pid)"
+                echo ""
+                echo -e "  ${BOLD}Status:${RESET}  ${GREEN}Running${RESET}"
+                echo -e "  ${BOLD}PID:${RESET}     ${CYAN}$pid${RESET}"
+                echo -e "  ${BOLD}Logs:${RESET}    ${CYAN}$config_dir/flymq.log${RESET}"
+                echo -e "  ${BOLD}Stop:${RESET}    ${CYAN}kill $pid${RESET}"
+                echo ""
+                
+                # Quick health check
+                sleep 1
+                if flymq-cli health ready &> /dev/null 2>&1; then
+                    print_success "Health check passed - FlyMQ is ready!"
+                    echo ""
+                    print_info "Try it out:"
+                    
+                    # Build CLI command based on TLS and Auth settings
+                    local cli_flags=""
+                    
+                    # Add TLS flags
+                    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+                        if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]]; then
+                            cli_flags="--tls --insecure"
+                        else
+                            cli_flags="--tls --ca-cert ${CFG_TLS_CERT_FILE}"
+                        fi
+                    fi
+                    
+                    # Add auth flags
+                    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
+                        cli_flags="${cli_flags} -u ${CFG_AUTH_ADMIN_USER} -P '${CFG_AUTH_ADMIN_PASS}'"
+                    fi
+                    
+                    # Show commands
+                    echo -e "  ${CYAN}flymq-cli ${cli_flags} produce test \"Hello FlyMQ!\"${RESET}"
+                    echo -e "  ${CYAN}flymq-cli ${cli_flags} subscribe test${RESET}"
+                else
+                    print_warning "Server started but not fully ready yet"
+                fi
+                return 0
+            fi
+        fi
+        
+        # Show spinner
+        local spinner_chars="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+        local i=$((elapsed % 10))
+        printf "\r  ${CYAN}${spinner_chars:$i:1}${RESET} Waiting for FlyMQ to start... ${elapsed}s"
+        
+        sleep 1
+        ((elapsed++))
+    done
+    
+    echo ""
+    print_warning "FlyMQ started but not responding after ${max_wait}s"
+    echo ""
+    echo -e "  ${BOLD}PID:${RESET}  ${CYAN}$pid${RESET}"
+    echo -e "  ${BOLD}Logs:${RESET} ${CYAN}$config_dir/flymq.log${RESET}"
+    echo ""
+    print_info "Check logs for details:"
+    echo -e "  ${CYAN}tail -f $config_dir/flymq.log${RESET}"
+    
+    return 0
 }
 
 # =============================================================================
