@@ -157,6 +157,7 @@ from .types import (
     SchemaInfo,
     WhoAmIResponse,
 )
+from .tls import TLSConfig
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -186,6 +187,7 @@ class FlyMQClient:
         bootstrap_servers: str | list[str] = "localhost:9092",
         *,
         config: ClientConfig | None = None,
+        tls: TLSConfig | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -194,6 +196,7 @@ class FlyMQClient:
         Args:
             bootstrap_servers: Comma-separated servers or list of servers.
             config: Optional ClientConfig object.
+            tls: Optional TLSConfig for secure connections.
             **kwargs: Override config options (tls_enabled, connect_timeout_ms, etc.)
         """
         if config is None:
@@ -204,6 +207,15 @@ class FlyMQClient:
                 if hasattr(config, key):
                     setattr(config, key, value)
 
+        # Apply TLS config if provided
+        if tls:
+            config.tls_enabled = tls.enabled
+            config.tls_cert_file = tls.cert_file
+            config.tls_key_file = tls.key_file
+            config.tls_ca_file = tls.ca_file
+            config.tls_server_name = tls.server_name
+            config.tls_insecure_skip_verify = tls.insecure_skip_verify
+
         self._config = config
         self._servers = config.get_servers()
         self._current_server_idx = 0
@@ -211,17 +223,11 @@ class FlyMQClient:
         self._ssl_context: ssl.SSLContext | None = None
         self._lock = threading.RLock()
         self._closed = False
-        self._encryptor = None
         self._authenticated = False
         self._username: str | None = None
 
         if config.tls_enabled:
             self._setup_tls()
-
-        # Setup encryption if key provided
-        if config.encryption_key:
-            from .crypto import Encryptor
-            self._encryptor = Encryptor.from_hex_key(config.encryption_key)
 
         self._connect()
 
@@ -234,11 +240,15 @@ class FlyMQClient:
         self._ssl_context = ssl.create_default_context()
 
         if self._config.tls_insecure_skip_verify:
+            # Insecure mode: skip all certificate verification
             self._ssl_context.check_hostname = False
             self._ssl_context.verify_mode = ssl.CERT_NONE
         elif self._config.tls_ca_file:
+            # Custom CA: load CA certificate for verification
             self._ssl_context.load_verify_locations(self._config.tls_ca_file)
+        # else: Use system CA store (default)
 
+        # Load client certificate for mutual TLS
         if self._config.tls_cert_file and self._config.tls_key_file:
             self._ssl_context.load_cert_chain(
                 self._config.tls_cert_file, self._config.tls_key_file
@@ -291,7 +301,9 @@ class FlyMQClient:
                 sock.connect(sockaddr)
 
                 if self._ssl_context:
-                    sock = self._ssl_context.wrap_socket(sock, server_hostname=host)
+                    # Use server_name if provided, otherwise use host
+                    server_hostname = self._config.tls_server_name or host
+                    sock = self._ssl_context.wrap_socket(sock, server_hostname=server_hostname)
 
                 self._sock = sock
                 return  # Success!
@@ -574,15 +586,10 @@ class FlyMQClient:
             >>> # Explicit partition selection
             >>> meta = client.produce("events", b"data", partition=2)
         """
-        import gzip
         if isinstance(data, str):
             data = data.encode("utf-8")
         if isinstance(key, str):
             key = key.encode("utf-8")
-
-        # Encrypt data if encryptor is configured
-        if self._encryptor:
-            data = self._encryptor.encrypt(data)
 
         # Use binary protocol for maximum performance
         req = BinaryProduceRequest(
@@ -690,13 +697,6 @@ class FlyMQClient:
 
         data = response.value
         key = response.key if response.key else None
-
-        # Decrypt data if encryptor is configured
-        if self._encryptor and data:
-            try:
-                data = self._encryptor.decrypt(data)
-            except Exception:
-                pass  # Data may not be encrypted
 
         return ConsumedMessage(
             topic=topic,
@@ -2270,8 +2270,12 @@ def connect(
     *,
     username: str | None = None,
     password: str | None = None,
+    tls: TLSConfig | None = None,
     tls_enabled: bool = False,
     tls_ca_file: str | None = None,
+    tls_cert_file: str | None = None,
+    tls_key_file: str | None = None,
+    tls_server_name: str | None = None,
     tls_insecure_skip_verify: bool = False,
     **kwargs: Any,
 ) -> FlyMQClient:
@@ -2288,8 +2292,12 @@ def connect(
             - List: ["server1:9092", "server2:9092"]
         username: Optional username for authentication.
         password: Optional password for authentication.
-        tls_enabled: Enable TLS encryption.
+        tls: TLSConfig object for secure connections (recommended).
+        tls_enabled: Enable TLS encryption (alternative to tls parameter).
         tls_ca_file: Path to CA certificate file for TLS verification.
+        tls_cert_file: Path to client certificate file (for mutual TLS).
+        tls_key_file: Path to client private key file (for mutual TLS).
+        tls_server_name: Expected server name in certificate (for SNI).
         tls_insecure_skip_verify: Skip TLS certificate verification (not for production).
         **kwargs: Additional configuration options.
 
@@ -2308,8 +2316,25 @@ def connect(
         # With authentication
         >>> client = connect("localhost:9092", username="admin", password="secret")
 
-        # With TLS
+        # With TLS (recommended approach)
+        >>> from pyflymq import TLSConfig
+        >>> tls = TLSConfig(enabled=True, ca_file="ca.crt")
+        >>> client = connect("localhost:9093", tls=tls)
+
+        # With TLS (alternative approach)
         >>> client = connect("localhost:9093", tls_enabled=True, tls_ca_file="ca.crt")
+
+        # Insecure TLS (testing only)
+        >>> client = connect("localhost:9093", tls_enabled=True, tls_insecure_skip_verify=True)
+
+        # Mutual TLS
+        >>> tls = TLSConfig(
+        ...     enabled=True,
+        ...     cert_file="client.crt",
+        ...     key_file="client.key",
+        ...     ca_file="ca.crt"
+        ... )
+        >>> client = connect("localhost:9093", tls=tls)
 
         # Multiple servers for high availability
         >>> client = connect(["server1:9092", "server2:9092", "server3:9092"])
@@ -2319,12 +2344,21 @@ def connect(
         >>> with connect() as client:
         ...     client.produce("topic", b"message")
     """
+    # Build TLS config if not provided
+    if tls is None and (tls_enabled or tls_ca_file or tls_cert_file):
+        tls = TLSConfig(
+            enabled=tls_enabled,
+            ca_file=tls_ca_file,
+            cert_file=tls_cert_file,
+            key_file=tls_key_file,
+            server_name=tls_server_name,
+            insecure_skip_verify=tls_insecure_skip_verify,
+        )
+    
     return FlyMQClient(
         servers,
+        tls=tls,
         username=username,
         password=password,
-        tls_enabled=tls_enabled,
-        tls_ca_file=tls_ca_file,
-        tls_insecure_skip_verify=tls_insecure_skip_verify,
         **kwargs,
     )

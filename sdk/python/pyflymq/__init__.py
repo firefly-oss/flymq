@@ -87,6 +87,7 @@ from .client import (
     Transaction,
     connect,
 )
+from .tls import TLSConfig
 from .binary import RecordMetadata
 from .consumer import Consumer, ConsumerGroup
 from .crypto import Encryptor, generate_key, validate_key
@@ -168,6 +169,8 @@ __all__ = [
     "RecordMetadata",  # Kafka-like metadata for produced records
     "Transaction",
     "connect",
+    # TLS
+    "TLSConfig",
     # Producer
     "Producer",
     "AsyncProducer",

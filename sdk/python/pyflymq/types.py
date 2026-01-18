@@ -200,14 +200,12 @@ class ClientConfig:
     tls_ca_file: str | None = None
     tls_cert_file: str | None = None
     tls_key_file: str | None = None
+    tls_server_name: str | None = None
     tls_insecure_skip_verify: bool = False
 
     # Authentication settings
     username: str | None = None
     password: str | None = None
-
-    # Encryption settings
-    encryption_key: str | None = None  # 64-char hex key for AES-256-GCM
 
     # Client identification
     client_id: str = "pyflymq-client"
