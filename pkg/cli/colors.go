@@ -155,12 +155,6 @@ func Info(format string, args ...interface{}) {
 	fmt.Println(Colorize(Cyan, IconInfo+" "+msg))
 }
 
-// Hint prints a hint message (dimmed).
-func Hint(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	fmt.Println(Colorize(Dim, "  "+IconArrow+" "+msg))
-}
-
 // Header prints a header/title.
 func Header(text string) {
 	fmt.Println(Colorize(Bold+Cyan, text))
@@ -184,6 +178,45 @@ func Command(name, args, description string) {
 		padding = 1
 	}
 	fmt.Printf("  %s%s%s\n", cmdPart, strings.Repeat(" ", padding), description)
+}
+
+// Tip prints a tip message (green).
+func Tip(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Println(Colorize(Green, "  "+IconArrow+" Tip: "+msg))
+}
+
+// Note prints a note message (dimmed).
+func Note(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Println(Colorize(Dim, "  Note: "+msg))
+}
+
+// KeyValueAligned prints a labeled value with alignment.
+func KeyValueAligned(key, value string, width int) {
+	padding := width - visibleLen(key)
+	if padding < 0 {
+		padding = 0
+	}
+	fmt.Printf("  %s:%s %s\n", Colorize(Dim, key), strings.Repeat(" ", padding), value)
+}
+
+// Footer prints a small footer.
+func Footer() {
+	fmt.Println()
+}
+
+// SubCommand prints a subcommand entry with a visual indicator.
+func SubCommand(name, args, description string) {
+	cmdPart := "  " + Colorize(Green, name)
+	if args != "" {
+		cmdPart += " " + Colorize(Dim, args)
+	}
+	padding := 30 - visibleLen(cmdPart)
+	if padding < 1 {
+		padding = 1
+	}
+	fmt.Printf("%s%s%s %s\n", cmdPart, strings.Repeat(" ", padding), Colorize(Dim, IconArrow), description)
 }
 
 // SubCommandSection prints a dimmed section header for grouping commands.
