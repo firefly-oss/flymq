@@ -44,16 +44,25 @@ FlyMQ was designed with the following principles in mind:
 
 ### 1. Server (`internal/server/`)
 
-The TCP server handles client connections and routes protocol messages to the broker.
+The server layer handles client connections and routes protocol messages to the broker. It supports multiple access protocols:
+
+- **TCP Server**: The primary high-performance interface using FlyMQ's custom binary protocol.
+- **gRPC Server**: A high-performance API for modern cloud-native applications, supporting unary and streaming operations.
+- **WebSocket Gateway**: A JSON-based interface for browser-based clients and web applications.
+- **MQTT Bridge**: A protocol adapter for IoT workloads, supporting MQTT v3.1.1 clients.
 
 **Key responsibilities:**
-- Accept TCP/TLS client connections
-- Parse FlyMQ binary protocol messages
-- Route requests to appropriate handlers
+- Accept TCP/TLS client connections (WSS for WebSockets)
+- Authenticate and authorize requests across all protocols
+- Parse protocol-specific messages and map them to broker operations
 - Manage connection lifecycle and graceful shutdown
+- Provide cluster metadata for client-side routing
 
 **Files:**
-- `server.go` - Main server with connection handling and message routing
+- `server.go` - Main TCP server with connection handling and message routing
+- `grpc/server.go` - gRPC server implementation with TLS and Auth interceptors
+- `ws/gateway.go` - WebSocket gateway with JSON-to-Broker mapping
+- `bridge/mqtt.go` - MQTT protocol bridge
 
 ### 2. Broker (`internal/broker/`)
 
@@ -482,6 +491,9 @@ Determines which node is the leader for each partition (see [Partition-Level Lea
 | 9094 | Prometheus metrics | `observability.metrics.addr` |
 | 9095 | Health check endpoints | `observability.health.addr` |
 | 9096 | Admin REST API | `observability.admin.addr` |
+| 9097 | gRPC API | `grpc.addr` |
+| 9098 | WebSocket Gateway | `ws.addr` |
+| 1883 | MQTT Bridge | `mqtt.addr` |
 
 ## Security Architecture
 

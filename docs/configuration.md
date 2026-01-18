@@ -152,6 +152,27 @@ FlyMQ provides enterprise-grade authentication and authorization through a Role-
 | `auth.admin_username` | `FLYMQ_AUTH_ADMIN_USERNAME` | `admin` | Default admin username |
 | `auth.admin_password` | `FLYMQ_AUTH_ADMIN_PASSWORD` | `""` | Default admin password (created on first startup) |
 
+### gRPC Configuration
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `grpc.enabled` | `FLYMQ_GRPC_ENABLED` | `false` | Enable gRPC server |
+| `grpc.addr` | `FLYMQ_GRPC_ADDR` | `:9097` | gRPC listen address |
+
+### WebSocket Configuration
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `ws.enabled` | `FLYMQ_WS_ENABLED` | `false` | Enable WebSocket gateway |
+| `ws.addr` | `FLYMQ_WS_ADDR` | `:9098` | WebSocket listen address |
+
+### MQTT Configuration
+
+| Option | Env Variable | Default | Description |
+|--------|--------------|---------|-------------|
+| `mqtt.enabled` | `FLYMQ_MQTT_ENABLED` | `false` | Enable MQTT bridge |
+| `mqtt.addr` | `FLYMQ_MQTT_ADDR` | `:1883` | MQTT listen address |
+
 **Public Topics:**
 
 Public topics allow anyone to produce and consume messages without authentication. This is controlled by two settings:

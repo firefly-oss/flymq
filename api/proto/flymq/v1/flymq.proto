@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package flymq.v1;
+
+option go_package = "flymq/api/proto/flymq/v1;flymqv1";
+
+service FlyMQService {
+  // Produce sends a message or a batch of messages to a topic.
+  rpc Produce(ProduceRequest) returns (ProduceResponse);
+
+  // Consume opens a stream to receive messages from a topic.
+  rpc Consume(ConsumeRequest) returns (stream ConsumeResponse);
+
+  // GetMetadata retrieves information about topics and the cluster.
+  rpc GetMetadata(MetadataRequest) returns (MetadataResponse);
+}
+
+message ProduceRequest {
+  string topic = 1;
+  int32 partition = 2;
+  bytes key = 3;
+  bytes value = 4;
+  map<string, string> headers = 5;
+  // For future batching
+  repeated Message messages = 6;
+}
+
+message Message {
+  bytes key = 1;
+  bytes value = 2;
+  map<string, string> headers = 3;
+}
+
+message ProduceResponse {
+  uint64 offset = 1;
+  int32 partition = 2;
+  string error = 3;
+}
+
+message ConsumeRequest {
+  string topic = 1;
+  int32 partition = 2;
+  uint64 offset = 3;
+  string group_id = 4;
+  int32 max_messages = 5;
+}
+
+message ConsumeResponse {
+  uint64 offset = 1;
+  bytes key = 2;
+  bytes value = 3;
+  map<string, string> headers = 4;
+  int64 timestamp = 5;
+}
+
+message MetadataRequest {
+  repeated string topics = 1;
+}
+
+message MetadataResponse {
+  repeated TopicMetadata topics = 1;
+  repeated BrokerNode brokers = 2;
+  string leader_id = 3;
+}
+
+message TopicMetadata {
+  string name = 1;
+  repeated PartitionMetadata partitions = 2;
+}
+
+message PartitionMetadata {
+  int32 id = 1;
+  string leader = 2;
+  repeated string replicas = 3;
+  repeated string isr = 4;
+}
+
+message BrokerNode {
+  string id = 1;
+  string address = 2;
+}

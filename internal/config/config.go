@@ -122,6 +122,42 @@ const (
 	EnvAdminEnabled      = "FLYMQ_ADMIN_ENABLED"
 	EnvAdminAddr         = "FLYMQ_ADMIN_ADDR"
 
+	// gRPC configuration
+	EnvGRPCEnabled = "FLYMQ_GRPC_ENABLED"
+	EnvGRPCAddr    = "FLYMQ_GRPC_ADDR"
+
+	// WebSocket configuration
+	EnvWSEnabled = "FLYMQ_WS_ENABLED"
+	EnvWSAddr    = "FLYMQ_WS_ADDR"
+
+	// MQTT configuration
+	EnvMQTTEnabled = "FLYMQ_MQTT_ENABLED"
+	EnvMQTTAddr    = "FLYMQ_MQTT_ADDR"
+
+	// gRPC TLS configuration
+	EnvGRPCTLSAll       = "FLYMQ_GRPC_TLS_ALL"
+	EnvGRPCTLSAuto      = "FLYMQ_GRPC_TLS_AUTO_GENERATE"
+	EnvGRPCTLSUseGlobal = "FLYMQ_GRPC_TLS_USE_GLOBAL"
+	EnvGRPCTLSAddr      = "FLYMQ_GRPC_TLS_ADDR"
+	EnvGRPCTLSCert      = "FLYMQ_GRPC_TLS_CERT_FILE"
+	EnvGRPCTLSKey       = "FLYMQ_GRPC_TLS_KEY_FILE"
+
+	// WS TLS configuration
+	EnvWSTLSAll       = "FLYMQ_WS_TLS_ALL"
+	EnvWSTLSAuto      = "FLYMQ_WS_TLS_AUTO_GENERATE"
+	EnvWSTLSUseGlobal = "FLYMQ_WS_TLS_USE_GLOBAL"
+	EnvWSTLSAddr      = "FLYMQ_WS_TLS_ADDR"
+	EnvWSTLSCert      = "FLYMQ_WS_TLS_CERT_FILE"
+	EnvWSTLSKey       = "FLYMQ_WS_TLS_KEY_FILE"
+
+	// MQTT TLS configuration
+	EnvMQTTTLSAll       = "FLYMQ_MQTT_TLS_ALL"
+	EnvMQTTTLSAuto      = "FLYMQ_MQTT_TLS_AUTO_GENERATE"
+	EnvMQTTTLSUseGlobal = "FLYMQ_MQTT_TLS_USE_GLOBAL"
+	EnvMQTTTLSAddr      = "FLYMQ_MQTT_TLS_ADDR"
+	EnvMQTTTLSCert      = "FLYMQ_MQTT_TLS_CERT_FILE"
+	EnvMQTTTLSKey       = "FLYMQ_MQTT_TLS_KEY_FILE"
+
 	// Authentication configuration
 	EnvAuthEnabled       = "FLYMQ_AUTH_ENABLED"
 	EnvAuthUserFile      = "FLYMQ_AUTH_USER_FILE"
@@ -241,6 +277,45 @@ type PartitionConfig struct {
 type MetricsConfig struct {
 	Enabled bool   `toml:"enabled" json:"enabled"` // Enable Prometheus metrics
 	Addr    string `toml:"addr" json:"addr"`       // Metrics HTTP server address
+}
+
+// GRPCConfig holds configuration for the gRPC server.
+type GRPCConfig struct {
+	Enabled bool   `toml:"enabled" json:"enabled"` // Enable gRPC server
+	Addr    string `toml:"addr" json:"addr"`       // gRPC server address
+
+	// TLS Configuration
+	TLSEnabled      bool   `toml:"tls_enabled" json:"tls_enabled"`             // Enable TLS for gRPC
+	TLSCertFile     string `toml:"tls_cert_file" json:"tls_cert_file"`         // Path to TLS certificate file
+	TLSKeyFile      string `toml:"tls_key_file" json:"tls_key_file"`           // Path to TLS private key file
+	TLSAutoGenerate bool   `toml:"tls_auto_generate" json:"tls_auto_generate"` // Auto-generate self-signed certificate
+	TLSUseGlobal    bool   `toml:"tls_use_global" json:"tls_use_global"`       // Use global security TLS certificate
+}
+
+// WSConfig holds configuration for the WebSocket gateway.
+type WSConfig struct {
+	Enabled bool   `toml:"enabled" json:"enabled"` // Enable WebSocket gateway
+	Addr    string `toml:"addr" json:"addr"`       // WebSocket gateway address
+
+	// TLS Configuration
+	TLSEnabled      bool   `toml:"tls_enabled" json:"tls_enabled"`             // Enable WSS for WebSocket
+	TLSCertFile     string `toml:"tls_cert_file" json:"tls_cert_file"`         // Path to TLS certificate file
+	TLSKeyFile      string `toml:"tls_key_file" json:"tls_key_file"`           // Path to TLS private key file
+	TLSAutoGenerate bool   `toml:"tls_auto_generate" json:"tls_auto_generate"` // Auto-generate self-signed certificate
+	TLSUseGlobal    bool   `toml:"tls_use_global" json:"tls_use_global"`       // Use global security TLS certificate
+}
+
+// MQTTConfig holds configuration for the MQTT bridge.
+type MQTTConfig struct {
+	Enabled bool   `toml:"enabled" json:"enabled"` // Enable MQTT bridge
+	Addr    string `toml:"addr" json:"addr"`       // MQTT bridge address
+
+	// TLS Configuration
+	TLSEnabled      bool   `toml:"tls_enabled" json:"tls_enabled"`             // Enable TLS for MQTT
+	TLSCertFile     string `toml:"tls_cert_file" json:"tls_cert_file"`         // Path to TLS certificate file
+	TLSKeyFile      string `toml:"tls_key_file" json:"tls_key_file"`           // Path to TLS private key file
+	TLSAutoGenerate bool   `toml:"tls_auto_generate" json:"tls_auto_generate"` // Auto-generate self-signed certificate
+	TLSUseGlobal    bool   `toml:"tls_use_global" json:"tls_use_global"`       // Use global security TLS certificate
 }
 
 // TracingConfig holds OpenTelemetry tracing configuration.
@@ -401,6 +476,15 @@ type Config struct {
 	// Observability
 	Observability ObservabilityConfig `toml:"observability" json:"observability"`
 
+	// GRPC
+	GRPC GRPCConfig `toml:"grpc" json:"grpc"`
+
+	// WebSocket
+	WS WSConfig `toml:"ws" json:"ws"`
+
+	// MQTT
+	MQTT MQTTConfig `toml:"mqtt" json:"mqtt"`
+
 	// Performance tuning
 	Performance PerformanceConfig `toml:"performance" json:"performance"`
 
@@ -484,6 +568,18 @@ func DefaultConfig() *Config {
 				Enabled: false,
 				Addr:    ":9096",
 			},
+		},
+		GRPC: GRPCConfig{
+			Enabled: false,
+			Addr:    ":9097",
+		},
+		WS: WSConfig{
+			Enabled: false,
+			Addr:    ":9098",
+		},
+		MQTT: MQTTConfig{
+			Enabled: false,
+			Addr:    ":1883",
 		},
 		Performance: autoTunePerformance(),
 		Audit: AuditConfig{
@@ -761,6 +857,75 @@ func (m *Manager) LoadFromEnv() {
 		cfg.Observability.Admin.Addr = v
 	}
 
+	// gRPC environment variables
+	if v := os.Getenv(EnvGRPCEnabled); v != "" {
+		cfg.GRPC.Enabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvGRPCAddr); v != "" {
+		cfg.GRPC.Addr = v
+	}
+	if v := os.Getenv(EnvGRPCTLSAll); v != "" {
+		cfg.GRPC.TLSEnabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvGRPCTLSAuto); v != "" {
+		cfg.GRPC.TLSAutoGenerate = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvGRPCTLSUseGlobal); v != "" {
+		cfg.GRPC.TLSUseGlobal = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvGRPCTLSCert); v != "" {
+		cfg.GRPC.TLSCertFile = v
+	}
+	if v := os.Getenv(EnvGRPCTLSKey); v != "" {
+		cfg.GRPC.TLSKeyFile = v
+	}
+
+	// WebSocket environment variables
+	if v := os.Getenv(EnvWSEnabled); v != "" {
+		cfg.WS.Enabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvWSAddr); v != "" {
+		cfg.WS.Addr = v
+	}
+	if v := os.Getenv(EnvWSTLSAll); v != "" {
+		cfg.WS.TLSEnabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvWSTLSAuto); v != "" {
+		cfg.WS.TLSAutoGenerate = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvWSTLSUseGlobal); v != "" {
+		cfg.WS.TLSUseGlobal = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvWSTLSCert); v != "" {
+		cfg.WS.TLSCertFile = v
+	}
+	if v := os.Getenv(EnvWSTLSKey); v != "" {
+		cfg.WS.TLSKeyFile = v
+	}
+
+	// MQTT environment variables
+	if v := os.Getenv(EnvMQTTEnabled); v != "" {
+		cfg.MQTT.Enabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvMQTTAddr); v != "" {
+		cfg.MQTT.Addr = v
+	}
+	if v := os.Getenv(EnvMQTTTLSAll); v != "" {
+		cfg.MQTT.TLSEnabled = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvMQTTTLSAuto); v != "" {
+		cfg.MQTT.TLSAutoGenerate = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvMQTTTLSUseGlobal); v != "" {
+		cfg.MQTT.TLSUseGlobal = strings.ToLower(v) == "true" || v == "1"
+	}
+	if v := os.Getenv(EnvMQTTTLSCert); v != "" {
+		cfg.MQTT.TLSCertFile = v
+	}
+	if v := os.Getenv(EnvMQTTTLSKey); v != "" {
+		cfg.MQTT.TLSKeyFile = v
+	}
+
 	// Authentication environment variables
 	if v := os.Getenv(EnvAuthEnabled); v != "" {
 		cfg.Auth.Enabled = strings.ToLower(v) == "true" || v == "1"
@@ -913,6 +1078,57 @@ func (c *Config) GetAdvertiseAddr() string {
 		return c.AdvertiseAddr
 	}
 	return resolveAdvertiseAddr(c.BindAddr)
+}
+
+// GetGRPCTLSConfig returns the effective TLS configuration for the gRPC server.
+func (c *Config) GetGRPCTLSConfig() (enabled bool, cert, key, ca string) {
+	if !c.GRPC.TLSEnabled {
+		// Fallback to global TLS if gRPC TLS is not explicitly enabled/disabled?
+		// Better to require explicit enablement for the bridge if we want granularity.
+		// But for now, let's say if global is enabled and GRPC doesn't say otherwise, we use global.
+		if c.Security.TLSEnabled {
+			return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+		}
+		return false, "", "", ""
+	}
+
+	if c.GRPC.TLSUseGlobal {
+		return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+	}
+
+	return true, c.GRPC.TLSCertFile, c.GRPC.TLSKeyFile, c.Security.TLSCAFile
+}
+
+// GetWSTLSConfig returns the effective TLS configuration for the WebSocket gateway.
+func (c *Config) GetWSTLSConfig() (enabled bool, cert, key, ca string) {
+	if !c.WS.TLSEnabled {
+		if c.Security.TLSEnabled {
+			return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+		}
+		return false, "", "", ""
+	}
+
+	if c.WS.TLSUseGlobal {
+		return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+	}
+
+	return true, c.WS.TLSCertFile, c.WS.TLSKeyFile, c.Security.TLSCAFile
+}
+
+// GetMQTTTLSConfig returns the effective TLS configuration for the MQTT bridge.
+func (c *Config) GetMQTTTLSConfig() (enabled bool, cert, key, ca string) {
+	if !c.MQTT.TLSEnabled {
+		if c.Security.TLSEnabled {
+			return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+		}
+		return false, "", "", ""
+	}
+
+	if c.MQTT.TLSUseGlobal {
+		return true, c.Security.TLSCertFile, c.Security.TLSKeyFile, c.Security.TLSCAFile
+	}
+
+	return true, c.MQTT.TLSCertFile, c.MQTT.TLSKeyFile, c.Security.TLSCAFile
 }
 
 // GetAdvertiseCluster returns the advertise address for cluster connections.

@@ -1249,4 +1249,25 @@ public final class BinaryProtocol {
 
         return new ClusterMetadata(clusterId, topics);
     }
+    public static byte[] encodeReInjectDLQRequest(Records.ReInjectDLQRequest req) {
+        byte[] topicBytes = req.topic().getBytes(StandardCharsets.UTF_8);
+        ByteBuffer buf = ByteBuffer.allocate(2 + topicBytes.length + 8);
+        buf.putShort((short) topicBytes.length);
+        buf.put(topicBytes);
+        buf.putLong(req.offset());
+        return buf.array();
+    }
+
+    public static Records.SuccessResponse decodeSuccessResponse(byte[] data) {
+        ByteBuffer buf = ByteBuffer.wrap(data);
+        boolean success = buf.get() != 0;
+        int msgLen = buf.getInt();
+        String message = "";
+        if (msgLen > 0) {
+            byte[] msgBytes = new byte[msgLen];
+            buf.get(msgBytes);
+            message = new String(msgBytes, StandardCharsets.UTF_8);
+        }
+        return new Records.SuccessResponse(success, message);
+    }
 }

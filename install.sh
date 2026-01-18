@@ -26,6 +26,8 @@ PREFIX=""
 AUTO_CONFIRM=false
 UNINSTALL=false
 CONFIG_FILE=""
+UPGRADE=false
+FORCE_REINSTALL=false
 
 # =============================================================================
 # Smart Defaults - Production-Ready Out of the Box
@@ -35,6 +37,7 @@ CONFIG_FILE=""
 
 # Configuration values (will be set during interactive setup)
 CFG_DATA_DIR=""
+CFG_CONFIG_DIR=""  # Track detected config directory
 CFG_BIND_ADDR=":9092"
 CFG_CLUSTER_ADDR=":9093"
 CFG_NODE_ID=""
@@ -111,6 +114,34 @@ CFG_ADMIN_TLS_CERT_FILE=""
 CFG_ADMIN_TLS_KEY_FILE=""
 CFG_ADMIN_TLS_AUTO_GENERATE="false"
 
+# gRPC API - ENABLED by default
+CFG_GRPC_ENABLED="true"
+CFG_GRPC_ADDR=":9097"
+
+# WebSocket Gateway - ENABLED by default
+CFG_WS_ENABLED="true"
+CFG_WS_ADDR=":9098"
+
+# MQTT Bridge - ENABLED by default
+CFG_MQTT_ENABLED="true"
+CFG_MQTT_ADDR=":1883"
+
+# Bridge TLS configuration
+CFG_GRPC_TLS_ENABLED="false"
+CFG_GRPC_TLS_USE_GLOBAL="true"
+CFG_GRPC_TLS_CERT=""
+CFG_GRPC_TLS_KEY=""
+
+CFG_WS_TLS_ENABLED="false"
+CFG_WS_TLS_USE_GLOBAL="true"
+CFG_WS_TLS_CERT=""
+CFG_WS_TLS_KEY=""
+
+CFG_MQTT_TLS_ENABLED="false"
+CFG_MQTT_TLS_USE_GLOBAL="true"
+CFG_MQTT_TLS_CERT=""
+CFG_MQTT_TLS_KEY=""
+
 # Authentication - ENABLED by default (auto-generated credentials)
 CFG_AUTH_ENABLED="true"
 CFG_AUTH_ADMIN_USER="admin"
@@ -144,6 +175,10 @@ INSTALL_LAUNCHD="false"
 # Detected system info
 OS=""
 ARCH=""
+
+# Track if values were user-provided
+USER_PROVIDED_PASSWORD=false
+USER_PROVIDED_ENCRYPTION_KEY=false
 
 # =============================================================================
 # Colors and Formatting
@@ -1089,6 +1124,33 @@ generate_config() {
     "timeout": ${CFG_TXN_TIMEOUT}
   },
 
+  "grpc": {
+    "enabled": ${CFG_GRPC_ENABLED},
+    "addr": "${CFG_GRPC_ADDR}",
+    "tls_enabled": ${CFG_GRPC_TLS_ENABLED},
+    "tls_use_global": ${CFG_GRPC_TLS_USE_GLOBAL},
+    "tls_cert_file": "${CFG_GRPC_TLS_CERT}",
+    "tls_key_file": "${CFG_GRPC_TLS_KEY}"
+  },
+
+  "ws": {
+    "enabled": ${CFG_WS_ENABLED},
+    "addr": "${CFG_WS_ADDR}",
+    "tls_enabled": ${CFG_WS_TLS_ENABLED},
+    "tls_use_global": ${CFG_WS_TLS_USE_GLOBAL},
+    "tls_cert_file": "${CFG_WS_TLS_CERT}",
+    "tls_key_file": "${CFG_WS_TLS_KEY}"
+  },
+
+  "mqtt": {
+    "enabled": ${CFG_MQTT_ENABLED},
+    "addr": "${CFG_MQTT_ADDR}",
+    "tls_enabled": ${CFG_MQTT_TLS_ENABLED},
+    "tls_use_global": ${CFG_MQTT_TLS_USE_GLOBAL},
+    "tls_cert_file": "${CFG_MQTT_TLS_CERT}",
+    "tls_key_file": "${CFG_MQTT_TLS_KEY}"
+  },
+
   "partition": {
     "distribution_strategy": "${CFG_PARTITION_DISTRIBUTION_STRATEGY}",
     "default_replication_factor": ${CFG_PARTITION_DEFAULT_REPLICATION_FACTOR},
@@ -1198,6 +1260,30 @@ FLYMQ_HEALTH_ENABLED=${CFG_HEALTH_ENABLED}
 FLYMQ_HEALTH_ADDR=${CFG_HEALTH_ADDR}
 FLYMQ_ADMIN_ENABLED=${CFG_ADMIN_ENABLED}
 FLYMQ_ADMIN_ADDR=${CFG_ADMIN_ADDR}
+
+# gRPC API
+FLYMQ_GRPC_ENABLED=${CFG_GRPC_ENABLED}
+FLYMQ_GRPC_ADDR=${CFG_GRPC_ADDR}
+FLYMQ_GRPC_TLS_ALL=${CFG_GRPC_TLS_ENABLED}
+FLYMQ_GRPC_TLS_USE_GLOBAL=${CFG_GRPC_TLS_USE_GLOBAL}
+FLYMQ_GRPC_TLS_CERT_FILE=${CFG_GRPC_TLS_CERT}
+FLYMQ_GRPC_TLS_KEY_FILE=${CFG_GRPC_TLS_KEY}
+
+# WebSocket Gateway
+FLYMQ_WS_ENABLED=${CFG_WS_ENABLED}
+FLYMQ_WS_ADDR=${CFG_WS_ADDR}
+FLYMQ_WS_TLS_ALL=${CFG_WS_TLS_ENABLED}
+FLYMQ_WS_TLS_USE_GLOBAL=${CFG_WS_TLS_USE_GLOBAL}
+FLYMQ_WS_TLS_CERT_FILE=${CFG_WS_TLS_CERT}
+FLYMQ_WS_TLS_KEY_FILE=${CFG_WS_TLS_KEY}
+
+# MQTT Bridge
+FLYMQ_MQTT_ENABLED=${CFG_MQTT_ENABLED}
+FLYMQ_MQTT_ADDR=${CFG_MQTT_ADDR}
+FLYMQ_MQTT_TLS_ALL=${CFG_MQTT_TLS_ENABLED}
+FLYMQ_MQTT_TLS_USE_GLOBAL=${CFG_MQTT_TLS_USE_GLOBAL}
+FLYMQ_MQTT_TLS_CERT_FILE=${CFG_MQTT_TLS_CERT}
+FLYMQ_MQTT_TLS_KEY_FILE=${CFG_MQTT_TLS_KEY}
 EOF
 
     print_success "Generated: ${CYAN}$env_file${RESET}"
@@ -1245,9 +1331,293 @@ EOF
     print_success "Generated: ${CYAN}$secrets_file${RESET} ${DIM}(mode 600)${RESET}"
 }
 
+run_uninstaller() {
+    print_step "Running uninstaller"
+    echo ""
+    
+    local uninstall_script="${SCRIPT_DIR}/uninstall.sh"
+    
+    if [[ -f "$uninstall_script" ]]; then
+        print_info "Using local uninstaller: ${CYAN}$uninstall_script${RESET}"
+        if [[ "$AUTO_CONFIRM" == "true" ]]; then
+            "$uninstall_script" --yes
+        else
+            "$uninstall_script"
+        fi
+    else
+        print_warning "Uninstaller not found, performing manual cleanup"
+        manual_uninstall
+    fi
+}
+
+manual_uninstall() {
+    print_info "Performing manual uninstall"
+    
+    local bin_dir="$PREFIX/bin"
+    
+    # Remove binaries
+    for binary in flymq flymq-cli flymq-discover; do
+        local bin_path="$bin_dir/$binary"
+        [[ "$OS" == "windows" ]] && bin_path="${bin_path}.exe"
+        
+        if [[ -f "$bin_path" ]]; then
+            rm -f "$bin_path"
+            print_success "Removed $bin_path"
+        fi
+    done
+    
+    print_success "Manual uninstall complete"
+}
+
 # =============================================================================
-# Installation
+# Installation Detection and Upgrade
 # =============================================================================
+
+detect_existing_installation() {
+    print_step "Checking for existing installation"
+    echo ""
+    
+    local found=false
+    local detected_prefix=""
+    local detected_config_dir=""
+    local detected_data_dir=""
+    
+    # Platform-specific detection (same logic as uninstall.sh)
+    if [[ "$OS" == "windows" ]]; then
+        # Windows paths
+        local win_prefix="$HOME/AppData/Local/FlyMQ"
+        if [[ -f "$win_prefix/bin/flymq.exe" ]]; then
+            detected_prefix="$win_prefix"
+            detected_config_dir="$win_prefix/config"
+            detected_data_dir="$win_prefix/data"
+            found=true
+        fi
+    else
+        # Unix-like systems (Linux/macOS)
+        # Check /usr/local/bin (root install)
+        if [[ -f "/usr/local/bin/flymq" ]]; then
+            detected_prefix="/usr/local"
+            found=true
+        fi
+        
+        # Check ~/.local/bin (user install)
+        if [[ -f "$HOME/.local/bin/flymq" ]]; then
+            detected_prefix="$HOME/.local"
+            found=true
+        fi
+        
+        # Detect config directory
+        if [[ -d "/etc/flymq" ]]; then
+            detected_config_dir="/etc/flymq"
+        elif [[ -d "$HOME/.config/flymq" ]]; then
+            detected_config_dir="$HOME/.config/flymq"
+        fi
+        
+        # Detect data directory
+        if [[ -d "/var/lib/flymq" ]]; then
+            detected_data_dir="/var/lib/flymq"
+        elif [[ -d "$HOME/.local/share/flymq" ]]; then
+            detected_data_dir="$HOME/.local/share/flymq"
+        fi
+    fi
+    
+    if [[ "$found" == true ]]; then
+        # Update global variables with detected paths
+        PREFIX="$detected_prefix"
+        [[ -n "$detected_config_dir" ]] && CFG_CONFIG_DIR="$detected_config_dir"
+        [[ -n "$detected_data_dir" ]] && CFG_DATA_DIR="$detected_data_dir"
+        
+        return 0
+    else
+        return 1
+    fi
+}
+
+get_installed_version() {
+    local prefix="${PREFIX:-$(get_default_prefix)}"
+    local bin_dir="$prefix/bin"
+    local flymq_bin="$bin_dir/flymq"
+    
+    if [[ "$OS" == "windows" ]]; then
+        flymq_bin="$bin_dir/flymq.exe"
+    fi
+    
+    if [[ -x "$flymq_bin" ]]; then
+        # Extract version, removing 'v' prefix if present
+        local version
+        version=$("$flymq_bin" --version 2>/dev/null | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1 | sed 's/^v//')
+        echo "${version:-unknown}"
+    else
+        echo "not-installed"
+    fi
+}
+
+check_upgrade_needed() {
+    local installed_version="$(get_installed_version)"
+    
+    if [[ "$installed_version" == "not-installed" ]]; then
+        return 1  # No upgrade needed, fresh install
+    fi
+    
+    if [[ "$FORCE_REINSTALL" == "true" ]]; then
+        return 0  # Force upgrade
+    fi
+    
+    # Simple version comparison - in production you'd want proper semver comparison
+    if [[ "$installed_version" != "$FLYMQ_VERSION" ]]; then
+        return 0  # Upgrade needed
+    fi
+    
+    return 1  # Same version, no upgrade needed
+}
+
+handle_existing_installation() {
+    local installed_version="$(get_installed_version)"
+    local config_dir="${CFG_CONFIG_DIR:-$(get_default_config_dir)}"
+    
+    echo ""
+    print_info "Current version: ${CYAN}${installed_version}${RESET}"
+    print_info "New version: ${CYAN}${FLYMQ_VERSION}${RESET}"
+    print_info "Install location: ${CYAN}${PREFIX}${RESET}"
+    
+    if [[ -f "$config_dir/flymq.json" ]]; then
+        print_info "Configuration: ${CYAN}${config_dir}/flymq.json${RESET} (will be preserved)"
+    fi
+    
+    echo ""
+    
+    # Handle command line flags first
+    if [[ "$UPGRADE" == "true" ]] || [[ "$FORCE_REINSTALL" == "true" ]]; then
+        if [[ "$FORCE_REINSTALL" == "true" ]]; then
+            print_info "Force reinstall requested"
+        else
+            print_info "Upgrade mode enabled"
+        fi
+        return 0
+    fi
+    
+    # Interactive mode - show options based on version comparison
+    if [[ "$installed_version" == "$FLYMQ_VERSION" ]]; then
+        print_success "FlyMQ ${FLYMQ_VERSION} is already installed"
+        echo ""
+        echo -e "  ${BOLD}What would you like to do?${RESET}"
+        echo -e "    ${CYAN}1${RESET}) Keep current installation (exit)"
+        echo -e "    ${CYAN}2${RESET}) Reinstall binaries (rebuild from source)"
+        echo -e "    ${CYAN}3${RESET}) Reconfigure only (keep binaries, update config)"
+        echo -e "    ${CYAN}4${RESET}) Fresh install (uninstall first, then reinstall)"
+        echo ""
+        
+        local choice
+        if [[ "$AUTO_CONFIRM" == "true" ]]; then
+            choice="1"
+        else
+            choice=$(prompt_choice "Select option" "1" "1" "2" "3" "4")
+        fi
+        
+        case "$choice" in
+            1)
+                print_info "Keeping current installation"
+                exit 0
+                ;;
+            2)
+                print_info "Reinstalling FlyMQ ${FLYMQ_VERSION}"
+                FORCE_REINSTALL=true
+                return 0
+                ;;
+            3)
+                print_info "Reconfiguring FlyMQ ${FLYMQ_VERSION}"
+                return 2  # Config-only mode
+                ;;
+            4)
+                print_info "Performing fresh installation"
+                if [[ "$AUTO_CONFIRM" == "true" ]] || prompt_yes_no "This will remove the current installation. Continue" "n"; then
+                    run_uninstaller
+                    return 0
+                else
+                    print_info "Installation cancelled"
+                    exit 0
+                fi
+                ;;
+        esac
+    else
+        # Different version - offer upgrade options
+        echo -e "  ${BOLD}Available options:${RESET}"
+        echo -e "    ${CYAN}1${RESET}) Upgrade to ${FLYMQ_VERSION} (recommended)"
+        echo -e "    ${CYAN}2${RESET}) Keep current version (exit)"
+        echo -e "    ${CYAN}3${RESET}) Fresh install (uninstall first, then reinstall)"
+        echo ""
+        
+        local choice
+        if [[ "$AUTO_CONFIRM" == "true" ]]; then
+            choice="1"
+        else
+            choice=$(prompt_choice "Select option" "1" "1" "2" "3")
+        fi
+        
+        case "$choice" in
+            1)
+                print_info "Upgrading to FlyMQ ${FLYMQ_VERSION}"
+                UPGRADE=true
+                return 0
+                ;;
+            2)
+                print_info "Keeping current installation"
+                exit 0
+                ;;
+            3)
+                print_info "Performing fresh installation"
+                if [[ "$AUTO_CONFIRM" == "true" ]] || prompt_yes_no "This will remove the current installation. Continue" "n"; then
+                    run_uninstaller
+                    return 0
+                else
+                    print_info "Installation cancelled"
+                    exit 0
+                fi
+                ;;
+        esac
+    fi
+}
+
+preserve_existing_config() {
+    local config_dir="$(get_default_config_dir)"
+    local config_file="$config_dir/flymq.json"
+    local backup_file="$config_dir/flymq.json.backup.$(date +%s)"
+    
+    if [[ -f "$config_file" ]]; then
+        print_info "Backing up existing configuration"
+        cp "$config_file" "$backup_file"
+        print_success "Config backed up to: ${CYAN}${backup_file}${RESET}"
+        
+        # Load existing config values if possible
+        if command -v jq &> /dev/null; then
+            load_config_from_file "$config_file"
+        else
+            print_warning "jq not found - using default configuration"
+        fi
+    fi
+}
+
+load_config_from_file() {
+    local config_file="$1"
+    
+    # Extract key values from existing config using jq
+    CFG_BIND_ADDR=$(jq -r '.bind_addr // ":9092"' "$config_file" 2>/dev/null || echo ":9092")
+    CFG_DATA_DIR=$(jq -r '.data_dir // ""' "$config_file" 2>/dev/null || echo "")
+    CFG_NODE_ID=$(jq -r '.node_id // ""' "$config_file" 2>/dev/null || echo "")
+    CFG_LOG_LEVEL=$(jq -r '.log_level // "info"' "$config_file" 2>/dev/null || echo "info")
+    
+    # Security settings
+    CFG_TLS_ENABLED=$(jq -r '.security.tls_enabled // false' "$config_file" 2>/dev/null || echo "false")
+    CFG_ENCRYPTION_ENABLED=$(jq -r '.security.encryption_enabled // false' "$config_file" 2>/dev/null || echo "false")
+    CFG_AUTH_ENABLED=$(jq -r '.auth.enabled // false' "$config_file" 2>/dev/null || echo "false")
+    
+    # Protocol bridges
+    CFG_GRPC_ENABLED=$(jq -r '.grpc.enabled // false' "$config_file" 2>/dev/null || echo "false")
+    CFG_WS_ENABLED=$(jq -r '.ws.enabled // false' "$config_file" 2>/dev/null || echo "false")
+    CFG_MQTT_ENABLED=$(jq -r '.mqtt.enabled // false' "$config_file" 2>/dev/null || echo "false")
+    
+    print_success "Loaded configuration from existing file"
+}
 
 # Track if we need to clone the repo (detected early)
 CLONED_REPO_DIR=""
@@ -1538,6 +1908,43 @@ EOF
     fi
 }
 
+print_binary_reinstall_complete() {
+    local prefix="$1"
+    local config_dir="$2"
+    local bin_dir="$prefix/bin"
+
+    echo ""
+    echo ""
+    echo -e "  ${GREEN}${BOLD}✓ BINARY REINSTALL COMPLETE${RESET}"
+    echo ""
+    echo -e "  ${BOLD}FlyMQ v${FLYMQ_VERSION}${RESET} binaries have been rebuilt and installed!"
+    echo ""
+
+    # Installation paths
+    echo -e "  ${CYAN}${BOLD}UPDATED${RESET}"
+    echo -e "  ${DIM}Binaries${RESET}       ${CYAN}$bin_dir${RESET}"
+    echo ""
+
+    # Preserved paths
+    echo -e "  ${CYAN}${BOLD}PRESERVED${RESET}"
+    echo -e "  ${DIM}Config${RESET}         ${CYAN}$config_dir/flymq.json${RESET}"
+    echo -e "  ${DIM}Data${RESET}           ${CYAN}$CFG_DATA_DIR${RESET}"
+    echo -e "  ${DIM}Credentials${RESET}    ${GREEN}Unchanged${RESET}"
+    echo -e "  ${DIM}Encryption${RESET}     ${GREEN}Unchanged${RESET}"
+    echo ""
+
+    echo -e "  ${CYAN}${BOLD}QUICK START${RESET}"
+    echo ""
+    echo -e "  ${DIM}# Start server with existing config${RESET}"
+    echo -e "  flymq --config $config_dir/flymq.json"
+    echo ""
+    echo -e "  ${DIM}# Check version${RESET}"
+    echo -e "  flymq --version"
+    echo ""
+    echo -e "  ${GREEN}${BOLD}Note:${RESET} ${DIM}Use your existing credentials and encryption key${RESET}"
+    echo ""
+}
+
 print_post_install() {
     local prefix="$1"
     local config_dir="$2"
@@ -1581,10 +1988,16 @@ print_post_install() {
     local discovery=""
     [[ "$CFG_DISCOVERY_ENABLED" == "true" ]] && discovery+="mDNS(Discovery) "
 
+    local bridges=""
+    [[ "$CFG_GRPC_ENABLED" == "true" ]] && bridges+="gRPC "
+    [[ "$CFG_WS_ENABLED" == "true" ]] && bridges+="WebSocket "
+    [[ "$CFG_MQTT_ENABLED" == "true" ]] && bridges+="MQTT "
+
     [[ -n "$messaging" ]] && echo -e "  ${DIM}Messaging${RESET}      ${GREEN}${messaging}${RESET}"
     [[ -n "$observability" ]] && echo -e "  ${DIM}Observability${RESET}  ${GREEN}${observability}${RESET}"
     [[ -n "$security" ]] && echo -e "  ${DIM}Security${RESET}       ${GREEN}${security}${RESET}"
     [[ -n "$discovery" ]] && echo -e "  ${DIM}Discovery${RESET}      ${GREEN}${discovery}${RESET}"
+    [[ -n "$bridges" ]] && echo -e "  ${DIM}Bridges${RESET}        ${GREEN}${bridges}${RESET}"
     echo ""
 
     # Quick Start
@@ -1628,13 +2041,17 @@ print_post_install() {
     echo ""
 
     # Endpoints
-    if [[ "$CFG_METRICS_ENABLED" == "true" ]] || [[ "$CFG_HEALTH_ENABLED" == "true" ]] || [[ "$CFG_ADMIN_ENABLED" == "true" ]]; then
+    if [[ "$CFG_METRICS_ENABLED" == "true" ]] || [[ "$CFG_HEALTH_ENABLED" == "true" ]] || [[ "$CFG_ADMIN_ENABLED" == "true" ]] || \
+       [[ "$CFG_GRPC_ENABLED" == "true" ]] || [[ "$CFG_WS_ENABLED" == "true" ]] || [[ "$CFG_MQTT_ENABLED" == "true" ]]; then
         echo -e "  ${CYAN}${BOLD}ENDPOINTS${RESET}"
         echo ""
         echo -e "  ${DIM}Client${RESET}         localhost${CFG_BIND_ADDR}"
         [[ "$CFG_METRICS_ENABLED" == "true" ]] && echo -e "  ${DIM}Metrics${RESET}        http://localhost${CFG_METRICS_ADDR}/metrics"
         [[ "$CFG_HEALTH_ENABLED" == "true" ]] && echo -e "  ${DIM}Health${RESET}         http://localhost${CFG_HEALTH_ADDR}/health"
         [[ "$CFG_ADMIN_ENABLED" == "true" ]] && echo -e "  ${DIM}Admin API${RESET}      http://localhost${CFG_ADMIN_ADDR}/api/v1"
+        [[ "$CFG_GRPC_ENABLED" == "true" ]] && echo -e "  ${DIM}gRPC${RESET}           localhost${CFG_GRPC_ADDR}"
+        [[ "$CFG_WS_ENABLED" == "true" ]] && echo -e "  ${DIM}WebSocket${RESET}      localhost${CFG_WS_ADDR}"
+        [[ "$CFG_MQTT_ENABLED" == "true" ]] && echo -e "  ${DIM}MQTT${RESET}           localhost${CFG_MQTT_ADDR}"
         echo ""
     fi
 
@@ -1764,6 +2181,14 @@ parse_args() {
                 UNINSTALL=true
                 shift
                 ;;
+            --upgrade)
+                UPGRADE=true
+                shift
+                ;;
+            --force)
+                FORCE_REINSTALL=true
+                shift
+                ;;
             --help|-h)
                 print_banner
                 echo "Usage: $0 [OPTIONS]"
@@ -1772,12 +2197,15 @@ parse_args() {
                 echo "  --prefix PATH        Installation prefix (default: ~/.local or /usr/local)"
                 echo "  --yes, -y            Non-interactive mode with default configuration"
                 echo "  --config-file FILE   Use existing configuration file (implies --yes)"
+                echo "  --upgrade            Upgrade existing installation to latest version"
+                echo "  --force              Force reinstall even if same version"
                 echo "  --uninstall          Uninstall FlyMQ"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Examples:"
                 echo "  ./install.sh                           # Interactive installation"
                 echo "  ./install.sh --yes                     # Quick install with defaults"
+                echo "  ./install.sh --upgrade                 # Upgrade to latest version"
                 echo "  ./install.sh --config-file my.conf     # Use existing config"
                 echo "  ./install.sh --prefix /opt/flymq       # Custom install location"
                 exit 0
@@ -1841,13 +2269,32 @@ show_default_configuration() {
     echo -e "      Segment Size:      ${CYAN}64 MB${RESET}"
     echo -e "      Log Level:         ${CYAN}info${RESET}"
     echo ""
+
+    # Section 6: Protocol Bridges
+    echo -e "  ${WHITE}${BOLD}[${CYAN}6${WHITE}]${RESET} ${BOLD}PROTOCOL BRIDGES${RESET}"
+    if [[ "$CFG_GRPC_ENABLED" == "true" ]]; then
+        echo -e "      gRPC Server:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_GRPC_ADDR})${RESET}"
+    else
+        echo -e "      gRPC Server:       ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_WS_ENABLED" == "true" ]]; then
+        echo -e "      WebSocket Gateway: ${GREEN}Enabled${RESET} ${DIM}(${CFG_WS_ADDR})${RESET}"
+    else
+        echo -e "      WebSocket Gateway: ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_MQTT_ENABLED" == "true" ]]; then
+        echo -e "      MQTT Bridge:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_MQTT_ADDR})${RESET}"
+    else
+        echo -e "      MQTT Bridge:       ${YELLOW}Disabled${RESET}"
+    fi
+    echo ""
 }
 
 configure_by_sections() {
     echo ""
     echo -e "  ${BOLD}Select sections to customize:${RESET}"
     echo -e "    ${CYAN}1${RESET} Deployment    ${CYAN}2${RESET} Security    ${CYAN}3${RESET} Advanced Features"
-    echo -e "    ${CYAN}4${RESET} Observability ${CYAN}5${RESET} Performance"
+    echo -e "    ${CYAN}4${RESET} Observability ${CYAN}5${RESET} Performance ${CYAN}6${RESET} Protocol Bridges"
     echo ""
     echo -e "  ${DIM}Enter numbers separated by commas, 'all', or 'none' to skip${RESET}"
     echo ""
@@ -1861,7 +2308,7 @@ configure_by_sections() {
 
     # Parse sections
     if [[ "$sections" == "all" ]]; then
-        sections="1,2,3,4,5"
+        sections="1,2,3,4,5,6"
     fi
 
     IFS=',' read -ra section_array <<< "$sections"
@@ -1874,6 +2321,7 @@ configure_by_sections() {
             3) configure_section_advanced ;;
             4) configure_section_observability ;;
             5) configure_section_performance ;;
+            6) configure_section_bridges ;;
             *) print_warning "Unknown section: $section" ;;
         esac
     done
@@ -1933,6 +2381,85 @@ configure_section_deployment() {
     CFG_DATA_DIR=$(prompt_value "Data directory" "${CFG_DATA_DIR}")
 }
 
+configure_section_bridges() {
+    print_section "Protocol Bridges Configuration"
+
+    echo -e "  ${BOLD}gRPC Server${RESET}"
+    echo -e "  ${DIM}High-performance protocol for multi-language clients and streaming.${RESET}"
+    if prompt_yes_no "Enable gRPC server" "y"; then
+        CFG_GRPC_ENABLED="true"
+        CFG_GRPC_ADDR=$(prompt_value "gRPC bind address" "${CFG_GRPC_ADDR}")
+        if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+            if prompt_yes_no "Use global TLS settings for gRPC" "y"; then
+                CFG_GRPC_TLS_ENABLED="true"
+                CFG_GRPC_TLS_USE_GLOBAL="true"
+            else
+                if prompt_yes_no "Enable separate TLS for gRPC" "n"; then
+                    CFG_GRPC_TLS_ENABLED="true"
+                    CFG_GRPC_TLS_USE_GLOBAL="false"
+                    CFG_GRPC_TLS_CERT=$(prompt_value "gRPC TLS certificate file" "")
+                    CFG_GRPC_TLS_KEY=$(prompt_value "gRPC TLS key file" "")
+                else
+                    CFG_GRPC_TLS_ENABLED="false"
+                fi
+            fi
+        fi
+    else
+        CFG_GRPC_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}WebSocket Gateway${RESET}"
+    echo -e "  ${DIM}Allows web applications to produce/consume messages directly via JSON-RPC.${RESET}"
+    if prompt_yes_no "Enable WebSocket gateway" "y"; then
+        CFG_WS_ENABLED="true"
+        CFG_WS_ADDR=$(prompt_value "WebSocket bind address" "${CFG_WS_ADDR}")
+        if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+            if prompt_yes_no "Use global TLS settings for WebSocket" "y"; then
+                CFG_WS_TLS_ENABLED="true"
+                CFG_WS_TLS_USE_GLOBAL="true"
+            else
+                if prompt_yes_no "Enable separate TLS (WSS) for WebSocket" "n"; then
+                    CFG_WS_TLS_ENABLED="true"
+                    CFG_WS_TLS_USE_GLOBAL="false"
+                    CFG_WS_TLS_CERT=$(prompt_value "WebSocket TLS certificate file" "")
+                    CFG_WS_TLS_KEY=$(prompt_value "WebSocket TLS key file" "")
+                else
+                    CFG_WS_TLS_ENABLED="false"
+                fi
+            fi
+        fi
+    else
+        CFG_WS_ENABLED="false"
+    fi
+    echo ""
+
+    echo -e "  ${BOLD}MQTT Bridge${RESET}"
+    echo -e "  ${DIM}Allows IoT devices to connect using the MQTT v3.1.1 protocol.${RESET}"
+    if prompt_yes_no "Enable MQTT bridge" "y"; then
+        CFG_MQTT_ENABLED="true"
+        CFG_MQTT_ADDR=$(prompt_value "MQTT bind address" "${CFG_MQTT_ADDR}")
+        if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+            if prompt_yes_no "Use global TLS settings for MQTT" "y"; then
+                CFG_MQTT_TLS_ENABLED="true"
+                CFG_MQTT_TLS_USE_GLOBAL="true"
+            else
+                if prompt_yes_no "Enable separate TLS for MQTT" "n"; then
+                    CFG_MQTT_TLS_ENABLED="true"
+                    CFG_MQTT_TLS_USE_GLOBAL="false"
+                    CFG_MQTT_TLS_CERT=$(prompt_value "MQTT TLS certificate file" "")
+                    CFG_MQTT_TLS_KEY=$(prompt_value "MQTT TLS key file" "")
+                else
+                    CFG_MQTT_TLS_ENABLED="false"
+                fi
+            fi
+        fi
+    else
+        CFG_MQTT_ENABLED="false"
+    fi
+    echo ""
+}
+
 configure_section_security() {
     print_section "Security Configuration"
 
@@ -1958,6 +2485,7 @@ configure_section_security() {
         custom_key=$(prompt_value "Encryption key (Enter for auto-generate)" "")
         if [[ -n "$custom_key" ]]; then
             CFG_ENCRYPTION_KEY="$custom_key"
+            USER_PROVIDED_ENCRYPTION_KEY=true
         fi
     else
         CFG_ENCRYPTION_ENABLED="false"
@@ -1977,6 +2505,7 @@ configure_section_security() {
         echo ""
         if [[ -n "$custom_pass" ]]; then
             CFG_AUTH_ADMIN_PASS="$custom_pass"
+            USER_PROVIDED_PASSWORD=true
         fi
         echo ""
         echo -e "  ${DIM}Public topics allow anyone to produce and consume messages.${RESET}"
@@ -2376,11 +2905,17 @@ show_configuration_summary() {
     if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
         echo -e "      Authentication:    ${GREEN}Enabled${RESET}"
         echo -e "      Admin User:        ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
-        if [[ -n "$CFG_AUTH_ADMIN_PASS" ]]; then
-            # Check if password was auto-generated (will be set in main)
-            echo -e "      Admin Password:    ${CYAN}(configured)${RESET}"
+        if [[ "$USER_PROVIDED_PASSWORD" == "true" ]]; then
+            echo -e "      Admin Password:    ${DIM}(user-provided)${RESET}"
         else
-            echo -e "      Admin Password:    ${YELLOW}(will be auto-generated)${RESET}"
+            echo -e "      Admin Password:    ${DIM}(auto-generated)${RESET}"
+        fi
+        if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+            if [[ "$USER_PROVIDED_ENCRYPTION_KEY" == "true" ]]; then
+                echo -e "      Encryption Key:    ${DIM}(user-provided)${RESET}"
+            else
+                echo -e "      Encryption Key:    ${DIM}(auto-generated)${RESET}"
+            fi
         fi
         if [[ "$CFG_AUTH_DEFAULT_PUBLIC" == "true" ]]; then
             echo -e "      Default Public:    ${GREEN}Yes${RESET} ${DIM}(topics accessible to all)${RESET}"
@@ -2394,6 +2929,13 @@ show_configuration_summary() {
         fi
     else
         echo -e "      Authentication:    ${YELLOW}Disabled${RESET}"
+        if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]]; then
+            if [[ "$USER_PROVIDED_ENCRYPTION_KEY" == "true" ]]; then
+                echo -e "      Encryption Key:    ${DIM}(user-provided)${RESET}"
+            else
+                echo -e "      Encryption Key:    ${DIM}(auto-generated)${RESET}"
+            fi
+        fi
     fi
     if [[ "$CFG_AUDIT_ENABLED" == "true" ]]; then
         echo -e "      Audit Trail:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_AUDIT_RETENTION_DAYS} days retention)${RESET}"
@@ -2476,25 +3018,26 @@ show_configuration_summary() {
     echo -e "      Log Level:         ${CYAN}${CFG_LOG_LEVEL}${RESET}"
     echo ""
 
-    # Show credentials reminder if auth is enabled
-    if [[ "$CFG_AUTH_ENABLED" == "true" ]]; then
-        echo -e "  ${YELLOW}${BOLD}⚠ CREDENTIALS${RESET}"
-        echo -e "      Admin Username:    ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
-        if [[ -n "$CFG_AUTH_ADMIN_PASS" ]]; then
-            echo -e "      Admin Password:    ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
-        else
-            echo -e "      Admin Password:    ${DIM}(will be auto-generated during install)${RESET}"
-        fi
-        echo ""
+    # Section 6: Protocol Bridges
+    echo -e "  ${WHITE}${BOLD}[${CYAN}6${WHITE}]${RESET} ${BOLD}PROTOCOL BRIDGES${RESET}"
+    if [[ "$CFG_GRPC_ENABLED" == "true" ]]; then
+        echo -e "      gRPC Server:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_GRPC_ADDR})${RESET}"
+    else
+        echo -e "      gRPC Server:       ${YELLOW}Disabled${RESET}"
     fi
+    if [[ "$CFG_WS_ENABLED" == "true" ]]; then
+        echo -e "      WebSocket Gateway: ${GREEN}Enabled${RESET} ${DIM}(${CFG_WS_ADDR})${RESET}"
+    else
+        echo -e "      WebSocket Gateway: ${YELLOW}Disabled${RESET}"
+    fi
+    if [[ "$CFG_MQTT_ENABLED" == "true" ]]; then
+        echo -e "      MQTT Bridge:       ${GREEN}Enabled${RESET} ${DIM}(${CFG_MQTT_ADDR})${RESET}"
+    else
+        echo -e "      MQTT Bridge:       ${YELLOW}Disabled${RESET}"
+    fi
+    echo ""
 
-    # Show encryption key reminder if encryption is enabled
-    if [[ "$CFG_ENCRYPTION_ENABLED" == "true" ]] && [[ -n "$CFG_ENCRYPTION_KEY" ]]; then
-        echo -e "  ${YELLOW}${BOLD}⚠ ENCRYPTION KEY${RESET}"
-        echo -e "      ${DIM}${CFG_ENCRYPTION_KEY}${RESET}"
-        echo -e "      ${DIM}(Save this key securely - required for data recovery)${RESET}"
-        echo ""
-    fi
+
 }
 
 clear_screen_if_interactive() {
@@ -2516,7 +3059,7 @@ iterative_configuration_loop() {
         show_configuration_summary "$config_dir"
 
         echo -e "  ${BOLD}Options:${RESET}"
-        echo -e "    ${CYAN}1-5${RESET}  Modify a section"
+        echo -e "    ${CYAN}1-6${RESET}  Modify a section"
         echo -e "    ${CYAN}c${RESET}    Confirm and proceed with installation"
         echo -e "    ${CYAN}q${RESET}    Cancel installation"
         echo ""
@@ -2539,6 +3082,9 @@ iterative_configuration_loop() {
                 ;;
             5)
                 configure_section_performance
+                ;;
+            6)
+                configure_section_bridges
                 ;;
             c|C|confirm)
                 echo ""
@@ -2574,6 +3120,15 @@ main() {
     fi
 
     print_info "Detected: ${CYAN}$OS/$ARCH${RESET}"
+    
+    # Detect source mode early and inform user
+    detect_source_mode
+    if [[ "$NEEDS_REMOTE_CLONE" == true ]]; then
+        print_info "Source: ${YELLOW}Will download from GitHub${RESET}"
+    else
+        print_info "Source: ${GREEN}Using local repository${RESET}"
+    fi
+    
     echo ""
 
     # Set default prefix if not specified
@@ -2584,8 +3139,74 @@ main() {
     # Set default data dir and config dir
     CFG_DATA_DIR=$(get_default_data_dir)
     local config_dir=$(get_default_config_dir)
+    CFG_CONFIG_DIR="$config_dir"  # Store for later use
     CFG_NODE_ID=$(hostname)
     CFG_SCHEMA_REGISTRY_DIR="${CFG_DATA_DIR}/schemas"
+
+    # Check for existing installation and show clear status
+    local existing_install=false
+    local config_only=false
+    local binary_only=false
+    
+    if detect_existing_installation; then
+        existing_install=true
+        
+        # Show clear status with visual separation
+        echo -e "  ${WHITE}${BOLD}EXISTING INSTALLATION FOUND${RESET}"
+        echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo -e "    ${BOLD}Location:${RESET}      ${CYAN}$PREFIX${RESET}"
+        [[ -n "$CFG_CONFIG_DIR" ]] && echo -e "    ${BOLD}Configuration:${RESET} ${CYAN}$CFG_CONFIG_DIR${RESET}"
+        [[ -n "$CFG_DATA_DIR" ]] && echo -e "    ${BOLD}Data:${RESET}          ${CYAN}$CFG_DATA_DIR${RESET}"
+        echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo ""
+        
+        handle_existing_installation
+        local result=$?
+        if [[ $result -eq 2 ]]; then
+            config_only=true
+        elif [[ "$FORCE_REINSTALL" == "true" ]]; then
+            binary_only=true
+        fi
+        # Update config_dir if it was detected
+        config_dir="${CFG_CONFIG_DIR:-$config_dir}"
+    else
+        # Show clear status for fresh install
+        echo -e "  ${WHITE}${BOLD}FRESH INSTALLATION${RESET}"
+        echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo -e "    ${DIM}No existing FlyMQ installation detected${RESET}"
+        echo -e "    ${DIM}Will install to: ${CYAN}$PREFIX${RESET}"
+        echo -e "  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+        echo ""
+    fi
+
+    # Show main menu if not in auto-confirm mode and not doing binary-only reinstall or config-only
+    if [[ "$AUTO_CONFIRM" != true ]] && [[ "$config_only" != true ]] && [[ "$binary_only" != true ]]; then
+        if [[ "$existing_install" == true ]]; then
+            echo -e "  ${BOLD}Installation Mode:${RESET}"
+        else
+            echo -e "  ${BOLD}Select Installation Type:${RESET}"
+        fi
+        echo -e "    ${CYAN}1${RESET}) Use default configuration ${DIM}(recommended)${RESET}"
+        echo -e "    ${CYAN}2${RESET}) Custom configuration ${DIM}(advanced users)${RESET}"
+        echo -e "    ${CYAN}3${RESET}) Cancel installation"
+        echo ""
+        
+        local menu_choice
+        menu_choice=$(prompt_choice "Select option" "1" "1" "2" "3")
+        
+        case "$menu_choice" in
+            1)
+                print_info "Using default configuration"
+                ;;
+            2)
+                print_info "Starting custom configuration"
+                ;;
+            3)
+                print_info "Installation cancelled"
+                exit 0
+                ;;
+        esac
+    fi
 
     # Auto-generate encryption key and admin password for defaults
     if [[ -z "$CFG_ENCRYPTION_KEY" ]]; then
@@ -2595,8 +3216,13 @@ main() {
         CFG_AUTH_ADMIN_PASS=$(openssl rand -base64 16 2>/dev/null || head -c 16 /dev/urandom | base64)
     fi
 
+    # Preserve existing config if upgrading
+    if [[ "$existing_install" == true ]] && [[ "$UPGRADE" == true ]] || [[ "$FORCE_REINSTALL" == true ]]; then
+        preserve_existing_config
+    fi
+
     # Interactive configuration or use defaults
-    if [[ "$AUTO_CONFIRM" != true ]]; then
+    if [[ "$AUTO_CONFIRM" != true ]] && [[ "$config_only" != true ]] && [[ "$menu_choice" == "2" ]]; then
         # STEP 1: Ask deployment mode first (most important decision)
         select_deployment_mode
 
@@ -2605,15 +3231,37 @@ main() {
     fi
 
     echo ""
-    detect_source_mode
     check_dependencies
-    ensure_source_code
-    build_binaries
-    install_binaries "$PREFIX"
-    create_data_dir
-    generate_config "$config_dir"
-    install_system_service "$config_dir" "$PREFIX"
-    print_post_install "$PREFIX" "$config_dir"
+    
+    # Skip build and install if config-only mode
+    if [[ "$config_only" != true ]]; then
+        ensure_source_code
+        build_binaries
+        install_binaries "$PREFIX"
+    else
+        print_step "Skipping binary build (config-only mode)"
+        echo ""
+    fi
+    
+    # Skip config generation for binary-only reinstalls
+    if [[ "$binary_only" != true ]]; then
+        create_data_dir
+        generate_config "$config_dir"
+    else
+        print_step "Skipping config generation (binary-only reinstall)"
+        echo ""
+    fi
+    
+    if [[ "$config_only" != true ]]; then
+        install_system_service "$config_dir" "$PREFIX"
+    fi
+    
+    # Show appropriate completion message based on install type
+    if [[ "$binary_only" == true ]]; then
+        print_binary_reinstall_complete "$PREFIX" "$config_dir"
+    else
+        print_post_install "$PREFIX" "$config_dir"
+    fi
     # Note: cleanup_cloned_repo is called automatically via EXIT trap
 }
 

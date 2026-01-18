@@ -62,6 +62,37 @@ def encode_produce_request(req: BinaryProduceRequest) -> bytes:
     return b"".join(parts)
 
 
+@dataclass(frozen=True)
+class BinaryReInjectDLQRequest:
+    """Request to re-inject a DLQ message by offset."""
+
+    topic: str
+    offset: int
+
+
+def encode_re_inject_dlq_request(req: BinaryReInjectDLQRequest) -> bytes:
+    """Encode a re-inject DLQ request to binary format."""
+    topic_bytes = req.topic.encode("utf-8")
+    topic_len = len(topic_bytes)
+    return struct.pack(f">H{topic_len}sQ", topic_len, topic_bytes, req.offset)
+
+
+@dataclass(frozen=True)
+class BinarySuccessResponse:
+    """Response to a success/failure operation."""
+
+    success: bool
+    message: str
+
+
+def decode_success_response(data: bytes) -> BinarySuccessResponse:
+    """Decode a simple success response."""
+    success = data[0] != 0
+    msg_len = struct.unpack(">I", data[1:5])[0]
+    message = data[5 : 5 + msg_len].decode("utf-8")
+    return BinarySuccessResponse(success=success, message=message)
+
+
 @dataclass
 class RecordMetadata:
     """

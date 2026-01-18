@@ -48,6 +48,9 @@ and enterprise-grade security features.
 - **Key-Based Partitioning** - Kafka-style message keys for ordered delivery within partitions
 - **Consumer Groups** - Coordinated consumption with offset tracking
 - **Custom Binary Protocol** - Efficient wire protocol for minimal overhead
+- **gRPC Support** - High-performance gRPC API for production and consumption
+- **WebSocket Gateway** - Direct browser-based messaging support
+- **MQTT Bridge** - Support for IoT workloads with MQTT v3.1.1 bridge
 
 ### Clustering & High Availability
 - **Raft Consensus** - Leader election and log replication
@@ -59,8 +62,9 @@ and enterprise-grade security features.
 - **Server-Side Schema Store** - Centralized registry for JSON Schema, Avro, and Protobuf validation. Ensures data quality by validating messages at the broker before they are accepted.
 - **Interactive Topic Explorer** - Powerful CLI tool to browse topics, navigate messages with live decoding, and manage offsets interactively.
 - **Transactional Messaging** - Atomic multi-message operations with exactly-once semantics.
-- **Dead Letter Queues** - Failed message routing with retry policies.
+- **Dead Letter Queues** - Failed message routing with retry policies and manual re-injection support.
 - **Message TTL & Delayed Delivery** - Time-based expiration and scheduled delivery.
+- **Automatic Batching & Compression** - Support for message grouping and Gzip compression to optimize network throughput.
 
 ### Observability
 - **Prometheus Metrics** - HTTP metrics endpoint for monitoring
@@ -490,6 +494,9 @@ The enterprise deployment script provides comprehensive cluster management:
 | 9094 | Prometheus metrics | Optional |
 | 9095 | Health checks | Recommended |
 | 9096 | Admin API | Recommended |
+| 9097 | gRPC API | Optional |
+| 9098 | WebSocket Gateway | Optional |
+| 1883 | MQTT Bridge | Optional |
 
 ### Cluster Behavior
 
@@ -567,6 +574,21 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
     "timeout": 60
   },
 
+  "grpc": {
+    "enabled": true,
+    "addr": ":9097"
+  },
+
+  "ws": {
+    "enabled": true,
+    "addr": ":9098"
+  },
+
+  "mqtt": {
+    "enabled": true,
+    "addr": ":1883"
+  },
+
   "observability": {
     "metrics": { "enabled": true, "addr": ":9094" },
     "tracing": { "enabled": false, "endpoint": "localhost:4317", "sample_rate": 0.1 },
@@ -602,6 +624,12 @@ FlyMQ can be configured via configuration file (JSON), environment variables, or
 | `FLYMQ_AUTH_ENABLED` | Enable authentication | `false` |
 | `FLYMQ_USERNAME` | Default username for CLI | - |
 | `FLYMQ_PASSWORD` | Default password for CLI | - |
+| `FLYMQ_GRPC_ENABLED` | Enable gRPC server | `false` |
+| `FLYMQ_GRPC_ADDR` | gRPC listen address | `:9097` |
+| `FLYMQ_WS_ENABLED` | Enable WebSocket gateway | `false` |
+| `FLYMQ_WS_ADDR` | WebSocket listen address | `:9098` |
+| `FLYMQ_MQTT_ENABLED` | Enable MQTT bridge | `false` |
+| `FLYMQ_MQTT_ADDR` | MQTT listen address | `:1883` |
 
 **Command-Line Flags:**
 

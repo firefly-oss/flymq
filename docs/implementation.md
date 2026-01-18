@@ -1052,3 +1052,48 @@ Audit events are recorded at key points in the server:
 4. **User Management** - User CRUD operations
 5. **Cluster Events** - Node join/leave events
 
+---
+
+## Multi-Protocol Bridges (gRPC, WS, MQTT)
+
+FlyMQ supports multiple access protocols via lightweight bridges that map protocol-specific requests to core broker operations.
+
+### 1. gRPC Server Implementation
+
+The gRPC server is implemented in `internal/server/grpc/server.go` using the `google.golang.org/grpc` package.
+
+**Security:**
+- **TLS**: Uses the project's standard `crypto` package to load server certificates and optionally CA certificates for mTLS.
+- **Authentication**: Implements both `UnaryInterceptor` and `StreamInterceptor`. Credentials are expected in gRPC metadata under the `username` and `password` keys.
+
+**Cluster Awareness:**
+- The `GetMetadata` RPC returns partition-to-node mappings by calling `Broker.GetClusterMetadata`.
+- Write operations return "not leader" errors if the client connects to the wrong node, including the address of the correct leader.
+
+### 2. WebSocket Gateway Implementation
+
+The WebSocket gateway (`internal/server/ws/gateway.go`) provides a JSON-based command protocol over persistent WebSocket connections.
+
+**Command Protocol:**
+Requests follow a standard JSON format:
+```json
+{"id": "req_1", "command": "produce", "params": {"topic": "orders", "value": "..."}}
+```
+
+**Authentication:**
+- Clients must send a `login` command before performing other operations (unless `allow_anonymous` is enabled).
+- Authenticated usernames are stored in the `wsConn` struct for subsequent authorization checks.
+
+### 3. MQTT Bridge Implementation
+
+The MQTT bridge (`internal/server/bridge/mqtt.go`) supports MQTT v3.1.1 clients by adapting MQTT packets to FlyMQ operations.
+
+**Packet Handling:**
+- **CONNECT**: Custom parser extracts `username` and `password` fields from the payload.
+- **PUBLISH**: Mapped to `Broker.ProduceWithKeyAndPartition`.
+- **SUBSCRIBE**: Spawns a background goroutine (`subscriptionLoop`) that polls the broker and pushes messages to the client using MQTT `PUBLISH` packets.
+
+**Cluster Design:**
+- All bridges use the `Broker` interface, ensuring that operations are replicated via Raft in cluster mode.
+- Bridges are designed to be stateless (with the exception of authenticated connection state), allowing them to scale horizontally behind a load balancer.
+

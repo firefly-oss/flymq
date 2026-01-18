@@ -118,7 +118,11 @@ class Producer:
     def _send_immediate(self, request: ProduceRequest) -> ProduceResult:
         """Send a message immediately."""
         try:
-            offset = self._client.produce(request.topic, request.data)
+            offset = self._client.produce(
+                request.topic,
+                request.data,
+                compression_type=self._config.compression_type
+            )
             result = ProduceResult(topic=request.topic, offset=offset)
 
             if request.callback:

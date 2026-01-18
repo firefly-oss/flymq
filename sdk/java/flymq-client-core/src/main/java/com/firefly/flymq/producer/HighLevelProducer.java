@@ -18,15 +18,19 @@ package com.firefly.flymq.producer;
 import com.firefly.flymq.FlyMQClient;
 import com.firefly.flymq.exception.FlyMQException;
 import com.firefly.flymq.protocol.BinaryProtocol;
+import com.firefly.flymq.protocol.Protocol;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * High-level producer with batching, callbacks, and retries.
@@ -201,13 +205,7 @@ public class HighLevelProducer implements AutoCloseable {
         for (int attempt = 0; attempt <= config.getRetries(); attempt++) {
             try {
                 BinaryProtocol.RecordMetadata meta;
-                if (record.partition != null) {
-                    meta = client.produceToPartition(record.topic, record.partition, record.value);
-                } else if (record.key != null) {
-                    meta = client.produceWithKey(record.topic, record.key, record.value);
-                } else {
-                    meta = client.produce(record.topic, record.value);
-                }
+                meta = client.doProduce(record.topic, record.key, record.value, record.partition, config.getCompressionType());
 
                 ProduceMetadata metadata = new ProduceMetadata(
                     meta.topic(),

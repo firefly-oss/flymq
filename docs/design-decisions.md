@@ -265,3 +265,37 @@ Plan for synchronous replication with configurable consistency levels.
 | `quorum` | Wait for majority | Higher | High |
 | `all` | Wait for all replicas | Highest | Highest |
 
+---
+
+## 11. Multi-Protocol Access (gRPC, WS, MQTT)
+
+### Decision
+Support multiple access protocols (gRPC, WebSocket, MQTT) via lightweight bridges/gateways instead of forcing a single protocol.
+
+### Rationale
+- **Accessibility**: Web browser clients need WebSockets; IoT devices often require MQTT.
+- **Interoperability**: gRPC facilitates client generation in many languages.
+- **Performance**: Retain the custom binary protocol for high-performance internal and SDK-based traffic.
+
+### Trade-offs
+- **Complexity**: Multiple protocols to maintain and secure.
+- **Protocol Impedance**: Not all FlyMQ features map perfectly to MQTT v3.1.1 (e.g., error reporting for fire-and-forget publishes).
+
+---
+
+## 12. Unified Security Model
+
+### Decision
+Apply the same authentication (bcrypt) and authorization (RBAC/ACL) model across all access protocols.
+
+### Rationale
+- **Consistency**: A user's permissions should be the same regardless of how they connect.
+- **Auditability**: Unified audit trail for all security events.
+- **Simplicity**: Reuse existing security infrastructure rather than building protocol-specific silos.
+
+### Implementation
+- **gRPC**: Interceptors for metadata-based authentication.
+- **WebSocket**: JSON-based `login` command.
+- **MQTT**: Standard `CONNECT` packet credentials.
+- **TLS**: Required for all protocols in production environments (WSS for WebSockets).
+

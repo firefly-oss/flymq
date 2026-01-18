@@ -84,7 +84,6 @@ from .client import (
     HighLevelConsumer,
     HighLevelProducer,
     ProduceFuture,
-    ProduceMetadata,
     Transaction,
     connect,
 )
@@ -166,7 +165,6 @@ __all__ = [
     "HighLevelConsumer",
     "HighLevelProducer",
     "ProduceFuture",
-    "ProduceMetadata",
     "RecordMetadata",  # Kafka-like metadata for produced records
     "Transaction",
     "connect",

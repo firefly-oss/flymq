@@ -191,7 +191,7 @@ func TestWriteMessage(t *testing.T) {
 	payload := []byte(`{"topic":"test"}`)
 	var buf bytes.Buffer
 
-	err := WriteMessage(&buf, OpCreateTopic, payload)
+	err := WriteMessage(&buf, OpCreateTopic, payload, 0)
 	if err != nil {
 		t.Fatalf("WriteMessage() error: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestWriteMessage(t *testing.T) {
 func TestWriteMessageEmptyPayload(t *testing.T) {
 	var buf bytes.Buffer
 
-	err := WriteMessage(&buf, OpListTopics, nil)
+	err := WriteMessage(&buf, OpListTopics, nil, 0)
 	if err != nil {
 		t.Fatalf("WriteMessage() error: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestRoundTrip(t *testing.T) {
 
 	// Write all messages
 	for _, m := range messages {
-		if err := WriteMessage(&buf, m.op, m.payload); err != nil {
+		if err := WriteMessage(&buf, m.op, m.payload, 0); err != nil {
 			t.Fatalf("WriteMessage failed: %v", err)
 		}
 	}
@@ -459,4 +459,3 @@ func TestClusterMetadataResponseEncodeDecode(t *testing.T) {
 		})
 	}
 }
-

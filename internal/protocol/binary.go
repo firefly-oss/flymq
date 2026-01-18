@@ -52,6 +52,8 @@ The Flags byte in the header indicates binary mode:
 package protocol
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -61,8 +63,56 @@ import (
 // Flag constants for the header Flags field.
 const (
 	FlagBinary     byte = 0x01 // Payload is binary encoded (not JSON)
-	FlagCompressed byte = 0x02 // Payload is compressed (future)
+	FlagCompressed byte = 0x02 // Payload is compressed (deprecated, use FlagCompression*)
 )
+
+// CompressPayload compresses the payload based on the requested compression type.
+func CompressPayload(payload []byte, compressionType string) ([]byte, byte, error) {
+	switch compressionType {
+	case "gzip":
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		if _, err := w.Write(payload); err != nil {
+			return nil, 0, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, 0, err
+		}
+		return buf.Bytes(), FlagCompressionGzip, nil
+	case "none", "":
+		return payload, 0, nil
+	default:
+		return nil, 0, fmt.Errorf("unsupported compression type: %s", compressionType)
+	}
+}
+
+// DecompressPayload decompresses the payload based on the flags.
+func DecompressPayload(payload []byte, flags byte) ([]byte, error) {
+	// Extract compression bits from flags (bits 1-3)
+	compFlag := flags & 0x0E
+	switch compFlag {
+	case FlagCompressionGzip:
+		r, err := gzip.NewReader(bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		defer r.Close()
+		return io.ReadAll(r)
+	case 0:
+		return payload, nil
+	default:
+		// Check for old FlagCompressed for backward compatibility
+		if flags&FlagCompressed != 0 {
+			r, err := gzip.NewReader(bytes.NewReader(payload))
+			if err != nil {
+				return nil, err
+			}
+			defer r.Close()
+			return io.ReadAll(r)
+		}
+		return payload, nil
+	}
+}
 
 // IsBinaryPayload checks if the message uses binary encoding.
 func IsBinaryPayload(flags byte) bool {
@@ -386,23 +436,7 @@ func DecodeBinaryConsumeResponse(data []byte) (*BinaryConsumeResponse, error) {
 
 // WriteBinaryMessage writes a message with the binary flag set.
 func WriteBinaryMessage(w io.Writer, op OpCode, payload []byte) error {
-	h := Header{
-		Magic:   MagicByte,
-		Version: ProtocolVersion,
-		Op:      op,
-		Flags:   FlagBinary,
-		Length:  uint32(len(payload)),
-	}
-
-	if err := WriteHeader(w, h); err != nil {
-		return err
-	}
-
-	if len(payload) > 0 {
-		_, err := w.Write(payload)
-		return err
-	}
-	return nil
+	return WriteMessage(w, op, payload, FlagBinary)
 }
 
 // FastEncoder provides zero-allocation encoding for high-throughput scenarios.

@@ -678,6 +678,19 @@ func (h *AdminHandler) ReplayDLQMessage(topic, messageID string) error {
 	return fmt.Errorf("message not found: %s", messageID)
 }
 
+// ReplayDLQMessageByOffset replays a message from the DLQ back to the topic using its offset.
+func (h *AdminHandler) ReplayDLQMessageByOffset(topic string, offset uint64) error {
+	if !h.config.DLQ.Enabled {
+		return fmt.Errorf("dead letter queue is not enabled")
+	}
+
+	if h.dlqManager == nil {
+		return fmt.Errorf("DLQ manager not initialized")
+	}
+
+	return h.dlqManager.ReplayMessageByID(topic, offset)
+}
+
 // PurgeDLQ purges all messages from a topic's DLQ.
 func (h *AdminHandler) PurgeDLQ(topic string) error {
 	if !h.config.DLQ.Enabled {
@@ -865,15 +878,15 @@ func (h *AdminHandler) GetStats() (*admin.StatsInfo, error) {
 
 	// Build system stats
 	systemStats := admin.SystemStats{
-		UptimeSeconds:  int64(time.Since(h.startTime).Seconds()),
-		StartTime:      h.startTime.Format(time.RFC3339),
-		GoVersion:      runtime.Version(),
-		NumCPU:         runtime.NumCPU(),
-		MemoryAllocMB:  float64(m.Alloc) / (1024 * 1024),
-		MemoryTotalMB:  float64(m.TotalAlloc) / (1024 * 1024),
-		MemorySysMB:    float64(m.Sys) / (1024 * 1024),
-		Goroutines:     runtime.NumGoroutine(),
-		NumGC:          m.NumGC,
+		UptimeSeconds: int64(time.Since(h.startTime).Seconds()),
+		StartTime:     h.startTime.Format(time.RFC3339),
+		GoVersion:     runtime.Version(),
+		NumCPU:        runtime.NumCPU(),
+		MemoryAllocMB: float64(m.Alloc) / (1024 * 1024),
+		MemoryTotalMB: float64(m.TotalAlloc) / (1024 * 1024),
+		MemorySysMB:   float64(m.Sys) / (1024 * 1024),
+		Goroutines:    runtime.NumGoroutine(),
+		NumGC:         m.NumGC,
 	}
 
 	return &admin.StatsInfo{

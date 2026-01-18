@@ -47,16 +47,21 @@ The following features are implemented and available:
 - ✅ **Partition-Level Leadership** - Horizontal write scaling with per-partition leaders
 - ✅ **mDNS Service Discovery** - Zero-configuration cluster node discovery
 - ✅ **Cluster Metadata API** - Partition-to-node mappings for smart client routing
+- ✅ **gRPC Support** - High-performance gRPC API for production and consumption
+- ✅ **WebSocket Gateway** - Direct browser-based messaging support
+- ✅ **MQTT Bridge** - Basic MQTT v3.1.1 protocol bridging support
 
 ### Performance Improvements
 - ✅ Zero-copy message delivery
-- ✅ Batch compression (LZ4, Snappy, Zstd)
+- ✅ Batch compression (LZ4, Snappy, Zstd, Gzip)
 - ✅ Connection multiplexing
 - ✅ Async disk I/O
+- ✅ **Automatic SDK Batching** - Optimized client-side message grouping
 
 ### Advanced Messaging Features
 - ✅ Message schemas with validation (JSON Schema, Avro, Protobuf)
 - ✅ Dead letter queues with retry policies
+- ✅ **DLQ Re-injection** - Manual re-injection of failed messages by offset
 - ✅ Message TTL and expiration
 - ✅ Delayed message delivery
 - ✅ Transaction support (exactly-once semantics)
@@ -71,8 +76,8 @@ The following features are implemented and available:
 
 ### Client SDKs
 - ✅ Go client with full feature support
-- ✅ Python SDK (`pyflymq`) with authentication, consumer groups, and encryption
-- ✅ Java SDK with Spring Boot and WebFlux integration
+- ✅ Python SDK (`pyflymq`) with authentication, consumer groups, encryption, and compression
+- ✅ Java SDK with Spring Boot, WebFlux integration, and compression
 - ✅ **High-Level APIs** - Kafka-like `producer()` and `consumer()` patterns
 - ✅ **Multi-Partition Aware** - High-level consumers automatically discover and consume from all partitions
 - ✅ **RecordMetadata** - Complete metadata returned from all produce operations
@@ -82,6 +87,7 @@ The following features are implemented and available:
 - ✅ **Server-Side Filtering Support** - Content filters in all SDK consumers
 - ✅ **Advanced SerDe Support** - Typed objects with JSON/String/Binary encoders
 - ✅ **Java ConsumerGroup** - High-level pattern subscription support with multi-partition awareness
+- ✅ **Automatic Compression** - Transparent Gzip compression in Python and Java SDKs
 
 ### Deployment & Operations
 - ✅ Interactive installer for Linux, macOS, Windows
@@ -98,10 +104,6 @@ These features are under consideration for future versions:
 
 ### Protocol Enhancements
 - Binary payload encoding (Protocol Buffers, MessagePack)
-- HTTP/2 and gRPC support
-- WebSocket support for browser clients
-
-### Storage Optimizations
 - Tiered storage (hot/warm/cold)
 - S3-compatible object storage backend
 - Compaction strategies

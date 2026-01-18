@@ -35,6 +35,7 @@ public class ProducerConfig {
     private final String acks;
     private final int retries;
     private final int retryBackoffMs;
+    private final String compressionType;
 
     private ProducerConfig(Builder builder) {
         this.batchSize = builder.batchSize;
@@ -43,6 +44,7 @@ public class ProducerConfig {
         this.acks = builder.acks;
         this.retries = builder.retries;
         this.retryBackoffMs = builder.retryBackoffMs;
+        this.compressionType = builder.compressionType;
     }
 
     public static ProducerConfig defaults() {
@@ -59,6 +61,7 @@ public class ProducerConfig {
     public String getAcks() { return acks; }
     public int getRetries() { return retries; }
     public int getRetryBackoffMs() { return retryBackoffMs; }
+    public String getCompressionType() { return compressionType; }
 
     public static class Builder {
         private int batchSize = 16384;
@@ -67,6 +70,7 @@ public class ProducerConfig {
         private String acks = "leader";
         private int retries = 3;
         private int retryBackoffMs = 100;
+        private String compressionType = "none";
 
         public Builder batchSize(int batchSize) {
             this.batchSize = batchSize;
@@ -95,6 +99,11 @@ public class ProducerConfig {
 
         public Builder retryBackoffMs(int retryBackoffMs) {
             this.retryBackoffMs = retryBackoffMs;
+            return this;
+        }
+
+        public Builder compressionType(String compressionType) {
+            this.compressionType = compressionType;
             return this;
         }
 

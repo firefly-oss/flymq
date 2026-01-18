@@ -55,6 +55,10 @@ public final class Protocol {
     /** Maximum allowed message payload size (32MB). */
     public static final int MAX_MESSAGE_SIZE = 32 * 1024 * 1024;
 
+    // Compression flags
+    public static final byte FLAG_BINARY = 0x01;
+    public static final byte FLAG_COMPRESSION_GZIP = 0x01 << 1; // bits 1-3 for compression
+
     private Protocol() {
         // Utility class
     }
@@ -224,14 +228,18 @@ public final class Protocol {
      * @param payload the payload (may be empty or null)
      * @throws IOException if an I/O error occurs
      */
-    public static void writeMessage(OutputStream out, OpCode op, byte[] payload) throws IOException {
+    public static void writeMessage(OutputStream out, OpCode op, byte[] payload, byte flags) throws IOException {
         byte[] actualPayload = payload != null ? payload : new byte[0];
-        Header header = Header.create(op, actualPayload.length);
+        Header header = new Header(MAGIC_BYTE, PROTOCOL_VERSION, op, flags, actualPayload.length);
         writeHeader(out, header);
         if (actualPayload.length > 0) {
             out.write(actualPayload);
         }
         out.flush();
+    }
+
+    public static void writeMessage(OutputStream out, OpCode op, byte[] payload) throws IOException {
+        writeMessage(out, op, payload, (byte) 0);
     }
 
     /**

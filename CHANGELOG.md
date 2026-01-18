@@ -9,6 +9,34 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ### Added
 
+#### Multi-Protocol Support
+- **gRPC Server** - High-performance gRPC API for production workloads
+  - Full FlyMQ service implementation with streaming consume support
+  - Authentication and authorization integration
+  - TLS support with auto-generated certificates
+  - Protobuf definitions for type-safe client generation
+- **WebSocket Gateway** - Direct browser-based messaging support
+  - JSON-based WebSocket API for web applications
+  - Real-time message streaming with subscription management
+  - Authentication support with session management
+  - CORS-enabled for cross-origin browser requests
+- **MQTT Bridge** - IoT workload support with MQTT v3.1.1 compatibility
+  - Basic MQTT packet handling (CONNECT, PUBLISH, SUBSCRIBE, PINGREQ)
+  - Topic bridging between MQTT and FlyMQ topics
+  - Authentication integration with FlyMQ's RBAC system
+  - TLS support for secure MQTT connections
+
+#### Message Compression
+- **Multi-Algorithm Support** - Efficient message compression to reduce network overhead
+  - LZ4 compression for speed-optimized scenarios
+  - Zstd compression for balanced speed/ratio
+  - Snappy compression for Google ecosystem compatibility
+  - Automatic compression detection and decompression
+- **Protocol Integration** - Compression flags in binary protocol
+  - `FlagCompressionLZ4`, `FlagCompressionZstd`, `FlagCompressionSnappy`
+  - Backward-compatible protocol extension
+  - Client SDK support across Go, Python, and Java
+
 #### Best-in-Class Topic & Message Filtering
 - **JSON Path Filtering** - Support for server-side filtering using JSON Path expressions (`$.field.subfield`) in addition to regex and substring matching.
 - **Enhanced Topic Matcher** - Trie-based matcher for efficient MQTT-style wildcard matching (`+`, `#`).
@@ -32,6 +60,9 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 - **CLI Flags** - Enhanced `produce`, `consume`, `subscribe`, and `explore` with `--encoder`, `--decoder`, and `--schema` flags.
 
 ### Changed
+- **Protocol Enhancement** - Extended binary protocol with compression support and flags parameter in `WriteMessage()`
+- **Server Architecture** - Modular server design with separate gRPC, WebSocket, and MQTT components
+- **Configuration** - New configuration sections for gRPC, WebSocket, and MQTT with individual TLS settings
 - **Documentation Clarity** - Updated `README.md` to clearly distinguish between **Client-Side SerDe** and **Server-Side Schema Store**.
 - **Installation Experience** - Updated `install.sh` with dedicated prompts for Avro/Protobuf SerDe options and clarified Schema Store configuration.
 - **CLI Help** - Refined help messages to improve discoverability of advanced features like audit trail and schema validation.

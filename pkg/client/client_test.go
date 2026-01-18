@@ -159,7 +159,7 @@ func TestClientCreateTopic(t *testing.T) {
 			t.Errorf("Expected OpCreateTopic, got %d", msg.Header.Op)
 		}
 
-		protocol.WriteMessage(conn, protocol.OpCreateTopic, nil)
+		protocol.WriteMessage(conn, protocol.OpCreateTopic, nil, 0)
 	})
 	defer listener.Close()
 
@@ -223,7 +223,7 @@ func TestClientDeleteTopic(t *testing.T) {
 			t.Errorf("Expected OpDeleteTopic, got %d", msg.Header.Op)
 		}
 
-		protocol.WriteMessage(conn, protocol.OpDeleteTopic, nil)
+		protocol.WriteMessage(conn, protocol.OpDeleteTopic, nil, 0)
 	})
 	defer listener.Close()
 
@@ -242,7 +242,7 @@ func TestClientDeleteTopic(t *testing.T) {
 func TestClientServerError(t *testing.T) {
 	listener := mockServer(t, func(conn net.Conn) {
 		protocol.ReadMessage(conn)
-		protocol.WriteMessage(conn, protocol.OpError, []byte("topic not found"))
+		protocol.WriteMessage(conn, protocol.OpError, []byte("topic not found"), 0)
 	})
 	defer listener.Close()
 

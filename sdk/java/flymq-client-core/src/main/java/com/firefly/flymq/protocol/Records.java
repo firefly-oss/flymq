@@ -393,4 +393,19 @@ public final class Records {
             int totalCount,
             boolean hasMore
     ) {}
+    /**
+     * Request to re-inject a DLQ message by offset.
+     */
+    public record ReInjectDLQRequest(
+            String topic,
+            long offset
+    ) {}
+
+    /**
+     * Response to a success/failure operation.
+     */
+    public record SuccessResponse(
+            boolean success,
+            String message
+    ) {}
 }

@@ -35,6 +35,10 @@ PROTOCOL_VERSION: int = 0x01
 HEADER_SIZE: int = 8
 MAX_MESSAGE_SIZE: int = 32 * 1024 * 1024  # 32MB
 
+# Flags
+FLAG_BINARY: int = 0x01
+FLAG_COMPRESSION_GZIP: int = 0x01 << 1  # bits 1-3 for compression
+
 
 class OpCode(IntEnum):
     """Operation codes for FlyMQ protocol messages."""
@@ -290,7 +294,7 @@ def read_message(reader: BinaryIO) -> Message:
     return Message(header=header, payload=payload)
 
 
-def write_message(writer: BinaryIO, op: OpCode, payload: bytes = b"") -> None:
+def write_message(writer: BinaryIO, op: OpCode, payload: bytes = b"", flags: int = 0) -> None:
     """
     Write a complete message (header + payload) to a binary stream.
 
@@ -298,12 +302,13 @@ def write_message(writer: BinaryIO, op: OpCode, payload: bytes = b"") -> None:
         writer: Binary stream to write to.
         op: Operation code for the message.
         payload: Message payload (default: empty).
+        flags: Message flags (default: 0).
     """
     header = Header(
         magic=MAGIC_BYTE,
         version=PROTOCOL_VERSION,
         op=op,
-        flags=0,
+        flags=flags,
         length=len(payload),
     )
     write_header(writer, header)

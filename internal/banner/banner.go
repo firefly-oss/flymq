@@ -240,6 +240,12 @@ func printCompactConfig(w io.Writer, cfg *config.Config) {
 
 	fmt.Fprintln(w)
 
+	// === PROTOCOL BRIDGES ===
+	printSectionHeader(w, "Protocol Bridges", lineWidth)
+	printBridgesInfo(w, cfg)
+
+	fmt.Fprintln(w)
+
 	// === OBSERVABILITY ===
 	printSectionHeader(w, "Endpoints", lineWidth)
 	printEndpointsInfo(w, cfg)
@@ -463,6 +469,56 @@ func printFeaturesInfo(w io.Writer, cfg *config.Config) {
 
 	if len(disabled) > 0 {
 		fmt.Fprintf(w, "  %-14s %s\n", AnsiDim+"Disabled:"+AnsiReset, AnsiDim+strings.Join(disabled, ", ")+AnsiReset)
+	}
+}
+
+func printBridgesInfo(w io.Writer, cfg *config.Config) {
+	var bridges []string
+
+	if cfg.GRPC.Enabled {
+		status := AnsiGreen + cfg.GRPC.Addr + AnsiReset
+		isTLS, _, _, _ := cfg.GetGRPCTLSConfig()
+		if isTLS {
+			status += " (TLS)"
+		}
+		bridges = append(bridges, fmtKV("gRPC", status))
+	}
+
+	if cfg.WS.Enabled {
+		status := AnsiGreen + cfg.WS.Addr + AnsiReset
+		isTLS, _, _, _ := cfg.GetWSTLSConfig()
+		if isTLS {
+			status += " (WSS)"
+		}
+		bridges = append(bridges, fmtKV("WebSocket", status))
+	}
+
+	if cfg.MQTT.Enabled {
+		status := AnsiGreen + cfg.MQTT.Addr + AnsiReset
+		isTLS, _, _, _ := cfg.GetMQTTTLSConfig()
+		if isTLS {
+			status += " (TLS)"
+		}
+		bridges = append(bridges, fmtKV("MQTT", status))
+	}
+
+	if len(bridges) == 0 {
+		fmt.Fprintln(w, "  "+AnsiDim+"None enabled"+AnsiReset)
+		return
+	}
+
+	// Print in rows
+	for i := 0; i < len(bridges); i += 2 {
+		col1 := bridges[i]
+		col2 := ""
+		if i+1 < len(bridges) {
+			col2 = bridges[i+1]
+		}
+		if col2 != "" {
+			printRow2(w, col1, col2)
+		} else {
+			fmt.Fprintln(w, "  "+col1)
+		}
 	}
 }
 

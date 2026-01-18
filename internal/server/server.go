@@ -89,6 +89,9 @@ import (
 	"flymq/internal/performance"
 	"flymq/internal/protocol"
 	"flymq/internal/schema"
+	"flymq/internal/server/bridge"
+	"flymq/internal/server/grpc"
+	"flymq/internal/server/ws"
 	"flymq/internal/transaction"
 	"flymq/internal/ttl"
 )
@@ -319,6 +322,21 @@ type Server struct {
 
 	// auditStore handles audit trail logging
 	auditStore audit.Store
+
+	// grpcServer is the gRPC server instance
+	grpcServer GRPCServer
+
+	// mqttBridge is the MQTT bridge instance
+	mqttBridge *bridge.MQTTBridge
+
+	// wsGateway is the WebSocket gateway instance
+	wsGateway *ws.Gateway
+}
+
+// GRPCServer defines the interface for the gRPC server to avoid circular dependencies
+type GRPCServer interface {
+	Start() error
+	Stop()
 }
 
 // brokerMessageStore adapts the Broker interface to delayed.MessageStore.
@@ -580,7 +598,7 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		}
 	}
 
-	return &Server{
+	s := &Server{
 		config:         cfg,
 		broker:         broker,
 		logger:         baseLogger,
@@ -605,6 +623,20 @@ func NewServer(cfg *config.Config, broker Broker) *Server {
 		txnCoordinator:  txnCoordinator,
 		auditStore:      auditStore,
 	}
+
+	if cfg.GRPC.Enabled {
+		// Pass the broker and authorizer
+		s.grpcServer = grpc.NewServer(cfg, broker, authorizer, baseLogger)
+	}
+
+	// Initialize MQTT bridge (always initialized if needed, but only started if configured)
+	// For now we just create it
+	s.mqttBridge = bridge.NewMQTTBridge(cfg, broker, authorizer, baseLogger)
+
+	// Initialize WebSocket gateway
+	s.wsGateway = ws.NewGateway(cfg, broker, authorizer, baseLogger)
+
+	return s
 }
 
 // Start begins accepting client connections on the configured address.
@@ -671,6 +703,32 @@ func (s *Server) Start() error {
 	// This allows Start() to return immediately while the server
 	// continues accepting connections.
 	go s.acceptLoop()
+
+	if s.config.GRPC.Enabled && s.grpcServer != nil {
+		s.logger.Info("Starting gRPC server", "addr", s.config.GRPC.Addr)
+		if err := s.grpcServer.Start(); err != nil {
+			s.logger.Error("Failed to start gRPC server", "error", err)
+		}
+	}
+
+	// Start MQTT bridge (simplified activation for now)
+	if s.config.MQTT.Enabled && s.mqttBridge != nil {
+		go func() {
+			if err := s.mqttBridge.Start(); err != nil {
+				s.logger.Error("Failed to start MQTT bridge", "error", err)
+			}
+		}()
+	}
+
+	// Start WebSocket gateway
+	if s.config.WS.Enabled && s.wsGateway != nil {
+		go func() {
+			if err := s.wsGateway.Start(); err != nil {
+				s.logger.Error("Failed to start WebSocket gateway", "error", err)
+			}
+		}()
+	}
+
 	return nil
 }
 
@@ -768,6 +826,24 @@ func (s *Server) Stop() error {
 	if s.auditStore != nil {
 		s.auditStore.Close()
 		s.logger.Debug("Audit store closed")
+	}
+
+	// Stop gRPC server if it was started
+	if s.grpcServer != nil {
+		s.grpcServer.Stop()
+		s.logger.Debug("gRPC server stopped")
+	}
+
+	// Stop WebSocket gateway if it was started
+	if s.wsGateway != nil {
+		s.wsGateway.Stop()
+		s.logger.Debug("WebSocket gateway stopped")
+	}
+
+	// Stop MQTT bridge if it was started
+	if s.mqttBridge != nil {
+		s.mqttBridge.Stop()
+		s.logger.Debug("MQTT bridge stopped")
 	}
 
 	s.logger.Info("Server stopped")
@@ -968,122 +1044,134 @@ func (s *Server) handleConn(conn net.Conn) {
 // Handlers return errors which are sent to the client as error responses.
 // Unknown opcodes return an error rather than silently failing.
 func (s *Server) handleMessage(conn io.Writer, msg *protocol.Message) error {
+	payload := msg.Payload
+	var err error
+
+	// Decompress payload if compression flag is set
+	if msg.Header.Flags&0x07 != 0 || msg.Header.Flags&protocol.FlagCompressed != 0 {
+		payload, err = protocol.DecompressPayload(msg.Payload, msg.Header.Flags)
+		if err != nil {
+			s.errorLogger.LogError(err, "decompress", nil)
+			return err
+		}
+	}
+
 	switch msg.Header.Op {
 	// ========== Core Message Operations ==========
 	case protocol.OpProduce:
-		return s.handleProduce(conn, msg.Payload, msg.Header.Flags)
+		return s.handleProduce(conn, payload, msg.Header.Flags)
 	case protocol.OpConsume:
-		return s.handleConsume(conn, msg.Payload, msg.Header.Flags)
+		return s.handleConsume(conn, payload, msg.Header.Flags)
 	case protocol.OpConsumeZeroCopy:
-		return s.handleConsumeZeroCopy(conn, msg.Payload)
+		return s.handleConsumeZeroCopy(conn, payload)
 	case protocol.OpFetch:
-		return s.handleFetch(conn, msg.Payload, msg.Header.Flags)
+		return s.handleFetch(conn, payload, msg.Header.Flags)
 	case protocol.OpFetchBinary:
-		return s.handleFetchBinary(conn, msg.Payload)
+		return s.handleFetchBinary(conn, payload)
 
 	// ========== Topic Management ==========
 	case protocol.OpCreateTopic:
-		return s.handleCreateTopic(conn, msg.Payload, msg.Header.Flags)
+		return s.handleCreateTopic(conn, payload, msg.Header.Flags)
 	case protocol.OpDeleteTopic:
-		return s.handleDeleteTopic(conn, msg.Payload, msg.Header.Flags)
+		return s.handleDeleteTopic(conn, payload, msg.Header.Flags)
 	case protocol.OpListTopics:
 		return s.handleListTopics(conn)
 
 	// ========== Consumer Group Operations ==========
 	case protocol.OpSubscribe:
-		return s.handleSubscribe(conn, msg.Payload, msg.Header.Flags)
+		return s.handleSubscribe(conn, payload, msg.Header.Flags)
 	case protocol.OpCommit:
-		return s.handleCommit(conn, msg.Payload, msg.Header.Flags)
+		return s.handleCommit(conn, payload, msg.Header.Flags)
 	case protocol.OpGetOffset:
-		return s.handleGetOffset(conn, msg.Payload)
+		return s.handleGetOffset(conn, payload)
 	case protocol.OpResetOffset:
-		return s.handleResetOffset(conn, msg.Payload)
+		return s.handleResetOffset(conn, payload)
 	case protocol.OpListGroups:
 		return s.handleListGroups(conn)
 	case protocol.OpDescribeGroup:
-		return s.handleDescribeGroup(conn, msg.Payload)
+		return s.handleDescribeGroup(conn, payload)
 	case protocol.OpGetLag:
-		return s.handleGetLag(conn, msg.Payload)
+		return s.handleGetLag(conn, payload)
 	case protocol.OpDeleteGroup:
-		return s.handleDeleteGroup(conn, msg.Payload)
+		return s.handleDeleteGroup(conn, payload)
 
 	// ========== Advanced Message Operations ==========
 	case protocol.OpProduceDelayed:
-		return s.handleProduceDelayed(conn, msg.Payload)
+		return s.handleProduceDelayed(conn, payload)
 	case protocol.OpProduceWithTTL:
-		return s.handleProduceWithTTL(conn, msg.Payload)
+		return s.handleProduceWithTTL(conn, payload)
 	case protocol.OpProduceWithSchema:
-		return s.handleProduceWithSchema(conn, msg.Payload)
+		return s.handleProduceWithSchema(conn, payload)
 
 	// ========== Schema Registry Operations ==========
 	case protocol.OpRegisterSchema:
-		return s.handleRegisterSchema(conn, msg.Payload)
+		return s.handleRegisterSchema(conn, payload)
 	case protocol.OpListSchemas:
-		return s.handleListSchemas(conn, msg.Payload)
+		return s.handleListSchemas(conn, payload)
 	case protocol.OpValidateSchema:
-		return s.handleValidateSchema(conn, msg.Payload)
+		return s.handleValidateSchema(conn, payload)
 	case protocol.OpGetSchema:
-		return s.handleGetSchema(conn, msg.Payload)
+		return s.handleGetSchema(conn, payload)
 	case protocol.OpDeleteSchema:
-		return s.handleDeleteSchema(conn, msg.Payload)
+		return s.handleDeleteSchema(conn, payload)
 
 	// ========== Dead Letter Queue Operations ==========
 	case protocol.OpGetDLQMessages:
-		return s.handleGetDLQMessages(conn, msg.Payload)
+		return s.handleGetDLQMessages(conn, payload)
 	case protocol.OpReplayDLQ:
-		return s.handleReplayDLQ(conn, msg.Payload)
+		return s.handleReplayDLQ(conn, payload)
 	case protocol.OpPurgeDLQ:
-		return s.handlePurgeDLQ(conn, msg.Payload)
+		return s.handlePurgeDLQ(conn, payload)
 
 	// ========== Transaction Operations ==========
 	case protocol.OpBeginTx:
-		return s.handleBeginTx(conn, msg.Payload)
+		return s.handleBeginTx(conn, payload)
 	case protocol.OpCommitTx:
-		return s.handleCommitTx(conn, msg.Payload)
+		return s.handleCommitTx(conn, payload)
 	case protocol.OpAbortTx:
-		return s.handleAbortTx(conn, msg.Payload)
+		return s.handleAbortTx(conn, payload)
 	case protocol.OpProduceTx:
-		return s.handleProduceTx(conn, msg.Payload)
+		return s.handleProduceTx(conn, payload)
 
 	// ========== Authentication Operations ==========
 	case protocol.OpAuth:
-		return s.handleAuth(conn, msg.Payload)
+		return s.handleAuth(conn, payload)
 	case protocol.OpWhoAmI:
 		return s.handleWhoAmI(conn)
 
 	// ========== User Management Operations ==========
 	case protocol.OpUserCreate:
-		return s.handleUserCreate(conn, msg.Payload)
+		return s.handleUserCreate(conn, payload)
 	case protocol.OpUserDelete:
-		return s.handleUserDelete(conn, msg.Payload)
+		return s.handleUserDelete(conn, payload)
 	case protocol.OpUserUpdate:
-		return s.handleUserUpdate(conn, msg.Payload)
+		return s.handleUserUpdate(conn, payload)
 	case protocol.OpUserList:
 		return s.handleUserList(conn)
 	case protocol.OpUserGet:
-		return s.handleUserGet(conn, msg.Payload)
+		return s.handleUserGet(conn, payload)
 	case protocol.OpACLSet:
-		return s.handleACLSet(conn, msg.Payload)
+		return s.handleACLSet(conn, payload)
 	case protocol.OpACLGet:
-		return s.handleACLGet(conn, msg.Payload)
+		return s.handleACLGet(conn, payload)
 	case protocol.OpACLDelete:
-		return s.handleACLDelete(conn, msg.Payload)
+		return s.handleACLDelete(conn, payload)
 	case protocol.OpACLList:
 		return s.handleACLList(conn)
 	case protocol.OpPasswordChange:
-		return s.handlePasswordChange(conn, msg.Payload)
+		return s.handlePasswordChange(conn, payload)
 	case protocol.OpRoleList:
 		return s.handleRoleList(conn)
 
 	// ========== Cluster Operations ==========
 	case protocol.OpClusterMetadata:
-		return s.handleClusterMetadata(conn, msg.Payload)
+		return s.handleClusterMetadata(conn, payload)
 
 	// ========== Audit Trail Operations ==========
 	case protocol.OpAuditQuery:
-		return s.handleAuditQuery(conn, msg.Payload)
+		return s.handleAuditQuery(conn, payload)
 	case protocol.OpAuditExport:
-		return s.handleAuditExport(conn, msg.Payload)
+		return s.handleAuditExport(conn, payload)
 
 	default:
 		return fmt.Errorf("unknown opcode: %d", msg.Header.Op)

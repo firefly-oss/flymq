@@ -267,6 +267,18 @@ func (m *Manager) ReplayMessage(msg *DLQMessage) error {
 	return nil
 }
 
+// ReplayMessageByID fetches a message from the DLQ and re-injects it into the original topic.
+func (m *Manager) ReplayMessageByID(topic string, offset uint64) error {
+	msgs, _, err := m.GetDLQMessages(topic, offset, 1)
+	if err != nil {
+		return err
+	}
+	if len(msgs) == 0 {
+		return fmt.Errorf("message not found at offset %d", offset)
+	}
+	return m.ReplayMessage(msgs[0])
+}
+
 // ReplayAll replays all messages from a DLQ topic.
 func (m *Manager) ReplayAll(topic string) (int, error) {
 	dlqTopic := m.GetDLQTopic(topic)

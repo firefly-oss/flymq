@@ -361,17 +361,43 @@ public class FlyMQClient implements AutoCloseable {
         }
     }
 
+    public BinaryProtocol.RecordMetadata doProduce(String topic, byte[] key, byte[] data, Integer partition, String compressionType)
+            throws FlyMQException {
+        byte[] payload = BinaryProtocol.encodeProduceWithKeyAndPartitionRequest(topic, key, data, partition != null ? partition : -1);
+        byte flags = Protocol.FLAG_BINARY;
+
+        if ("gzip".equalsIgnoreCase(compressionType)) {
+            try {
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                GZIPOutputStream gos = new GZIPOutputStream(bos);
+                gos.write(payload);
+                gos.close();
+                payload = bos.toByteArray();
+                flags |= Protocol.FLAG_COMPRESSION_GZIP;
+            } catch (IOException e) {
+                log.warn("Failed to compress payload, sending uncompressed", e);
+            }
+        }
+
+        byte[] response = sendBinaryRequestWithFlags(OpCode.PRODUCE, payload, flags);
+        return BinaryProtocol.decodeRecordMetadata(response);
+    }
+
     /**
      * Sends a binary-encoded request and returns the raw binary response.
      * This is the primary method for all binary protocol operations.
      */
     private byte[] sendBinaryRequest(OpCode op, byte[] payload) throws FlyMQException {
+        return sendBinaryRequestWithFlags(op, payload, Protocol.FLAG_BINARY);
+    }
+
+    private byte[] sendBinaryRequestWithFlags(OpCode op, byte[] payload, byte flags) throws FlyMQException {
         lock.lock();
         try {
             ensureConnected();
 
             byte[] payloadBytes = payload != null ? payload : new byte[0];
-            Protocol.writeMessage(outputStream, op, payloadBytes);
+            Protocol.writeMessage(outputStream, op, payloadBytes, flags);
 
             Protocol.Message response = Protocol.readMessage(inputStream);
 
@@ -401,6 +427,38 @@ public class FlyMQClient implements AutoCloseable {
             throw new FlyMQException("Not leader: " + errorMsg);
         }
         throw new FlyMQException("Server error: " + errorMsg);
+    }
+
+    /**
+     * Re-injects a message from the DLQ into its original topic by offset.
+     *
+     * @param topic original topic name
+     * @param offset offset of the message in the DLQ
+     * @return true if successful
+     * @throws FlyMQException if the operation fails
+     */
+    public boolean reInjectDLQ(String topic, long offset) throws FlyMQException {
+        lock.lock();
+        try {
+            ensureConnected();
+            var req = new ReInjectDLQRequest(topic, offset);
+            byte[] payload = BinaryProtocol.encodeReInjectDLQRequest(req);
+
+            Protocol.writeMessage(outputStream, OpCode.REPLAY_DLQ, payload, (byte) 0x01); // 0x01 = Binary
+            var msg = Protocol.readMessage(inputStream);
+
+            if (msg.header().op() == OpCode.ERROR) {
+                throw new ProtocolException(new String(msg.payload(), StandardCharsets.UTF_8));
+            }
+
+            var resp = BinaryProtocol.decodeSuccessResponse(msg.payload());
+            return resp.success();
+        } catch (IOException e) {
+            reconnect();
+            return reInjectDLQ(topic, offset);
+        } finally {
+            lock.unlock();
+        }
     }
 
     @Override

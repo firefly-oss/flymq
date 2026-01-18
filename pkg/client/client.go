@@ -86,6 +86,14 @@ type ClientOptions struct {
 	// SerDe (Serializer/Deserializer)
 	Encoder Encoder // Default encoder for payloads
 	Decoder Decoder // Default decoder for payloads
+
+	// Batching configuration
+	BatchEnabled   bool          // Enable automatic batching
+	BatchSize      int           // Maximum messages in a batch (default: 100)
+	BatchMaxWaitMs time.Duration // Maximum time to wait before sending a batch (default: 100ms)
+
+	// Compression configuration
+	CompressionType string // "none", "gzip", "lz4", "zstd", "snappy" (default: "none")
 }
 
 // Client represents a FlyMQ client connection with HA support.
@@ -101,6 +109,35 @@ type Client struct {
 	username      string        // Authenticated username
 	encoder       Encoder       // Current encoder
 	decoder       Decoder       // Current decoder
+
+	// Batching
+	batcher *batcher
+}
+
+// batcher handles automatic batching of messages.
+type batcher struct {
+	client    *Client
+	batches   map[string]*batch // topic -> batch
+	mu        sync.Mutex
+	stopCh    chan struct{}
+	closeOnce sync.Once
+}
+
+type batch struct {
+	topic    string
+	messages []batchMessage
+	timer    *time.Timer
+}
+
+type batchMessage struct {
+	key      []byte
+	value    []byte
+	resultCh chan batchResult
+}
+
+type batchResult struct {
+	meta *protocol.RecordMetadata
+	err  error
 }
 
 // NewClient creates a new client connected to the specified address.
@@ -190,6 +227,15 @@ func NewClientWithOptions(addr string, opts ClientOptions) (*Client, error) {
 		opts.Decoder = BinarySerde
 	}
 
+	if opts.BatchEnabled {
+		if opts.BatchSize == 0 {
+			opts.BatchSize = 100
+		}
+		if opts.BatchMaxWaitMs == 0 {
+			opts.BatchMaxWaitMs = 100 * time.Millisecond
+		}
+	}
+
 	// Build server list
 	servers := opts.BootstrapServers
 	if len(servers) == 0 {
@@ -202,6 +248,14 @@ func NewClientWithOptions(addr string, opts ClientOptions) (*Client, error) {
 		opts:          opts,
 		encoder:       opts.Encoder,
 		decoder:       opts.Decoder,
+	}
+
+	if opts.BatchEnabled {
+		client.batcher = &batcher{
+			client:  client,
+			batches: make(map[string]*batch),
+			stopCh:  make(chan struct{}),
+		}
 	}
 
 	// Configure TLS if enabled
@@ -294,10 +348,76 @@ func (c *Client) connectToServer(addr string) error {
 
 // Close closes the client connection.
 func (c *Client) Close() error {
+	if c.batcher != nil {
+		c.batcher.close()
+	}
 	if c.conn != nil {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+func (b *batcher) close() {
+	b.closeOnce.Do(func() {
+		close(b.stopCh)
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		for _, tb := range b.batches {
+			if tb.timer != nil {
+				tb.timer.Stop()
+			}
+			b.sendBatch(tb)
+		}
+	})
+}
+
+func (b *batcher) sendBatch(tb *batch) {
+	if len(tb.messages) == 0 {
+		return
+	}
+
+	// For now, we'll produce messages individually from the batch
+	// In a real scenario, we'd use a protocol-level ProduceBatch
+	for _, msg := range tb.messages {
+		meta, err := b.client.doProduceRequest(tb.topic, msg.key, msg.value, -1)
+		msg.resultCh <- batchResult{meta: meta, err: err}
+	}
+	tb.messages = nil
+}
+
+func (b *batcher) add(topic string, key, value []byte) <-chan batchResult {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	tb, ok := b.batches[topic]
+	if !ok {
+		tb = &batch{
+			topic: topic,
+		}
+		b.batches[topic] = tb
+	}
+
+	resultCh := make(chan batchResult, 1)
+	tb.messages = append(tb.messages, batchMessage{
+		key:      key,
+		value:    value,
+		resultCh: resultCh,
+	})
+
+	if len(tb.messages) >= b.client.opts.BatchSize {
+		if tb.timer != nil {
+			tb.timer.Stop()
+		}
+		b.sendBatch(tb)
+	} else if len(tb.messages) == 1 {
+		tb.timer = time.AfterFunc(b.client.opts.BatchMaxWaitMs, func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			b.sendBatch(tb)
+		})
+	}
+
+	return resultCh
 }
 
 // IsTLS returns true if the client is using TLS.
@@ -623,6 +743,11 @@ func (c *Client) ProduceObjectWithKey(topic string, key []byte, value interface{
 
 // Produce sends a raw byte slice to a topic.
 func (c *Client) Produce(topic string, data []byte) (*protocol.RecordMetadata, error) {
+	if c.opts.BatchEnabled && c.batcher != nil {
+		result := <-c.batcher.add(topic, nil, data)
+		return result.meta, result.err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.produceWithRetry(topic, nil, data, -1)
@@ -632,6 +757,11 @@ func (c *Client) Produce(topic string, data []byte) (*protocol.RecordMetadata, e
 // Messages with the same key will be sent to the same partition.
 // Returns RecordMetadata with complete information about the produced record.
 func (c *Client) ProduceWithKey(topic string, key, data []byte) (*protocol.RecordMetadata, error) {
+	if c.opts.BatchEnabled && c.batcher != nil {
+		result := <-c.batcher.add(topic, key, data)
+		return result.meta, result.err
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.produceWithRetry(topic, key, data, -1)
@@ -726,7 +856,18 @@ func (c *Client) doProduceRequest(topic string, key, data []byte, partition int)
 		Partition: part,
 	}
 	payload := protocol.EncodeBinaryProduceRequest(req)
-	if err := protocol.WriteBinaryMessage(c.conn, protocol.OpProduce, payload); err != nil {
+	flags := protocol.FlagBinary
+
+	// Apply compression if enabled
+	if c.opts.CompressionType != "" && c.opts.CompressionType != "none" {
+		compressed, compFlag, err := protocol.CompressPayload(payload, c.opts.CompressionType)
+		if err == nil {
+			payload = compressed
+			flags |= compFlag
+		}
+	}
+
+	if err := protocol.WriteMessage(c.conn, protocol.OpProduce, payload, flags); err != nil {
 		return nil, err
 	}
 

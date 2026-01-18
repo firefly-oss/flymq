@@ -67,29 +67,29 @@ BINARY PAYLOAD ENCODING:
 ========================
 All payloads use length-prefixed binary encoding:
 
-  Strings:     [uint16 length][UTF-8 bytes]
-  Byte slices: [uint32 length][raw bytes]
-  Integers:    Big-endian encoding (int32=4 bytes, int64/uint64=8 bytes)
-  Arrays:      [uint32 count][elements...]
-  Booleans:    Single byte (0x00=false, 0x01=true)
+	Strings:     [uint16 length][UTF-8 bytes]
+	Byte slices: [uint32 length][raw bytes]
+	Integers:    Big-endian encoding (int32=4 bytes, int64/uint64=8 bytes)
+	Arrays:      [uint32 count][elements...]
+	Booleans:    Single byte (0x00=false, 0x01=true)
 
 EXAMPLE: PRODUCE REQUEST (OpProduce=0x01)
 =========================================
 Produce "hello" to topic "test":
 
-  Header (8 bytes):
-    AF 01 01 01 00 00 00 13
-    │  │  │  │  └──────────── Length: 19 bytes
-    │  │  │  └─────────────── Flags: 0x01 (binary)
-    │  │  └────────────────── Op: 0x01 (produce)
-    │  └───────────────────── Version: 0x01
-    └──────────────────────── Magic: 0xAF
+	Header (8 bytes):
+	  AF 01 01 01 00 00 00 13
+	  │  │  │  │  └──────────── Length: 19 bytes
+	  │  │  │  └─────────────── Flags: 0x01 (binary)
+	  │  │  └────────────────── Op: 0x01 (produce)
+	  │  └───────────────────── Version: 0x01
+	  └──────────────────────── Magic: 0xAF
 
-  Payload (19 bytes):
-    00 04 74 65 73 74           Topic: "test" (len=4)
-    00 00 00 00                 Key: empty (len=0)
-    00 00 00 05 68 65 6C 6C 6F  Value: "hello" (len=5)
-    FF FF FF FF                 Partition: -1 (auto)
+	Payload (19 bytes):
+	  00 04 74 65 73 74           Topic: "test" (len=4)
+	  00 00 00 00                 Key: empty (len=0)
+	  00 00 00 05 68 65 6C 6C 6F  Value: "hello" (len=5)
+	  FF FF FF FF                 Partition: -1 (auto)
 
 VERSIONING:
 ===========
@@ -98,14 +98,14 @@ servers MUST reject messages with unknown versions or invalid magic bytes.
 
 IMPLEMENTING A CLIENT:
 ======================
-1. Open TCP connection (optionally with TLS)
-2. For each request:
-   a. Encode payload using binary format (see binary.go)
-   b. Write 8-byte header with opcode, flags=0x01, and length
-   c. Write binary payload
-   d. Read 8-byte response header
-   e. Read binary response payload
-   f. Decode binary response
+ 1. Open TCP connection (optionally with TLS)
+ 2. For each request:
+    a. Encode payload using binary format (see binary.go)
+    b. Write 8-byte header with opcode, flags=0x01, and length
+    c. Write binary payload
+    d. Read 8-byte response header
+    e. Read binary response payload
+    f. Decode binary response
 
 See docs/protocol.md for complete protocol specification.
 See binary.go for BinaryXxxRequest/Response structs and EncodeXxx/DecodeXxx functions.
@@ -135,6 +135,12 @@ const (
 
 	// HeaderSize is the fixed size of the message header in bytes.
 	HeaderSize = 8
+
+	// Flag constants for message headers.
+	FlagCompressionGzip   byte = 0x02 // 0x01 << 1
+	FlagCompressionLZ4    byte = 0x04 // 0x02 << 1
+	FlagCompressionZstd   byte = 0x06 // 0x03 << 1
+	FlagCompressionSnappy byte = 0x08 // 0x04 << 1
 )
 
 // OpCode represents the operation type in a protocol message.
@@ -147,17 +153,17 @@ const (
 	// ========== Core Operations (0x01-0x0F) ==========
 	// These are the fundamental message queue operations.
 
-	OpProduce        OpCode = 0x01 // Write a message to a topic
-	OpConsume        OpCode = 0x02 // Read a single message from a topic
-	OpCreateTopic    OpCode = 0x03 // Create a new topic
-	OpMetadata       OpCode = 0x04 // Get topic metadata
-	OpSubscribe      OpCode = 0x05 // Subscribe to a topic with consumer group
-	OpCommit         OpCode = 0x06 // Commit consumer offset (checkpoint progress)
-	OpFetch          OpCode = 0x07 // Fetch multiple messages (batch consume)
-	OpListTopics     OpCode = 0x08 // List all topics
-	OpDeleteTopic    OpCode = 0x09 // Delete a topic and its data
+	OpProduce         OpCode = 0x01 // Write a message to a topic
+	OpConsume         OpCode = 0x02 // Read a single message from a topic
+	OpCreateTopic     OpCode = 0x03 // Create a new topic
+	OpMetadata        OpCode = 0x04 // Get topic metadata
+	OpSubscribe       OpCode = 0x05 // Subscribe to a topic with consumer group
+	OpCommit          OpCode = 0x06 // Commit consumer offset (checkpoint progress)
+	OpFetch           OpCode = 0x07 // Fetch multiple messages (batch consume)
+	OpListTopics      OpCode = 0x08 // List all topics
+	OpDeleteTopic     OpCode = 0x09 // Delete a topic and its data
 	OpConsumeZeroCopy OpCode = 0x0A // Zero-copy consume using sendfile (large messages)
-	OpFetchBinary    OpCode = 0x0B // Binary-encoded batch fetch (high performance)
+	OpFetchBinary     OpCode = 0x0B // Binary-encoded batch fetch (high performance)
 
 	// ========== Schema Operations (0x10-0x1F) ==========
 	// Schema registry for message validation.
@@ -395,11 +401,13 @@ func ReadMessage(r io.Reader) (*Message, error) {
 // - w: Writer to send the message to
 // - op: Operation code for this message
 // - payload: Message payload (binary-encoded, see binary.go)
-func WriteMessage(w io.Writer, op OpCode, payload []byte) error {
+// - flags: Message flags (compression, etc.)
+func WriteMessage(w io.Writer, op OpCode, payload []byte, flags byte) error {
 	h := Header{
 		Magic:   MagicByte,
 		Version: ProtocolVersion,
 		Op:      op,
+		Flags:   flags,
 		Length:  uint32(len(payload)),
 	}
 
@@ -417,5 +425,5 @@ func WriteMessage(w io.Writer, op OpCode, payload []byte) error {
 // WriteError sends an error response to the client.
 // The error message is sent as the payload with OpError opcode.
 func WriteError(w io.Writer, err error) error {
-	return WriteMessage(w, OpError, []byte(err.Error()))
+	return WriteMessage(w, OpError, []byte(err.Error()), 0)
 }

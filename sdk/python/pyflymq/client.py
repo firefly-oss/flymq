@@ -316,13 +316,14 @@ class FlyMQClient:
         if self._sock is None:
             self._connect()
 
-    def _send_binary_request(self, op: OpCode, payload_bytes: bytes) -> bytes:
+    def _send_binary_request(self, op: OpCode, payload_bytes: bytes, flags: int = FLAG_BINARY) -> bytes:
         """
         Send a binary request and receive binary response.
 
         Args:
             op: Operation code.
             payload_bytes: Binary-encoded request payload.
+            flags: Message flags (default: FLAG_BINARY).
 
         Returns:
             Raw binary response payload.
@@ -338,12 +339,12 @@ class FlyMQClient:
             sock_file = self._sock.makefile("rwb")
 
             try:
-                # Write binary message with FLAG_BINARY set
+                # Write binary message
                 header = Header(
                     magic=MAGIC_BYTE,
                     version=PROTOCOL_VERSION,
                     op=op,
-                    flags=FLAG_BINARY,
+                    flags=flags,
                     length=len(payload_bytes),
                 )
                 sock_file.write(header.to_bytes())
@@ -367,6 +368,27 @@ class FlyMQClient:
                 raise ConnectionError(str(e)) from e
             finally:
                 sock_file.close()
+
+    def re_inject_dlq(self, topic: str, offset: int) -> bool:
+        """
+        Re-inject a message from DLQ back into its original topic by offset.
+
+        Args:
+            topic: Original topic name.
+            offset: Offset of the message in DLQ.
+
+        Returns:
+            True if successful.
+        """
+        from .binary import BinaryReInjectDLQRequest, encode_re_inject_dlq_request, decode_success_response
+        
+        req = BinaryReInjectDLQRequest(topic=topic, offset=offset)
+        payload = encode_re_inject_dlq_request(req)
+        
+        # OpCode.REPLAY_DLQ is used for both replay by ID and by offset
+        resp_payload = self._send_binary_request(OpCode.REPLAY_DLQ, payload)
+        resp = decode_success_response(resp_payload)
+        return resp.success
 
     def _handle_server_error(self, error_msg: str) -> None:
         """Handle server error response."""
@@ -526,6 +548,7 @@ class FlyMQClient:
         *,
         key: bytes | str | None = None,
         partition: int | None = None,
+        compression_type: str = "none",
     ) -> RecordMetadata:
         """
         Produce a message to a topic and return RecordMetadata (Kafka-like).
@@ -537,6 +560,7 @@ class FlyMQClient:
                  When provided, messages with the same key go to the same partition.
             partition: Target partition (default: None for automatic selection).
                        If both key and partition are provided, partition takes precedence.
+            compression_type: Compression algorithm to use ("gzip", "none").
 
         Returns:
             RecordMetadata with topic, partition, offset, timestamp, key_size, value_size.
@@ -550,6 +574,7 @@ class FlyMQClient:
             >>> # Explicit partition selection
             >>> meta = client.produce("events", b"data", partition=2)
         """
+        import gzip
         if isinstance(data, str):
             data = data.encode("utf-8")
         if isinstance(key, str):
@@ -566,7 +591,15 @@ class FlyMQClient:
             value=data,
             partition=partition if partition is not None else -1,
         )
-        response_bytes = self._send_binary_request(OpCode.PRODUCE, encode_produce_request(req))
+        
+        payload = encode_produce_request(req)
+        flags = FLAG_BINARY
+
+        if compression_type == "gzip":
+            payload = gzip.compress(payload)
+            flags |= FLAG_COMPRESSION_GZIP
+
+        response_bytes = self._send_binary_request(OpCode.PRODUCE, payload, flags=flags)
         return decode_record_metadata(response_bytes)
 
     def produce_with_key(
@@ -1690,6 +1723,7 @@ class FlyMQClient:
         acks: str = "leader",
         retries: int = 3,
         retry_backoff_ms: int = 100,
+        compression_type: str = "none",
     ) -> "HighLevelProducer":
         """
         Create a high-level producer similar to Kafka's KafkaProducer.
@@ -1709,34 +1743,10 @@ class FlyMQClient:
             acks: Acknowledgment level ("leader" or "all").
             retries: Number of retries on failure.
             retry_backoff_ms: Backoff time between retries.
+            compression_type: Compression algorithm to use ("gzip", "none").
 
         Returns:
             HighLevelProducer instance.
-
-        Example:
-            >>> # Simple usage - immediate send
-            >>> producer = client.producer()
-            >>> producer.send("my-topic", b"Hello!")
-            >>> producer.flush()
-            >>> producer.close()
-
-            >>> # With batching for high throughput
-            >>> producer = client.producer(linger_ms=10, batch_size=32768)
-            >>> for i in range(1000):
-            ...     producer.send("events", f"event-{i}".encode())
-            >>> producer.flush()
-
-            >>> # With callbacks
-            >>> def on_success(metadata):
-            ...     print(f"Sent to {metadata.topic} at offset {metadata.offset}")
-            >>> def on_error(error):
-            ...     print(f"Failed: {error}")
-            >>> producer.send("topic", b"data", on_success=on_success, on_error=on_error)
-
-            >>> # Context manager
-            >>> with client.producer(linger_ms=5) as producer:
-            ...     producer.send("topic", b"message")
-            ...     # Auto-flushes on exit
         """
         return HighLevelProducer(
             self,
@@ -1746,6 +1756,7 @@ class FlyMQClient:
             acks=acks,
             retries=retries,
             retry_backoff_ms=retry_backoff_ms,
+            compression_type=compression_type,
         )
 
 
@@ -1758,12 +1769,6 @@ class HighLevelProducer:
     - Supports async send with callbacks
     - Automatically retries on transient failures
     - Thread-safe for concurrent use
-
-    Example:
-        >>> producer = client.producer(linger_ms=10)
-        >>> producer.send("orders", b'{"id": 1}', key=b"user-123")
-        >>> producer.flush()
-        >>> producer.close()
     """
 
     def __init__(
@@ -1776,6 +1781,7 @@ class HighLevelProducer:
         acks: str = "leader",
         retries: int = 3,
         retry_backoff_ms: int = 100,
+        compression_type: str = "none",
     ) -> None:
         """Initialize high-level producer."""
         self._client = client
@@ -1785,6 +1791,7 @@ class HighLevelProducer:
         self._acks = acks
         self._retries = retries
         self._retry_backoff_ms = retry_backoff_ms
+        self._compression_type = compression_type
         self._closed = False
         self._lock = threading.Lock()
 
@@ -1835,16 +1842,11 @@ class HighLevelProducer:
             value: Message value (bytes or string).
             key: Optional message key for partitioning.
             partition: Optional explicit partition.
-            on_success: Callback on successful send: fn(ProduceMetadata).
+            on_success: Callback on successful send: fn(RecordMetadata).
             on_error: Callback on error: fn(Exception).
 
         Returns:
             ProduceFuture that resolves when the message is sent.
-
-        Example:
-            >>> future = producer.send("topic", b"data")
-            >>> metadata = future.get()  # Block until sent
-            >>> print(f"Sent at offset {metadata.offset}")
         """
         if self._closed:
             raise RuntimeError("Producer is closed")
@@ -1887,16 +1889,12 @@ class HighLevelProducer:
 
         for attempt in range(self._retries + 1):
             try:
-                offset = self._client.produce(
+                metadata = self._client.produce(
                     record["topic"],
                     record["value"],
                     key=record["key"],
                     partition=record["partition"],
-                )
-                metadata = ProduceMetadata(
-                    topic=record["topic"],
-                    partition=record["partition"] or 0,
-                    offset=offset,
+                    compression_type=self._compression_type,
                 )
                 record["future"]._set_result(metadata)
                 if record["on_success"]:
@@ -1974,10 +1972,10 @@ class ProduceFuture:
     def __init__(self) -> None:
         """Initialize future."""
         self._event = threading.Event()
-        self._result: "ProduceMetadata | None" = None
+        self._result: "RecordMetadata | None" = None
         self._error: Exception | None = None
 
-    def _set_result(self, result: "ProduceMetadata") -> None:
+    def _set_result(self, result: "RecordMetadata") -> None:
         """Set successful result."""
         self._result = result
         self._event.set()
@@ -1987,7 +1985,7 @@ class ProduceFuture:
         self._error = error
         self._event.set()
 
-    def get(self, timeout_ms: int = 30000) -> "ProduceMetadata":
+    def get(self, timeout_ms: int = 30000) -> "RecordMetadata":
         """
         Wait for the result.
 
@@ -1995,7 +1993,7 @@ class ProduceFuture:
             timeout_ms: Maximum time to wait.
 
         Returns:
-            ProduceMetadata with topic, partition, and offset.
+            RecordMetadata with topic, partition, and offset.
 
         Raises:
             Exception: If the send failed.
@@ -2016,15 +2014,6 @@ class ProduceFuture:
     def succeeded(self) -> bool:
         """Check if the operation succeeded."""
         return self._event.is_set() and self._error is None
-
-
-@dataclass
-class ProduceMetadata:
-    """Metadata returned after a successful produce."""
-
-    topic: str
-    partition: int
-    offset: int
 
 
 class HighLevelConsumer:
