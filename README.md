@@ -54,15 +54,13 @@ and enterprise-grade security features.
 - **Automatic Failover** - Seamless leader election on node failure
 - **Partition Reassignment** - Dynamic load balancing across nodes
 
-### Advanced Messaging
-- **Best-in-Class Topic Filtering** - Pattern-based subscriptions using Trie-based matching (MQTT-style: `+`, `#`) with support for server-side content filtering (substring, regex, and JSON path).
+### Messaging
 - **Typed SerDe System** - Efficiently handle multiple payload formats (JSON, String, Binary, Avro, Protobuf) with a plug-and-play Registry. Built-in support for real Avro and Protobuf serialization.
 - **Server-Side Schema Store** - Centralized registry for JSON Schema, Avro, and Protobuf validation. Ensures data quality by validating messages at the broker before they are accepted.
 - **Interactive Topic Explorer** - Powerful CLI tool to browse topics, navigate messages with live decoding, and manage offsets interactively.
-- **Dead Letter Queues** - Failed message routing with retry policies
-- **Message TTL** - Time-based message expiration
-- **Delayed Delivery** - Scheduled message delivery
-- **Transactions** - Exactly-once semantics with atomic operations
+- **Transactional Messaging** - Atomic multi-message operations with exactly-once semantics.
+- **Dead Letter Queues** - Failed message routing with retry policies.
+- **Message TTL & Delayed Delivery** - Time-based expiration and scheduled delivery.
 
 ### Observability
 - **Prometheus Metrics** - HTTP metrics endpoint for monitoring
@@ -885,23 +883,23 @@ flymq-cli groups delete <grp>           # Delete a consumer group
 # Advanced Commands
 flymq-cli produce-delayed <topic> <delay> <msg>  # Send with delayed delivery
 flymq-cli produce-ttl <topic> <ttl> <msg>        # Send with time-to-live
-flymq-cli txn                           # Transactional messaging operations
-flymq-cli schema                        # Schema registry management
-flymq-cli dlq                           # Dead letter queue management
+flymq-cli txn <topic> <msg1> [msg2]...  # Transactional messaging
+flymq-cli schema <command>              # Schema registry management
+flymq-cli dlq <command>                 # Dead letter queue management
 
 # Security & Admin
 flymq-cli auth                          # Authenticate and save credentials
 flymq-cli whoami                        # Display current authenticated user
-flymq-cli users                         # Manage users and permissions
-flymq-cli roles                         # Manage RBAC roles
-flymq-cli acl                           # Manage access control lists
-flymq-cli audit                         # Query and export audit logs
-flymq-cli cluster                       # Cluster nodes and partition management
-flymq-cli admin                         # Direct Admin API access
-flymq-cli health                        # Check server health status
+flymq-cli users <command>               # Manage users and permissions
+flymq-cli roles <command>               # Manage RBAC roles
+flymq-cli acl <command>                 # Manage access control lists
+flymq-cli audit <command>               # Query and export audit logs
+flymq-cli cluster <command>             # Cluster nodes and partition management
+flymq-cli admin <command>               # Direct Admin API access
+flymq-cli health <command>              # Check server health status
 ```
 
-Run `flymq-cli <command> --help` for command-specific details and examples.
+Run `flymq-cli <command> --help` for detailed sub-command help and examples.
 
 ---
 
