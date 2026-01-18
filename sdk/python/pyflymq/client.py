@@ -466,6 +466,15 @@ class FlyMQClient:
     # Core Operations
     # =========================================================================
 
+    def set_serde(self, name: str) -> None:
+        """Set default SerDe by name from SerdeRegistry."""
+        from .serde import SerdeRegistry
+        ser, deser = SerdeRegistry.get(name)
+        if ser:
+            self._config.value_serializer = ser
+        if deser:
+            self._config.value_deserializer = deser
+
     def set_serializer(self, serializer: Serializer) -> None:
         """Set default serializer for values."""
         self._config.value_serializer = serializer

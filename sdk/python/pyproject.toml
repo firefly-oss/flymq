@@ -30,6 +30,8 @@ dependencies = [
     "pydantic>=2.5.0",
     "cryptography>=41.0.0",
     "reactivex>=4.0.0",
+    "fastavro>=1.8.0",
+    "protobuf>=4.21.0",
 ]
 
 [project.optional-dependencies]

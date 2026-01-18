@@ -318,7 +318,7 @@ func printUsage() {
 	fmt.Println("    " + cli.Green + "produce" + cli.Reset + " <topic> <msg>    Send a message")
 	fmt.Println("    " + cli.Green + "consume" + cli.Reset + " <topic>          Fetch messages (batch)")
 	fmt.Println("    " + cli.Green + "subscribe" + cli.Reset + " <topic>        Stream messages (like tail -f)")
-	fmt.Println("    " + cli.Green + "explore" + cli.Reset + " <topic>          Interactive topic explorer")
+	fmt.Println("    " + cli.Green + "explore" + cli.Reset + "                  Interactive topic explorer")
 	fmt.Println()
 
 	fmt.Println(cli.Dim + "  Topics" + cli.Reset)
@@ -338,7 +338,7 @@ func printUsage() {
 	fmt.Println("    " + cli.Yellow + "produce-delayed" + cli.Reset + "          Delayed delivery")
 	fmt.Println("    " + cli.Yellow + "produce-ttl" + cli.Reset + "              Message with TTL")
 	fmt.Println("    " + cli.Yellow + "txn" + cli.Reset + "                      Transactional produce")
-	fmt.Println("    " + cli.Yellow + "schema" + cli.Reset + "                   Schema registry")
+	fmt.Println("    " + cli.Yellow + "schema" + cli.Reset + "                   Schema store (server-side validation)")
 	fmt.Println("    " + cli.Yellow + "dlq" + cli.Reset + "                      Dead letter queue")
 	fmt.Println()
 
@@ -352,6 +352,7 @@ func printUsage() {
 	fmt.Println("    " + cli.Magenta + "auth" + cli.Reset + "                     Authenticate")
 	fmt.Println("    " + cli.Magenta + "whoami" + cli.Reset + "                   Current user")
 	fmt.Println("    " + cli.Magenta + "users" + cli.Reset + "/" + cli.Magenta + "roles" + cli.Reset + "/" + cli.Magenta + "acl" + cli.Reset + "        Access control")
+	fmt.Println("    " + cli.Magenta + "audit" + cli.Reset + "                     Audit trail")
 	fmt.Println()
 
 	// Options
@@ -370,7 +371,7 @@ func printUsage() {
 	fmt.Println(cli.Dim + "    # Quick start" + cli.Reset)
 	fmt.Println("    flymq-cli create my-topic")
 	fmt.Println("    flymq-cli produce my-topic \"Hello!\"")
-	fmt.Println("    flymq-cli subscribe my-topic")
+	fmt.Println("    flymq-cli explore")
 	fmt.Println()
 	fmt.Println(cli.Dim + "    # With authentication" + cli.Reset)
 	fmt.Println("    flymq-cli --addr server:9092 -u admin -P secret topics")
@@ -643,6 +644,9 @@ func cmdProduce(args []string) {
 			i++
 		case strings.HasPrefix(args[i], "--encoder="):
 			encoderName = strings.TrimPrefix(args[i], "--encoder=")
+		case (args[i] == "--schema" || args[i] == "-s") && i+1 < len(args):
+			// Flag handled by applySchema later
+			i++
 		}
 	}
 
@@ -653,6 +657,7 @@ func cmdProduce(args []string) {
 		cli.Error("Invalid encoder: %v", err)
 		os.Exit(1)
 	}
+	applySchema(encoderName, args)
 
 	// Use ProduceWithMetadata to get full RecordMetadata
 	// Note: partition flag is parsed but currently the server handles partitioning
@@ -669,6 +674,16 @@ func cmdProduce(args []string) {
 		value = json.RawMessage(message)
 	} else if encoderName == "string" {
 		value = message
+	} else if encoderName == "avro" || encoderName == "protobuf" {
+		// For Avro and Protobuf, we try to parse the message as JSON
+		// and let the SerDe handle the conversion to the binary format
+		var jsonData interface{}
+		if err := json.Unmarshal([]byte(message), &jsonData); err != nil {
+			cli.Warning("Message is not valid JSON, producing as raw bytes for %s", encoderName)
+			value = []byte(message)
+		} else {
+			value = jsonData
+		}
 	}
 
 	if len(key) > 0 {
@@ -791,6 +806,7 @@ func cmdConsume(args []string) {
 		cli.Error("Invalid decoder: %v", err)
 		os.Exit(1)
 	}
+	applySchema(decoderName, args)
 
 	messages, nextOffset, err := c.FetchWithKeys(topic, partition, offset, count, filter)
 	if err != nil {
@@ -3163,6 +3179,10 @@ func printProduceHelp() {
 	fmt.Println("  --key, -k <key>         Message key for partition routing")
 	fmt.Println("                          Messages with the same key go to the same partition")
 	fmt.Println("  --partition, -p <n>     Target partition number (overrides key-based routing)")
+	fmt.Println("  --encoder, -e <name>    Client-side encoder to use (string, json, binary, avro, protobuf)")
+	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf encoders)")
+	fmt.Println()
+	fmt.Println("Note: Client-side encoders (SerDe) are separate from server-side Schema Store validation.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Simple message")
@@ -3194,10 +3214,14 @@ func printConsumeHelp() {
 	fmt.Println("  --count, -n <n>         Number of messages to fetch (default: 10)")
 	fmt.Println("  --partition, -p <n>     Partition to consume from (default: 0)")
 	fmt.Println("  --show-key, -k          Display message keys in output")
-	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring or regex)")
+	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring, regex, or $.json.path)")
+	fmt.Println("  --decoder, -d <name>    Client-side decoder to use (string, json, binary, avro, protobuf)")
+	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf decoders)")
 	fmt.Println("  --quiet, -q             Suppress headers and info messages")
 	fmt.Println("  --raw, -r               Raw output: just message content")
 	fmt.Println("  --no-offset             Hide offset prefix in output")
+	fmt.Println()
+	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Read first 10 messages")
@@ -3244,12 +3268,16 @@ func printSubscribeHelp() {
 	fmt.Println("Other Options:")
 	fmt.Println("  --partition, -p <n>     Partition number (default: 0)")
 	fmt.Println("  --show-key, -k          Display message keys in output")
-	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring or regex)")
+	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring, regex, or $.json.path)")
+	fmt.Println("  --decoder, -d <name>    Client-side decoder to use (string, json, binary, avro, protobuf)")
+	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf decoders)")
 	fmt.Println("  --show-lag, -l          Show consumer lag periodically")
 	fmt.Println("  --quiet, -q             Suppress headers and info messages")
 	fmt.Println("  --raw, -r               Raw output: just message content")
 	fmt.Println("  --no-timestamp          Hide timestamp in output")
 	fmt.Println("  --no-offset             Hide offset in output")
+	fmt.Println()
+	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Stream new messages (like tail -f)")
@@ -3440,40 +3468,53 @@ func displayAuditEventsTable(events []protocol.BinaryAuditEvent, totalCount int3
 	if len(events) == 0 {
 		fmt.Println("No audit events found")
 	} else {
-		// Print events in a table format
-		fmt.Printf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
-			"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT")
-		cli.Separator()
+		headers := []string{"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT"}
+		var rows [][]string
 		for _, event := range events {
 			ts := time.UnixMilli(event.Timestamp).Format("2006-01-02 15:04:05")
 			resource := event.Resource
-			if len(resource) > 20 {
-				resource = resource[:17] + "..."
+			// In the new table, we can probably afford longer resources, but let's keep it reasonable
+			if len(resource) > 30 {
+				resource = resource[:27] + "..."
 			}
-			fmt.Printf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
-				ts, event.Type, event.User, resource, event.Action, event.Result)
+			rows = append(rows, []string{
+				ts,
+				event.Type,
+				event.User,
+				resource,
+				event.Action,
+				event.Result,
+			})
 		}
+		cli.Table(headers, rows)
 	}
 	cli.Separator()
 }
 
 func displayAuditEventsPager(events []protocol.BinaryAuditEvent, totalCount int32) {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Audit Events (Total: %d)\n", totalCount))
-	sb.WriteString("──────────────────────────────────────────────────────────────────────────────────────────────────\n")
-	sb.WriteString(fmt.Sprintf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
-		"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT"))
-	sb.WriteString("──────────────────────────────────────────────────────────────────────────────────────────────────\n")
-
+	headers := []string{"TIMESTAMP", "TYPE", "USER", "RESOURCE", "ACTION", "RESULT"}
+	var rows [][]string
 	for _, event := range events {
 		ts := time.UnixMilli(event.Timestamp).Format("2006-01-02 15:04:05")
 		resource := event.Resource
-		if len(resource) > 20 {
-			resource = resource[:17] + "..."
+		if len(resource) > 30 {
+			resource = resource[:27] + "..."
 		}
-		sb.WriteString(fmt.Sprintf("%-20s %-15s %-15s %-20s %-10s %-10s\n",
-			ts, event.Type, event.User, resource, event.Action, event.Result))
+		rows = append(rows, []string{
+			ts,
+			event.Type,
+			event.User,
+			resource,
+			event.Action,
+			event.Result,
+		})
 	}
+
+	tableStr := cli.TableString(headers, rows)
+
+	var sb strings.Builder
+	sb.WriteString(cli.Colorize(cli.Bold+cli.Cyan, fmt.Sprintf("Audit Events (Total: %d)\n", totalCount)))
+	sb.WriteString(tableStr)
 
 	pager := os.Getenv("PAGER")
 	if pager == "" {
@@ -3528,8 +3569,11 @@ func runAuditTail(args []string, user, resource, eventType, result, search strin
 				if len(res) > 20 {
 					res = res[:17] + "..."
 				}
-				fmt.Printf("[%s] %-15s %-10s %-20s %-10s %-10s\n",
-					ts, event.Type, event.User, res, event.Action, event.Result)
+				// Tail usually doesn't need a full table, but let's keep it aligned
+				fmt.Printf("%s %s %-15s %-10s %-20s %-10s %-10s\n",
+					cli.Colorize(cli.Dim, "["+ts+"]"),
+					cli.Colorize(cli.Bold+cli.Cyan, event.Type),
+					event.User, res, event.Action, event.Result, "")
 				lastTimestamp = event.Timestamp
 			}
 		}
@@ -3601,8 +3645,11 @@ func printExploreHelp() {
 	fmt.Println("Interactive topic explorer and message browser.")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  -d, --decoder <name>    Decoder to use for message payloads (string, json, binary). Default: string")
+	fmt.Println("  -d, --decoder <name>    Client-side decoder to use for message payloads (string, json, binary, avro, protobuf). Default: string")
+	fmt.Println("  -s, --schema <file>     Local schema file (required for Avro/Protobuf decoders)")
 	fmt.Println("  -a, --addr <addr>       Server address (default: localhost:9092)")
+	fmt.Println()
+	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  flymq-cli explore")
@@ -3626,10 +3673,10 @@ func cmdExplore(args []string) {
 	for i, arg := range args {
 		if (arg == "--decoder" || arg == "-d") && i+1 < len(args) {
 			decoderName = args[i+1]
-			break
 		}
 	}
 	c.SetSerde(decoderName)
+	applySchema(decoderName, args)
 
 	for {
 		cli.Separator()
@@ -3728,17 +3775,75 @@ func matchesFilter(key, value []byte, filter string) bool {
 	if filter == "" {
 		return true
 	}
+
 	// Try case-insensitive substring match first (most common)
 	if strings.Contains(strings.ToLower(string(value)), strings.ToLower(filter)) ||
 		strings.Contains(strings.ToLower(string(key)), strings.ToLower(filter)) {
 		return true
 	}
+
+	// Try JSON Path filtering if it looks like a JSON and filter starts with $
+	if strings.HasPrefix(filter, "$.") && len(value) > 0 && value[0] == '{' {
+		var data interface{}
+		if err := json.Unmarshal(value, &data); err == nil {
+			if matchJSONPath(data, filter) {
+				return true
+			}
+		}
+	}
+
 	// Try regex match
 	re, err := regexp.Compile(filter)
 	if err != nil {
 		return false
 	}
 	return re.Match(value) || re.Match(key)
+}
+
+func matchJSONPath(data interface{}, path string) bool {
+	parts := strings.Split(path[2:], ".")
+	current := data
+	for _, part := range parts {
+		if m, ok := current.(map[string]interface{}); ok {
+			if val, exists := m[part]; exists {
+				current = val
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
+}
+
+func applySchema(decoderName string, args []string) {
+	schemaFile := ""
+	for i, arg := range args {
+		if (arg == "--schema" || arg == "-s") && i+1 < len(args) {
+			schemaFile = args[i+1]
+			break
+		}
+	}
+
+	if schemaFile != "" {
+		schemaData, err := os.ReadFile(schemaFile)
+		if err != nil {
+			cli.Warning("Failed to read schema file: %v", err)
+			return
+		}
+
+		if decoderName == "avro" {
+			if err := client.SetAvroSchema(string(schemaData)); err != nil {
+				cli.Warning("Failed to parse Avro schema: %v", err)
+			} else {
+				cli.Info("Loaded Avro schema from %s", schemaFile)
+			}
+		} else if decoderName == "protobuf" {
+			client.SetProtoDescriptor(schemaData)
+			cli.Info("Loaded Protobuf descriptor from %s", schemaFile)
+		}
+	}
 }
 
 func formatMessage(c *client.Client, data []byte) string {
@@ -3805,7 +3910,7 @@ func browseMessages(c *client.Client, topic string) {
 
 		cli.Separator()
 		fmt.Println("  [n] Next 10    [p] Prev 10    [g] Go to offset    [s] Select partition")
-		fmt.Println("  [f] Set filter  [c] Clear filter  [b] Back")
+		fmt.Println("  [f] Set filter  [c] Clear filter  [d] Set decoder     [b] Back")
 		fmt.Print("\nNavigation: ")
 		var input string
 		fmt.Scanln(&input)
@@ -3835,10 +3940,15 @@ func browseMessages(c *client.Client, topic string) {
 				offset = 0 // Reset offset when changing partition
 			}
 		case "f":
-			fmt.Print("Enter filter string: ")
+			fmt.Print("Enter filter (substring, regex, or $.json.path): ")
 			fmt.Scanln(&filter)
 		case "c":
 			filter = ""
+		case "d":
+			fmt.Print("Enter decoder name (string, json, binary, avro, protobuf): ")
+			var d string
+			fmt.Scanln(&d)
+			c.SetSerde(d)
 		case "b":
 			return
 		}

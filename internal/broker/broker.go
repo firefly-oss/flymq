@@ -83,6 +83,7 @@ DATA DIRECTORY STRUCTURE:
 package broker
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -1075,7 +1076,7 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 
 	// Prepare regex if filter provided
 	var re *regexp.Regexp
-	if filter != "" {
+	if filter != "" && !strings.HasPrefix(filter, "$.") {
 		re, _ = regexp.Compile(filter)
 	}
 
@@ -1106,11 +1107,24 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 			valStr := string(record.Value)
 			keyStr := string(record.Key)
 
-			// Try substring match first
-			if strings.Contains(strings.ToLower(valStr), strings.ToLower(filter)) ||
-				strings.Contains(strings.ToLower(keyStr), strings.ToLower(filter)) {
+			// 1. Try JSON Path if filter starts with $.
+			if strings.HasPrefix(filter, "$.") && len(record.Value) > 0 && record.Value[0] == '{' {
+				var jsonData interface{}
+				if err := json.Unmarshal(record.Value, &jsonData); err == nil {
+					if matchJSONPath(jsonData, filter) {
+						matches = true
+					}
+				}
+			}
+
+			// 2. Try substring match (case-insensitive)
+			if !matches && (strings.Contains(strings.ToLower(valStr), strings.ToLower(filter)) ||
+				strings.Contains(strings.ToLower(keyStr), strings.ToLower(filter))) {
 				matches = true
-			} else if re != nil && (re.Match(record.Value) || re.Match(record.Key)) {
+			}
+
+			// 3. Try regex match
+			if !matches && re != nil && (re.Match(record.Value) || re.Match(record.Key)) {
 				matches = true
 			}
 		}
@@ -1126,6 +1140,26 @@ func (b *Broker) FetchWithKeys(topic string, partition int, offset uint64, maxMe
 	}
 
 	return messages, currentOffset, nil
+}
+
+func matchJSONPath(data interface{}, path string) bool {
+	if len(path) < 3 {
+		return false
+	}
+	parts := strings.Split(path[2:], ".")
+	current := data
+	for _, part := range parts {
+		if m, ok := current.(map[string]interface{}); ok {
+			if val, exists := m[part]; exists {
+				current = val
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
 }
 
 // ListTopics returns all topic names.

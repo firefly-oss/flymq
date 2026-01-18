@@ -55,10 +55,10 @@ and enterprise-grade security features.
 - **Partition Reassignment** - Dynamic load balancing across nodes
 
 ### Advanced Messaging
-- **Best-in-Class Topic Filtering** - Pattern-based subscriptions using Trie-based matching (MQTT-style: `+`, `#`)
-- **Typed SerDe System** - Efficiently handle multiple payload formats (JSON, String, Binary) with built-in Encoders/Decoders
-- **Interactive Topic Explorer** - Powerful CLI tool to browse topics, navigate messages, and manage offsets interactively
-- **Message Schemas** - JSON Schema, Avro, and Protobuf validation
+- **Best-in-Class Topic Filtering** - Pattern-based subscriptions using Trie-based matching (MQTT-style: `+`, `#`) with support for server-side content filtering (substring, regex, and JSON path).
+- **Typed SerDe System** - Efficiently handle multiple payload formats (JSON, String, Binary, Avro, Protobuf) with a plug-and-play Registry. Built-in support for real Avro and Protobuf serialization.
+- **Server-Side Schema Store** - Centralized registry for JSON Schema, Avro, and Protobuf validation. Ensures data quality by validating messages at the broker before they are accepted.
+- **Interactive Topic Explorer** - Powerful CLI tool to browse topics, navigate messages with live decoding, and manage offsets interactively.
 - **Dead Letter Queues** - Failed message routing with retry policies
 - **Message TTL** - Time-based message expiration
 - **Delayed Delivery** - Scheduled message delivery
@@ -84,6 +84,24 @@ and enterprise-grade security features.
 - **Configurable Retention** - Time and size-based message retention policies
 - **Structured Logging** - JSON logging with configurable levels
 - **Interactive Installer** - Guided setup with configuration generation
+
+### Typed SerDe System vs. Server-Side Schema Store
+
+It's important to understand the distinction between these two systems:
+
+1.  **Typed SerDe System (Client-Side)**:
+    *   **Purpose**: Handles how data is converted between objects (e.g., Go structs, Python dicts) and the binary format sent over the wire.
+    *   **Formats**: JSON, String, Binary, Avro, Protobuf.
+    *   **Control**: Managed by the Client SDK. You can switch decoders on-the-fly in the CLI or SDK to view data differently.
+    *   **Requirement**: For Avro and Protobuf, the client needs the local schema/descriptor file.
+
+2.  **Server-Side Schema Store (Broker-Side)**:
+    *   **Purpose**: A centralized registry that enforces data contracts. The broker validates incoming messages to ensure they match a registered schema before accepting them.
+    *   **Compatibility**: Supports schema evolution (Backward, Forward, Full).
+    *   **Control**: Managed via `flymq-cli schema` commands.
+    *   **Security**: Prevents malformed or "garbage" data from entering your topics.
+
+**Recommendation**: Use **SerDe** for efficient development and data handling, and enable **Schema Store validation** for production topics to ensure long-term data quality and contract safety.
 
 ---
 
@@ -853,7 +871,7 @@ flymq-cli info <topic>              # Topic details
 flymq-cli explore                   # Interactive topic explorer (Metadata, Messages, Filter, Commit)
 
 # Producing messages
-flymq-cli produce <topic> <message> [--key KEY] [--encoder json|string|binary]
+flymq-cli produce <topic> <message> [--key KEY] [--encoder json|string|binary|avro|protobuf]
 
 # Consuming messages
 flymq-cli consume <topic> [--offset N] [--count N] [--show-key] [--decoder json|string|binary] [--filter PATTERN]
@@ -971,6 +989,18 @@ consumer := c.Consumer([]string{"sensors/+/temp"}, client.DefaultConsumerConfig(
 config := client.DefaultConsumerConfig("error-mon")
 config.Filter = "ERROR"
 consumerWithFilter := c.Consumer([]string{"app-logs"}, config)
+
+// Avro Support
+schema := `{"type":"record","name":"user","fields":[{"name":"id","type":"int"},{"name":"name","type":"string"}]}`
+client.SetAvroSchema(schema)
+client.SetSerde("avro")
+client.Produce("users", map[string]interface{}{"id": 1, "name": "Alice"})
+
+// Protobuf Support
+// Assuming you have a generated User message
+user := &pb.User{Id: 1, Name: "Alice"}
+client.SetSerde("protobuf")
+client.Produce("users", user)
 
 // Typed SerDe System
 type User struct {
@@ -1173,6 +1203,17 @@ try (FlyMQClient client = FlyMQClient.connect("localhost:9092")) {
             System.out.println("Error: " + msg.dataAsString());
         }
     }
+
+    // Avro Support
+    String schema = "{\"type\":\"record\",\"name\":\"user\",\"fields\":[{\"name\":\"id\",\"type\":\"int\"},{\"name\":\"name\",\"type\":\"string\"}]}";
+    client.setSerializer(Serdes.AvroSerializer(schema));
+    client.setDeserializer(Serdes.AvroDeserializer(schema));
+    client.produce("users", Map.of("id", 1, "name", "Alice"));
+
+    // Protobuf Support
+    client.setSerializer(Serdes.ProtoSerializer());
+    client.setDeserializer(Serdes.ProtoDeserializer(User.getDefaultInstance()));
+    client.produce("users", user);
 
     // Typed SerDe System
     client.setSerde(Serdes.JSON);

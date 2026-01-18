@@ -496,6 +496,40 @@ public class FlyMQClient implements AutoCloseable {
     // =========================================================================
 
     /**
+     * Sets the default SerDe by name from the SerdeRegistry.
+     *
+     * @param name name of the SerDe (e.g., "json", "string", "binary")
+     */
+    public void setSerde(String name) {
+        Serializer<?> serializer = Serdes.getSerializer(name);
+        Deserializer<?> deserializer = Serdes.getDeserializer(name);
+        if (serializer != null) {
+            config.setValueSerializer(serializer);
+        }
+        if (deserializer != null) {
+            config.setValueDeserializer(deserializer);
+        }
+    }
+
+    /**
+     * Sets the default serializer for values.
+     *
+     * @param serializer serializer to use
+     */
+    public void setSerializer(Serializer<?> serializer) {
+        config.setValueSerializer(serializer);
+    }
+
+    /**
+     * Sets the default deserializer for values.
+     *
+     * @param deserializer deserializer to use
+     */
+    public void setDeserializer(Deserializer<?> deserializer) {
+        config.setValueDeserializer(deserializer);
+    }
+
+    /**
      * Produces a message to a topic and returns RecordMetadata (Kafka-like).
      *
      * @param topic target topic name

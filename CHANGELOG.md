@@ -5,6 +5,39 @@ All notable changes to FlyMQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January 2026, Patch 1).
 
+## [1.26.11] - 2026-01-18
+
+### Added
+
+#### Best-in-Class Topic & Message Filtering
+- **JSON Path Filtering** - Support for server-side filtering using JSON Path expressions (`$.field.subfield`) in addition to regex and substring matching.
+- **Enhanced Topic Matcher** - Trie-based matcher for efficient MQTT-style wildcard matching (`+`, `#`).
+- **Server-Side Content Filtering** - Efficient broker-side filtering reducing network traffic and client-side overhead.
+
+#### Extensible SerDe (Serializer/Deserializer) System
+- **Real Avro & Protobuf Support** - Switched from stubs to full implementations using `hamba/avro` (Go), `fastavro` (Python), and `apache-avro` (Java) for Avro; and official Google Protobuf libraries across all SDKs.
+- **Dynamic SerDe Registry** - Plug-and-play system for easy registration of custom encoders and decoders in Go, Python, and Java.
+- **Schema Management** - CLI support for loading local schema/descriptor files for Avro and Protobuf operations.
+- **Global SerDe Configuration** - Support for setting default SerDe formats globally per client instance.
+
+#### Interactive Topic Explorer Improvements
+- **Live SerDe Switching** - Toggle between different decoders (JSON, Avro, Protobuf, String) on-the-fly while browsing messages.
+- **Enhanced Navigation** - Jump to specific offsets, select partitions, and browse with next/prev page support.
+- **Live Filtering** - Integrated server-side filtering (JSON Path/Regex) directly within the interactive explorer.
+
+#### SDK & CLI Enhancements
+- **Go SDK** - Full Avro/Protobuf integration and server-side filtering APIs.
+- **Python SDK** - New `SerdeRegistry` and `set_serde` methods for flexible data handling.
+- **Java SDK** - Updated `Serdes` utility with registry support and real Avro/Protobuf implementations.
+- **CLI Flags** - Enhanced `produce`, `consume`, `subscribe`, and `explore` with `--encoder`, `--decoder`, and `--schema` flags.
+
+### Changed
+- **Documentation Clarity** - Updated `README.md` to clearly distinguish between **Client-Side SerDe** and **Server-Side Schema Store**.
+- **Installation Experience** - Updated `install.sh` with dedicated prompts for Avro/Protobuf SerDe options and clarified Schema Store configuration.
+- **CLI Help** - Refined help messages to improve discoverability of advanced features like audit trail and schema validation.
+
+---
+
 ## [1.26.10] - 2026-01-17
 
 ### Added

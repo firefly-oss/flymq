@@ -60,9 +60,9 @@ CFG_CLUSTER_ENABLED="false"       # whether clustering is enabled
 
 # Performance Configuration
 CFG_ACKS="leader"                 # Durability mode: all, leader, none
-CFG_DEFAULT_SERDE="binary"        # Default SerDe: binary, json, string
+CFG_DEFAULT_SERDE="binary"        # Default SerDe: binary, json, string, avro, protobuf
 
-# Schema validation - ENABLED by default
+# Schema validation - ENABLED by default (Server-side validation)
 CFG_SCHEMA_ENABLED="true"
 CFG_SCHEMA_VALIDATION="strict"
 CFG_SCHEMA_REGISTRY_DIR=""
@@ -2016,9 +2016,11 @@ configure_section_security() {
 configure_section_advanced() {
     print_section "Advanced Features"
 
-    echo -e "  ${BOLD}Schema Validation${RESET}"
-    echo -e "  ${DIM}Validate messages against JSON Schema, Avro, or Protobuf.${RESET}"
-    if prompt_yes_no "Enable schema validation" "y"; then
+    echo -e "  ${BOLD}Schema Store (Server-Side Validation)${RESET}"
+    echo -e "  ${DIM}Validate messages against JSON Schema, Avro, or Protobuf at the Broker level.${RESET}"
+    echo -e "  ${DIM}This ensures message integrity before they are accepted into a topic.${RESET}"
+    echo -e "  ${DIM}Note: This is DIFFERENT from client-side SerDe (serialization).${RESET}"
+    if prompt_yes_no "Enable server-side schema validation" "y"; then
         CFG_SCHEMA_ENABLED="true"
         CFG_SCHEMA_VALIDATION=$(prompt_choice "Validation mode (strict/lenient/none)" "strict" "strict" "lenient" "none")
     else
@@ -2116,6 +2118,17 @@ configure_section_performance() {
 
     echo -e "  ${BOLD}Logging${RESET}"
     CFG_LOG_LEVEL=$(prompt_choice "Log level" "${CFG_LOG_LEVEL}" "debug" "info" "warn" "error")
+    echo ""
+
+    echo -e "  ${BOLD}Default Serialization (SerDe)${RESET}"
+    echo -e "    ${DIM}binary${RESET}   - Raw bytes (fastest, no overhead)"
+    echo -e "    ${DIM}string${RESET}   - UTF-8 text"
+    echo -e "    ${DIM}json${RESET}     - JSON objects"
+    echo -e "    ${DIM}avro${RESET}     - Apache Avro (schema required)"
+    echo -e "    ${DIM}protobuf${RESET} - Google Protobuf (descriptor required)"
+    echo -e "    ${DIM}Note: This is the default format used by clients if not specified.${RESET}"
+    echo ""
+    CFG_DEFAULT_SERDE=$(prompt_choice "Default SerDe" "${CFG_DEFAULT_SERDE}" "binary" "string" "json" "avro" "protobuf")
     echo ""
 
     echo -e "  ${BOLD}Platform Optimizations${RESET} ${DIM}(automatic)${RESET}"

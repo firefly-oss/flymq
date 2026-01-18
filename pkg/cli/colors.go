@@ -43,7 +43,16 @@ package cli
 import (
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
+	"unicode/utf8"
 )
+
+var ansiRegex = regexp.MustCompile(`\033\[[0-9;]*[a-zA-Z]`)
+
+func visibleLen(s string) int {
+	return utf8.RuneCountInString(ansiRegex.ReplaceAllString(s, ""))
+}
 
 // ANSI color codes for terminal output.
 const (
@@ -164,7 +173,82 @@ func KeyValue(key string, value interface{}) {
 
 // Separator prints a horizontal line.
 func Separator() {
-	fmt.Println(Colorize(Dim, "────────────────────────────────────────"))
+	fmt.Println(Colorize(Dim, "────────────────────────────────────────────────────────────────────────────────"))
+}
+
+// SeparatorN prints a horizontal line of specified length.
+func SeparatorN(n int) {
+	if n <= 0 {
+		return
+	}
+	fmt.Println(Colorize(Dim, strings.Repeat("─", n)))
+}
+
+// Table prints a formatted table to the console.
+func Table(headers []string, rows [][]string) {
+	fmt.Print(TableString(headers, rows))
+}
+
+// TableString returns a formatted table as a string.
+func TableString(headers []string, rows [][]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	colWidths := make([]int, len(headers))
+	for i, h := range headers {
+		colWidths[i] = utf8.RuneCountInString(h)
+	}
+
+	for _, row := range rows {
+		for i, col := range row {
+			if i < len(colWidths) {
+				l := visibleLen(col)
+				if l > colWidths[i] {
+					colWidths[i] = l
+				}
+			}
+		}
+	}
+
+	// Header
+	for i, h := range headers {
+		sb.WriteString(Colorize(Bold+Cyan, strings.ToUpper(h)))
+		if i < len(headers)-1 {
+			padding := colWidths[i] - utf8.RuneCountInString(h) + 3
+			sb.WriteString(strings.Repeat(" ", padding))
+		}
+	}
+	sb.WriteString("\n")
+
+	// Separator line
+	totalWidth := 0
+	for i, w := range colWidths {
+		totalWidth += w
+		if i < len(colWidths)-1 {
+			totalWidth += 3
+		}
+	}
+	sb.WriteString(Colorize(Dim, strings.Repeat("─", totalWidth)))
+	sb.WriteString("\n")
+
+	// Data
+	for _, row := range rows {
+		for i, col := range row {
+			if i < len(colWidths) {
+				sb.WriteString(col)
+				if i < len(row)-1 {
+					padding := colWidths[i] - visibleLen(col) + 3
+					sb.WriteString(strings.Repeat(" ", padding))
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 // Example prints an example command.
