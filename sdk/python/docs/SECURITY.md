@@ -5,8 +5,8 @@ Comprehensive guide to implementing security in your FlyMQ applications.
 ## Table of Contents
 
 - [Authentication](#authentication)
-- [Encryption](#encryption)
 - [TLS/SSL](#tlsssl)
+- [Data-at-Rest Encryption](#data-at-rest-encryption)
 - [Best Practices](#best-practices)
 
 ## Authentication
@@ -60,91 +60,114 @@ client.delete_user("bob")
 client.list_users()
 ```
 
-## Encryption
+## Data-at-Rest Encryption
 
-### AES-256-GCM Encryption
+### Server-Side Encryption
 
-FlyMQ supports AES-256-GCM encryption for protecting message content:
+Data-at-rest encryption is configured on the **FlyMQ server**, not in the client SDK. The server encrypts all stored messages using AES-256-GCM.
+
+**Server Configuration:**
+
+```bash
+# Generate encryption key
+openssl rand -hex 32 > /etc/flymq/encryption.key
+chmod 600 /etc/flymq/encryption.key
+
+# Set environment variable
+export FLYMQ_ENCRYPTION_KEY=$(cat /etc/flymq/encryption.key)
+
+# Start server with encryption enabled
+flymq --config /etc/flymq/flymq.json
+```
+
+**Client Usage:**
+
+Clients don't need any special configuration. Messages are automatically encrypted when stored and decrypted when retrieved:
 
 ```python
-from pyflymq import FlyMQClient, generate_key
+from pyflymq import connect
 
-# Generate a new encryption key
-key = generate_key()  # Returns 64-char hex string
+# No encryption_key parameter needed!
+client = connect("localhost:9092")
 
-# Connect with encryption enabled
-client = FlyMQClient(
-    "localhost:9092",
-    encryption_key=key
+# Messages are automatically encrypted at rest by the server
+meta = client.produce("my-topic", b"Sensitive data")
+
+# Messages are automatically decrypted when consumed
+msg = client.consume("my-topic", meta.offset)
+print(msg.decode())  # "Sensitive data"
+```
+
+**Security Layers:**
+
+1. **TLS** - Encrypts data in transit (client ↔ server)
+2. **Server-Side Encryption** - Encrypts data at rest (on disk)
+3. **Authentication** - Controls who can access data
+
+```python
+from pyflymq import connect, TLSConfig
+
+# Complete security stack
+tls = TLSConfig(
+    enabled=True,
+    ca_file="/path/to/ca.crt"
 )
 
-# Messages are automatically encrypted before sending
-# and decrypted after receiving
-offset = client.produce("secure-topic", b"Secret message")
-msg = client.consume("secure-topic", offset)
-print(msg.decode())  # Automatically decrypted
-```
-
-### Key Management
-
-Proper key management is critical:
-
-```python
-import os
-from pyflymq import FlyMQClient, generate_key
-
-# Option 1: Load existing key from environment
-encryption_key = os.getenv("FLYMQ_ENCRYPTION_KEY")
-if not encryption_key:
-    raise ValueError("FLYMQ_ENCRYPTION_KEY not set")
-
-client = FlyMQClient("localhost:9092", encryption_key=encryption_key)
-
-# Option 2: Use key management service (AWS KMS example)
-import boto3
-
-kms = boto3.client("kms")
-response = kms.decrypt(CiphertextBlob=encrypted_key)
-encryption_key = response["Plaintext"].decode()
-
-client = FlyMQClient("localhost:9092", encryption_key=encryption_key)
-```
-
-### Encryption Workflow
-
-```python
-from pyflymq import FlyMQClient, Encryptor
-
-# Get encryption key
-key = "your_encryption_key_here"
-
-# Create encryptor
-encryptor = Encryptor.from_hex_key(key)
-
-# Manual encryption/decryption
-plaintext = b"Sensitive data"
-encrypted = encryptor.encrypt(plaintext)
-decrypted = encryptor.decrypt(encrypted)
-
-# Or use client-level encryption
-client = FlyMQClient("localhost:9092", encryption_key=key)
-# All messages automatically encrypted/decrypted
+client = connect(
+    "flymq.example.com:9093",
+    tls=tls,                    # Encrypts data in transit
+    username="admin",
+    password="secret"            # Authenticates access
+)
+# Server handles data-at-rest encryption automatically
 ```
 
 ## TLS/SSL
+
+### Security Levels
+
+FlyMQ supports multiple TLS security levels:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| **No TLS** | Plain text communication | Development only |
+| **TLS (Server Auth)** | Server certificate validation | Production (basic) |
+| **TLS + CA** | Custom CA certificate | Private PKI |
+| **Mutual TLS** | Client + server certificates | High security |
+| **Insecure TLS** | Skip certificate verification | Testing/debugging |
 
 ### Basic TLS (Server Verification)
 
 Connect securely to FlyMQ using TLS:
 
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect, TLSConfig
 
-client = FlyMQClient(
+# Method 1: Using TLSConfig (recommended)
+tls = TLSConfig(
+    enabled=True,
+    ca_file="/path/to/ca.crt"  # CA certificate for verification
+)
+client = connect("flymq.example.com:9093", tls=tls)
+
+# Method 2: Using parameters directly
+client = connect(
     "flymq.example.com:9093",
     tls_enabled=True,
-    tls_ca_file="/path/to/ca.crt"  # CA certificate for verification
+    tls_ca_file="/path/to/ca.crt"
 )
+```
+
+### System CA Certificates
+
+Use the operating system's certificate store:
+
+```python
+from pyflymq import connect, TLSConfig
+
+# Uses system CA store automatically
+tls = TLSConfig(enabled=True)
+client = connect("flymq.example.com:9093", tls=tls)
 ```
 
 ### Mutual TLS (mTLS)
@@ -152,15 +175,16 @@ client = FlyMQClient(
 Use client certificates for bidirectional authentication:
 
 ```python
-from pyflymq import FlyMQClient
+from pyflymq import connect, TLSConfig
 
-client = FlyMQClient(
-    "flymq.example.com:9093",
-    tls_enabled=True,
-    tls_ca_file="/path/to/ca.crt",           # CA certificate
-    tls_cert_file="/path/to/client.crt",     # Client certificate
-    tls_key_file="/path/to/client.key"       # Client private key
+tls = TLSConfig(
+    enabled=True,
+    cert_file="/path/to/client.crt",     # Client certificate
+    key_file="/path/to/client.key",      # Client private key
+    ca_file="/path/to/ca.crt",           # CA certificate
+    server_name="flymq-server"           # Optional: override hostname
 )
+client = connect("flymq.example.com:9093", tls=tls)
 ```
 
 ### Skip Certificate Verification (Testing Only)
@@ -168,13 +192,15 @@ client = FlyMQClient(
 For development/testing only:
 
 ```python
+from pyflymq import connect, TLSConfig
+
 # WARNING: This disables all certificate verification
 # NEVER use in production
-client = FlyMQClient(
-    "localhost:9093",
-    tls_enabled=True,
-    tls_insecure_skip_verify=True  # Dangerous!
+tls = TLSConfig(
+    enabled=True,
+    insecure_skip_verify=True  # Dangerous!
 )
+client = connect("localhost:9093", tls=tls)
 ```
 
 ### Generating Test Certificates
@@ -203,31 +229,31 @@ openssl x509 -req -days 365 -in client.csr \
 
 ## Combined Security
 
-Use TLS + Authentication + Encryption for complete security:
+Use TLS + Authentication for complete security:
 
 ```python
 import os
-from pyflymq import FlyMQClient
+from pyflymq import connect, TLSConfig
 
-client = FlyMQClient(
+tls = TLSConfig(
+    enabled=True,
+    cert_file="/path/to/client.crt",
+    key_file="/path/to/client.key",
+    ca_file="/path/to/ca.crt"
+)
+
+client = connect(
     "flymq.example.com:9093",
-    # TLS/SSL
-    tls_enabled=True,
-    tls_ca_file="/path/to/ca.crt",
-    tls_cert_file="/path/to/client.crt",
-    tls_key_file="/path/to/client.key",
-    # Authentication
-    username=os.getenv("FLYMQ_USERNAME"),
-    password=os.getenv("FLYMQ_PASSWORD"),
-    # Encryption
-    encryption_key=os.getenv("FLYMQ_ENCRYPTION_KEY")
+    tls=tls,                                    # TLS encryption
+    username=os.getenv("FLYMQ_USERNAME"),      # Authentication
+    password=os.getenv("FLYMQ_PASSWORD")
 )
 
 # All communication is now:
 # 1. Encrypted via TLS (channel security)
 # 2. Authenticated via mTLS certificates
 # 3. Authenticated via username/password
-# 4. Messages encrypted via AES-256-GCM
+# 4. Messages encrypted at rest by server (if configured)
 ```
 
 ## Best Practices
@@ -246,20 +272,20 @@ client = FlyMQClient(
 - Use weak or default passwords
 - Share credentials between applications
 
-### 2. Encryption Keys
+### 2. Encryption
 
 ✅ DO:
-- Generate keys using `generate_key()`
-- Store keys in secure key management systems
+- Enable server-side encryption with FLYMQ_ENCRYPTION_KEY
+- Store encryption keys in secure key management systems
 - Rotate keys periodically
-- Keep separate keys for different purposes
+- Keep separate keys for different environments
 - Archive old keys for decrypting historical data
 
 ❌ DON'T:
-- Hardcode encryption keys
-- Use the same key for multiple applications
+- Store encryption keys in configuration files
+- Use the same key for multiple clusters
 - Transmit keys in plain text
-- Use weak random number generators
+- Forget to back up encryption keys securely
 
 ### 3. TLS/SSL Certificates
 
@@ -279,16 +305,19 @@ client = FlyMQClient(
 ### 4. Transport Security
 
 ```python
+import os
+from pyflymq import connect, TLSConfig
+
 # Always use TLS in production
 if os.getenv("ENV") == "production":
-    client = FlyMQClient(
-        "flymq.example.com:9093",
-        tls_enabled=True,
-        tls_ca_file="/path/to/ca.crt"
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/path/to/ca.crt"
     )
+    client = connect("flymq.example.com:9093", tls=tls)
 else:
     # Can use unencrypted connection for development
-    client = FlyMQClient("localhost:9092")
+    client = connect("localhost:9092")
 ```
 
 ### 5. Access Control
@@ -314,12 +343,13 @@ client.create_user("admin-user", "password",
 
 ```python
 import logging
+from pyflymq import connect
 
 # Set up logging for security events
 logging.basicConfig(level=logging.INFO)
 
 try:
-    client = FlyMQClient(
+    client = connect(
         "localhost:9092",
         username="alice",
         password="password"
@@ -341,10 +371,10 @@ except Exception as e:
 Before deploying to production:
 
 - [ ] All credentials loaded from environment variables
-- [ ] TLS enabled and certificates from trusted CA
+- [ ] TLS enabled with certificates from trusted CA
 - [ ] Client certificate authentication enabled (mTLS)
 - [ ] Application-level authentication enabled
-- [ ] Message encryption enabled (AES-256-GCM)
+- [ ] Server-side encryption enabled (FLYMQ_ENCRYPTION_KEY)
 - [ ] Encryption keys securely stored and rotated
 - [ ] User access control configured
 - [ ] Audit logging enabled
