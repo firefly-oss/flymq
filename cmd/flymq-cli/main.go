@@ -307,77 +307,64 @@ func extractSubcommand(args []string) (string, []string) {
 func printUsage() {
 	banner.PrintCLI()
 
-	fmt.Println(cli.Bold + "Usage:" + cli.Reset + " flymq-cli [options] <command> [args]")
+	fmt.Printf("%s %s [options] <command> [args]\n", cli.Colorize(cli.Bold, "Usage:"), "flymq-cli")
+
+	cli.Section("Commands")
+
+	cli.SubCommandSection("Messaging")
+	cli.Command("produce", "<topic> <msg>", "Send a message to a topic")
+	cli.Command("consume", "<topic>", "Fetch messages from a topic (batch)")
+	cli.Command("subscribe", "<topic>", "Stream messages from a topic (tail)")
+	cli.Command("explore", "", "Interactive topic explorer and message browser")
 	fmt.Println()
 
-	// Commands
-	fmt.Println(cli.Bold + cli.Cyan + "COMMANDS" + cli.Reset)
+	cli.SubCommandSection("Topics")
+	cli.Command("topics", "", "List all topics")
+	cli.Command("create", "<topic>", "Create a new topic")
+	cli.Command("delete", "<topic>", "Delete an existing topic")
+	cli.Command("info", "<topic>", "Show detailed topic information")
 	fmt.Println()
 
-	fmt.Println(cli.Dim + "  Messaging" + cli.Reset)
-	fmt.Println("    " + cli.Green + "produce" + cli.Reset + " <topic> <msg>    Send a message")
-	fmt.Println("    " + cli.Green + "consume" + cli.Reset + " <topic>          Fetch messages (batch)")
-	fmt.Println("    " + cli.Green + "subscribe" + cli.Reset + " <topic>        Stream messages (like tail -f)")
-	fmt.Println("    " + cli.Green + "explore" + cli.Reset + "                  Interactive topic explorer")
+	cli.SubCommandSection("Consumer Groups")
+	cli.Command("groups list", "", "List all consumer groups")
+	cli.Command("groups describe", "<grp>", "Show group members and state")
+	cli.Command("groups lag", "<grp>", "Show consumer lag for a group")
+	cli.Command("groups reset", "<grp>", "Reset group offsets")
+	cli.Command("groups delete", "<grp>", "Delete a consumer group")
 	fmt.Println()
 
-	fmt.Println(cli.Dim + "  Topics" + cli.Reset)
-	fmt.Println("    " + cli.Green + "create" + cli.Reset + " <topic>           Create a topic")
-	fmt.Println("    " + cli.Green + "delete" + cli.Reset + " <topic>           Delete a topic")
-	fmt.Println("    " + cli.Green + "topics" + cli.Reset + "                   List topics")
-	fmt.Println("    " + cli.Green + "info" + cli.Reset + " <topic>             Topic details")
+	cli.SubCommandSection("Advanced")
+	cli.Command("produce-delayed", "<topic> <delay> <msg>", "Send a message with delayed delivery")
+	cli.Command("produce-ttl", "<topic> <ttl> <msg>", "Send a message with time-to-live")
+	cli.Command("txn", "", "Transactional messaging operations")
+	cli.Command("schema", "", "Schema registry management")
+	cli.Command("dlq", "", "Dead letter queue management")
 	fmt.Println()
 
-	fmt.Println(cli.Dim + "  Consumer Groups" + cli.Reset)
-	fmt.Println("    " + cli.Green + "groups list" + cli.Reset + "              List groups")
-	fmt.Println("    " + cli.Green + "groups describe" + cli.Reset + " <grp>    Group details")
-	fmt.Println("    " + cli.Green + "groups lag" + cli.Reset + " <grp>         Consumer lag")
-	fmt.Println()
+	cli.SubCommandSection("Security & Admin")
+	cli.Command("auth", "", "Authenticate and save credentials")
+	cli.Command("whoami", "", "Display current authenticated user")
+	cli.Command("users", "", "Manage users and permissions")
+	cli.Command("roles", "", "Manage RBAC roles")
+	cli.Command("acl", "", "Manage access control lists")
+	cli.Command("audit", "", "Query and export audit logs")
+	cli.Command("cluster", "", "Cluster nodes and partition management")
+	cli.Command("admin", "", "Direct Admin API access")
+	cli.Command("health", "", "Check server health status")
 
-	fmt.Println(cli.Dim + "  Advanced" + cli.Reset)
-	fmt.Println("    " + cli.Yellow + "produce-delayed" + cli.Reset + "          Delayed delivery")
-	fmt.Println("    " + cli.Yellow + "produce-ttl" + cli.Reset + "              Message with TTL")
-	fmt.Println("    " + cli.Yellow + "txn" + cli.Reset + "                      Transactional produce")
-	fmt.Println("    " + cli.Yellow + "schema" + cli.Reset + "                   Schema store (server-side validation)")
-	fmt.Println("    " + cli.Yellow + "dlq" + cli.Reset + "                      Dead letter queue")
-	fmt.Println()
+	cli.Section("Options")
+	cli.Option("-a", "--addr", "host:port", "Server address (default: localhost:9092)")
+	cli.Option("-u", "--username", "user", "Username for authentication")
+	cli.Option("-P", "--password", "pass", "Password for authentication")
+	cli.Option("-T", "--tls", "", "Enable TLS connection")
+	cli.Option("-k", "--insecure", "", "Skip TLS certificate verification")
 
-	fmt.Println(cli.Dim + "  Cluster & Admin" + cli.Reset)
-	fmt.Println("    " + cli.Cyan + "cluster" + cli.Reset + "                  Cluster operations")
-	fmt.Println("    " + cli.Cyan + "admin" + cli.Reset + "                    Admin API")
-	fmt.Println("    " + cli.Cyan + "health" + cli.Reset + "                   Health checks")
-	fmt.Println()
+	cli.Section("Examples")
+	cli.Example("Quick start: create a topic and send a message", "flymq-cli create my-topic\n    flymq-cli produce my-topic \"Hello FlyMQ!\"")
+	cli.Example("Interactive exploration", "flymq-cli explore")
+	cli.Example("Connect to a remote server with auth", "flymq-cli --addr remote:9092 -u admin -P secret topics")
 
-	fmt.Println(cli.Dim + "  Security" + cli.Reset)
-	fmt.Println("    " + cli.Magenta + "auth" + cli.Reset + "                     Authenticate")
-	fmt.Println("    " + cli.Magenta + "whoami" + cli.Reset + "                   Current user")
-	fmt.Println("    " + cli.Magenta + "users" + cli.Reset + "/" + cli.Magenta + "roles" + cli.Reset + "/" + cli.Magenta + "acl" + cli.Reset + "        Access control")
-	fmt.Println("    " + cli.Magenta + "audit" + cli.Reset + "                     Audit trail")
-	fmt.Println()
-
-	// Options
-	fmt.Println(cli.Bold + cli.Cyan + "OPTIONS" + cli.Reset)
-	fmt.Println()
-	fmt.Println("    " + cli.Dim + "-a, --addr" + cli.Reset + " <host:port>   Server address (default: localhost:9092)")
-	fmt.Println("    " + cli.Dim + "-u, --username" + cli.Reset + " <user>    Username")
-	fmt.Println("    " + cli.Dim + "-P, --password" + cli.Reset + " <pass>    Password")
-	fmt.Println("    " + cli.Dim + "-T, --tls" + cli.Reset + "                Enable TLS")
-	fmt.Println("    " + cli.Dim + "-k, --insecure" + cli.Reset + "           Skip TLS verification")
-	fmt.Println()
-
-	// Examples
-	fmt.Println(cli.Bold + cli.Cyan + "EXAMPLES" + cli.Reset)
-	fmt.Println()
-	fmt.Println(cli.Dim + "    # Quick start" + cli.Reset)
-	fmt.Println("    flymq-cli create my-topic")
-	fmt.Println("    flymq-cli produce my-topic \"Hello!\"")
-	fmt.Println("    flymq-cli explore")
-	fmt.Println()
-	fmt.Println(cli.Dim + "    # With authentication" + cli.Reset)
-	fmt.Println("    flymq-cli --addr server:9092 -u admin -P secret topics")
-	fmt.Println()
-
-	fmt.Println(cli.Green + "Tip:" + cli.Reset + " Run 'flymq-cli <command> --help' for command details.")
+	fmt.Printf("%s Run 'flymq-cli <command> --help' for command-specific details.\n", cli.Colorize(cli.Green, "Tip:"))
 	fmt.Println()
 }
 
@@ -1132,7 +1119,37 @@ func cmdTopicInfo(args []string) {
 // Advanced Commands
 // ============================================================================
 
+func printProduceDelayedHelp() {
+	cli.Header("produce-delayed - Send a message with delayed delivery")
+	fmt.Printf("\n%s flymq-cli produce-delayed <topic> <message> <delay-ms>\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Target topic name")
+	cli.Command("<message>", "", "Message content")
+	cli.Command("<delay-ms>", "", "Delay in milliseconds before message is visible")
+
+	cli.Section("Examples")
+	cli.Example("Delay message by 5 seconds", "flymq-cli produce-delayed orders '{\"id\":1}' 5000")
+}
+
+func printProduceTTLHelp() {
+	cli.Header("produce-ttl - Send a message with time-to-live")
+	fmt.Printf("\n%s flymq-cli produce-ttl <topic> <message> <ttl-ms>\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Target topic name")
+	cli.Command("<message>", "", "Message content")
+	cli.Command("<ttl-ms>", "", "Time-to-live in milliseconds")
+
+	cli.Section("Examples")
+	cli.Example("Message expires in 1 minute", "flymq-cli produce-ttl alerts 'high-load' 60000")
+}
+
 func cmdProduceDelayed(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printProduceDelayedHelp()
+		return
+	}
 	if len(args) < 3 {
 		cli.Error("Usage: flymq-cli produce-delayed <topic> <message> <delay-ms>")
 		os.Exit(1)
@@ -1159,6 +1176,10 @@ func cmdProduceDelayed(args []string) {
 }
 
 func cmdProduceTTL(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printProduceTTLHelp()
+		return
+	}
 	if len(args) < 3 {
 		cli.Error("Usage: flymq-cli produce-ttl <topic> <message> <ttl-ms>")
 		os.Exit(1)
@@ -1186,15 +1207,9 @@ func cmdProduceTTL(args []string) {
 
 func cmdDLQ(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		cli.Error("Usage: flymq-cli dlq <list|replay|purge|stats> <topic> [options]")
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  list <topic>    List messages in DLQ")
-		fmt.Println("  replay <topic>  Replay messages from DLQ")
-		fmt.Println("  purge <topic>   Purge all messages from DLQ")
-		fmt.Println("  stats <topic>   Show DLQ statistics")
-		os.Exit(1)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printDLQHelp()
+		return
 	}
 
 	switch subCmd {
@@ -1210,6 +1225,24 @@ func cmdDLQ(args []string) {
 		cli.Error("Unknown DLQ subcommand: %s", subCmd)
 		os.Exit(1)
 	}
+}
+
+func printDLQHelp() {
+	cli.Header("dlq - Dead letter queue management")
+	fmt.Printf("\n%s flymq-cli dlq <command> <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("list", "<topic>", "List messages in DLQ")
+	cli.Command("replay", "<topic> <msg-id>", "Replay messages from DLQ")
+	cli.Command("purge", "<topic>", "Purge all messages from DLQ")
+	cli.Command("stats", "<topic>", "Show DLQ statistics")
+
+	cli.Section("Options")
+	cli.Option("-n", "--count", "n", "Number of messages to list (default: 10)")
+
+	cli.Section("Examples")
+	cli.Example("List failed messages", "flymq-cli dlq list orders --count 5")
+	cli.Example("Retry a failed message", "flymq-cli dlq replay orders MSG-123")
 }
 
 func cmdDLQList(args []string) {
@@ -1335,16 +1368,9 @@ func cmdDLQStats(args []string) {
 
 func cmdSchema(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		cli.Error("Usage: flymq-cli schema <register|list|validate|delete|produce> [options]")
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  register <name> <type> <schema>  Register a new schema")
-		fmt.Println("  list                             List all registered schemas")
-		fmt.Println("  validate <name> <message>        Validate a message against a schema")
-		fmt.Println("  delete <name>                    Delete a schema")
-		fmt.Println("  produce <topic> <schema> <msg>   Produce with schema validation")
-		os.Exit(1)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printSchemaHelp()
+		return
 	}
 
 	switch subCmd {
@@ -1362,6 +1388,25 @@ func cmdSchema(args []string) {
 		cli.Error("Unknown schema subcommand: %s", subCmd)
 		os.Exit(1)
 	}
+}
+
+func printSchemaHelp() {
+	cli.Header("schema - Schema registry management")
+	fmt.Printf("\n%s flymq-cli schema <command> [args]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("register", "<name> <type> <file>", "Register a new schema")
+	cli.Command("list", "", "List all registered schemas")
+	cli.Command("validate", "<name> <msg>", "Validate a message against a schema")
+	cli.Command("delete", "<name>", "Delete a schema")
+	cli.Command("produce", "<topic> <name> <msg>", "Produce with server-side validation")
+
+	cli.Section("Types")
+	fmt.Println("  json, avro, protobuf")
+
+	cli.Section("Examples")
+	cli.Example("Register a JSON schema", "flymq-cli schema register user-schema json '{\"type\":\"object\",...}'")
+	cli.Example("Produce with validation", "flymq-cli schema produce orders user-schema '{\"id\":1}'")
 }
 
 func cmdSchemaRegister(args []string) {
@@ -1409,6 +1454,10 @@ func cmdSchemaProduceWithSchema(args []string) {
 }
 
 func cmdTransaction(args []string) {
+	if hasFlag(args, "--help") || hasFlag(args, "-h") {
+		printTxnHelp()
+		return
+	}
 	if len(args) < 1 {
 		cli.Error("Usage: flymq-cli txn <topic> <message1> [message2] ...")
 		cli.Info("  Produces all messages in a single transaction")
@@ -1461,6 +1510,18 @@ func cmdTransaction(args []string) {
 // ============================================================================
 // Schema Additional Commands
 // ============================================================================
+
+func printTxnHelp() {
+	cli.Header("txn - Transactional messaging")
+	fmt.Printf("\n%s flymq-cli txn <topic> <msg1> [msg2] ...\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Description")
+	fmt.Println("  Produces multiple messages in a single atomic transaction.")
+	fmt.Println("  Either all messages are committed, or none are.")
+
+	cli.Section("Examples")
+	cli.Example("Produce multiple messages atomically", "flymq-cli txn orders '{\"id\":1}' '{\"id\":2}'")
+}
 
 func cmdSchemaList(args []string) {
 	c := connect(args)
@@ -1536,9 +1597,8 @@ func cmdSchemaDelete(args []string) {
 
 func cmdHealth(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		// Default to showing overall health
-		cmdHealthStatus(args)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printHealthHelp()
 		return
 	}
 
@@ -1558,6 +1618,24 @@ func cmdHealth(args []string) {
 		fmt.Println("  ready     Check readiness probe")
 		os.Exit(1)
 	}
+}
+
+func printHealthHelp() {
+	cli.Header("health - Check server health status")
+	fmt.Printf("\n%s flymq-cli health <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("status", "", "Show overall health status")
+	cli.Command("live", "", "Check liveness probe")
+	cli.Command("ready", "", "Check readiness probe")
+
+	cli.Section("Options")
+	cli.Option("-h", "--health-addr", "addr", "Health API address (default: localhost:9095)")
+	cli.Option("", "--health-tls", "", "Enable TLS for health checks")
+	cli.Option("", "--health-insecure", "", "Skip TLS verification")
+
+	cli.Section("Examples")
+	cli.Example("Check if server is ready", "flymq-cli health ready")
 }
 
 func cmdHealthStatus(args []string) {
@@ -1682,15 +1760,9 @@ func getHealthCAFile(args []string) string {
 
 func cmdAdmin(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		cli.Error("Usage: flymq-cli admin <cluster|topics|groups|schemas> [options]")
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  cluster   Show cluster information")
-		fmt.Println("  topics    List topics via Admin API")
-		fmt.Println("  groups    List consumer groups")
-		fmt.Println("  schemas   List schemas via Admin API")
-		os.Exit(1)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printAdminHelp()
+		return
 	}
 
 	switch subCmd {
@@ -1706,6 +1778,26 @@ func cmdAdmin(args []string) {
 		cli.Error("Unknown admin subcommand: %s", subCmd)
 		os.Exit(1)
 	}
+}
+
+func printAdminHelp() {
+	cli.Header("admin - Direct Admin API access")
+	fmt.Printf("\n%s flymq-cli admin <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("cluster", "", "Show cluster information")
+	cli.Command("topics", "", "List topics via Admin API")
+	cli.Command("groups", "", "List consumer groups")
+	cli.Command("schemas", "", "List schemas via Admin API")
+
+	cli.Section("Options")
+	cli.Option("", "--admin-user", "user", "Admin username")
+	cli.Option("", "--admin-pass", "pass", "Admin password")
+	cli.Option("-a", "--admin-addr", "addr", "Admin API address (default: localhost:9094)")
+	cli.Option("", "--admin-tls", "", "Enable TLS for Admin API")
+
+	cli.Section("Examples")
+	cli.Example("List topics via Admin API", "flymq-cli admin topics --admin-user admin --admin-pass secret")
 }
 
 func cmdAdminCluster(args []string) {
@@ -2019,23 +2111,9 @@ func httpPostWithTLS(url string, body []byte, cfg HTTPClientConfig) (string, err
 
 func cmdCluster(args []string) {
 	subCmd, subArgs := extractSubcommand(args)
-	if subCmd == "" {
-		cli.Error("Usage: flymq-cli cluster <subcommand> [options]")
-		fmt.Println()
-		fmt.Println("Subcommands:")
-		fmt.Println("  status      Show cluster status and health")
-		fmt.Println("  members     List all cluster members")
-		fmt.Println("  info        Show detailed cluster information")
-		fmt.Println("  join        Join a cluster (requires --peer)")
-		fmt.Println("  leave       Leave the cluster gracefully")
-		fmt.Println()
-		fmt.Println("Partition Management (Horizontal Scaling):")
-		fmt.Println("  metadata    Get partition-to-node mappings for smart routing")
-		fmt.Println("  partitions  List all partition assignments")
-		fmt.Println("  leaders     Show leader distribution across nodes")
-		fmt.Println("  rebalance   Trigger partition rebalance for even distribution")
-		fmt.Println("  reassign    Reassign a partition to a new leader")
-		os.Exit(1)
+	if subCmd == "" || subCmd == "help" || hasFlag(subArgs, "--help") || hasFlag(subArgs, "-h") {
+		printClusterHelp()
+		return
 	}
 
 	switch subCmd {
@@ -2064,6 +2142,29 @@ func cmdCluster(args []string) {
 		cli.Error("Unknown cluster subcommand: %s", subCmd)
 		os.Exit(1)
 	}
+}
+
+func printClusterHelp() {
+	cli.Header("cluster - Manage cluster and partitions")
+	fmt.Printf("\n%s flymq-cli cluster <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Node Management")
+	cli.Command("status", "", "Show cluster status and health")
+	cli.Command("members", "", "List all cluster members")
+	cli.Command("info", "", "Show detailed cluster information")
+	cli.Command("join", "--peer <addr>", "Join an existing cluster")
+	cli.Command("leave", "", "Leave the cluster gracefully")
+
+	cli.Section("Partition Management")
+	cli.Command("metadata", "", "Get partition-to-node mappings")
+	cli.Command("partitions", "", "List all partition assignments")
+	cli.Command("leaders", "", "Show leader distribution across nodes")
+	cli.Command("rebalance", "", "Trigger partition rebalance")
+	cli.Command("reassign", "--topic <t> --p <n> --to <node>", "Reassign a partition")
+
+	cli.Section("Examples")
+	cli.Example("Check cluster health", "flymq-cli cluster status")
+	cli.Example("Add new node to cluster", "flymq-cli cluster join --peer node1:9093")
 }
 
 func cmdClusterStatus(args []string) {
@@ -2692,17 +2793,24 @@ func cmdUsers(args []string) {
 }
 
 func printUsersUsage() {
-	cli.Header("User Management Commands:")
-	fmt.Println("  users list                    List all users")
-	fmt.Println("  users create <user> <pass>    Create a new user")
-	fmt.Println("  users delete <user>           Delete a user")
-	fmt.Println("  users update <user>           Update user roles/status")
-	fmt.Println("  users get <user>              Get user details")
-	fmt.Println("  users passwd <user>           Change user password")
-	fmt.Println()
-	cli.Header("Options:")
-	fmt.Println("  --roles <role1,role2>         Roles for create/update")
-	fmt.Println("  --enabled <true|false>        Enable/disable user")
+	cli.Header("users - Manage users and permissions")
+	fmt.Printf("\n%s flymq-cli users <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("list", "", "List all users")
+	cli.Command("create", "<user> <pass>", "Create a new user")
+	cli.Command("delete", "<user>", "Delete a user")
+	cli.Command("update", "<user>", "Update user roles/status")
+	cli.Command("get", "<user>", "Get user details")
+	cli.Command("passwd", "<user> <pass>", "Change user password")
+
+	cli.Section("Options")
+	cli.Option("", "--roles", "role1,role2", "Roles for create/update")
+	cli.Option("", "--enabled", "true|false", "Enable/disable user")
+
+	cli.Section("Examples")
+	cli.Example("Create a new admin user", "flymq-cli users create admin secret --roles admin")
+	cli.Example("Disable a user account", "flymq-cli users update dev-user --enabled false")
 }
 
 func cmdUsersList(args []string) {
@@ -2910,16 +3018,23 @@ func cmdACL(args []string) {
 }
 
 func printACLUsage() {
-	cli.Header("ACL Management Commands:")
-	fmt.Println("  acl list                      List all topic ACLs")
-	fmt.Println("  acl get <topic>               Get ACL for a topic")
-	fmt.Println("  acl set <topic>               Set ACL for a topic")
-	fmt.Println("  acl delete <topic>            Delete ACL for a topic")
-	fmt.Println()
-	cli.Header("Options:")
-	fmt.Println("  --public                      Make topic public")
-	fmt.Println("  --users <user1,user2>         Allowed users")
-	fmt.Println("  --roles <role1,role2>         Allowed roles")
+	cli.Header("acl - Manage access control lists")
+	fmt.Printf("\n%s flymq-cli acl <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("list", "", "List all topic ACLs")
+	cli.Command("get", "<topic>", "Get ACL for a topic")
+	cli.Command("set", "<topic>", "Set ACL for a topic")
+	cli.Command("delete", "<topic>", "Delete ACL for a topic")
+
+	cli.Section("Options")
+	cli.Option("", "--public", "", "Make topic accessible to everyone")
+	cli.Option("", "--users", "u1,u2", "Explicitly allowed users")
+	cli.Option("", "--roles", "r1,r2", "Explicitly allowed roles")
+
+	cli.Section("Examples")
+	cli.Example("Make a topic public", "flymq-cli acl set public-events --public")
+	cli.Example("Restrict topic to specific roles", "flymq-cli acl set secure-topic --roles admin,auditor")
 }
 
 func cmdACLList(args []string) {
@@ -3049,13 +3164,20 @@ func cmdRoles(args []string) {
 }
 
 func printRolesUsage() {
-	cli.Header("Role Commands:")
-	fmt.Println("  roles list                    List all available roles")
-	fmt.Println("  roles get <role>              Get role details")
-	fmt.Println()
-	cli.Header("Description:")
+	cli.Header("roles - Manage RBAC roles")
+	fmt.Printf("\n%s flymq-cli roles <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("list", "", "List all available roles")
+	cli.Command("get", "<role>", "Show detailed role permissions")
+
+	cli.Section("Description")
 	fmt.Println("  Roles define sets of permissions that can be assigned to users.")
 	fmt.Println("  Built-in roles: admin, producer, consumer, guest")
+
+	cli.Section("Examples")
+	cli.Example("List all roles", "flymq-cli roles list")
+	cli.Example("Check producer permissions", "flymq-cli roles get producer")
 }
 
 func cmdRolesList(args []string) {
@@ -3166,163 +3288,100 @@ func getStringArg(args []string, flag, defaultVal string) string {
 // ============================================================================
 
 func printProduceHelp() {
-	cli.Header("produce - Produce a message to a topic")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  flymq-cli produce <topic> <message> [options]")
-	fmt.Println()
-	fmt.Println("Arguments:")
-	fmt.Println("  <topic>     Target topic name")
-	fmt.Println("  <message>   Message content (string)")
-	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  --key, -k <key>         Message key for partition routing")
-	fmt.Println("                          Messages with the same key go to the same partition")
-	fmt.Println("  --partition, -p <n>     Target partition number (overrides key-based routing)")
-	fmt.Println("  --encoder, -e <name>    Client-side encoder to use (string, json, binary, avro, protobuf)")
-	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf encoders)")
-	fmt.Println()
-	fmt.Println("Note: Client-side encoders (SerDe) are separate from server-side Schema Store validation.")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  # Simple message")
-	fmt.Println("  flymq-cli produce my-topic \"Hello World\"")
-	fmt.Println()
-	fmt.Println("  # Message with key (ensures ordering for same key)")
-	fmt.Println("  flymq-cli produce orders '{\"id\": 1}' --key user-123")
-	fmt.Println("  flymq-cli produce orders '{\"id\": 2}' --key user-123  # Same partition")
-	fmt.Println()
-	fmt.Println("  # Explicit partition")
-	fmt.Println("  flymq-cli produce events \"data\" --partition 2")
-	fmt.Println()
+	cli.Header("produce - Send a message to a topic")
+	fmt.Printf("\n%s flymq-cli produce <topic> <message> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Target topic name")
+	cli.Command("<message>", "", "Message content (string)")
+
+	cli.Section("Options")
+	cli.Option("-k", "--key", "key", "Message key for partition routing")
+	cli.Option("-p", "--partition", "n", "Target partition number (overrides key-based routing)")
+	cli.Option("-e", "--encoder", "name", "Encoder: string, json, binary, avro, protobuf")
+	cli.Option("-s", "--schema", "file", "Local schema file (for Avro/Protobuf)")
+
+	cli.Section("Examples")
+	cli.Example("Simple message", "flymq-cli produce my-topic \"Hello World\"")
+	cli.Example("Message with key", "flymq-cli produce orders '{\"id\": 1}' --key user-123")
+	cli.Example("Explicit partition", "flymq-cli produce events \"data\" --partition 2")
+
+	fmt.Printf("%s Client-side encoders (SerDe) are separate from server-side Schema Store validation.\n\n", cli.Colorize(cli.Dim, "Note:"))
 }
 
 func printConsumeHelp() {
-	cli.Header("consume - Fetch messages from a topic (one-time batch read)")
-	fmt.Println()
-	fmt.Println("  This command fetches a batch of messages WITHOUT tracking your position.")
-	fmt.Println("  Use this for debugging or one-time reads. For production, use 'subscribe'.")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  flymq-cli consume <topic> [options]")
-	fmt.Println()
-	fmt.Println("Arguments:")
-	fmt.Println("  <topic>     Topic to consume from")
-	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  --offset, -o <n>        Starting offset (default: 0)")
-	fmt.Println("  --count, -n <n>         Number of messages to fetch (default: 10)")
-	fmt.Println("  --partition, -p <n>     Partition to consume from (default: 0)")
-	fmt.Println("  --show-key, -k          Display message keys in output")
-	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring, regex, or $.json.path)")
-	fmt.Println("  --decoder, -d <name>    Client-side decoder to use (string, json, binary, avro, protobuf)")
-	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf decoders)")
-	fmt.Println("  --quiet, -q             Suppress headers and info messages")
-	fmt.Println("  --raw, -r               Raw output: just message content")
-	fmt.Println("  --no-offset             Hide offset prefix in output")
-	fmt.Println()
-	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  # Read first 10 messages")
-	fmt.Println("  flymq-cli consume my-topic")
-	fmt.Println()
-	fmt.Println("  # Read 50 messages starting at offset 100")
-	fmt.Println("  flymq-cli consume my-topic --offset 100 --count 50")
-	fmt.Println()
-	fmt.Println("  # Show message keys")
-	fmt.Println("  flymq-cli consume orders --show-key")
-	fmt.Println()
-	fmt.Println("  # Raw output for piping")
-	fmt.Println("  flymq-cli consume my-topic --raw | grep 'error'")
-	fmt.Println()
-	fmt.Println("See also:")
-	fmt.Println("  subscribe   Continuous streaming with offset tracking (recommended)")
-	fmt.Println("  groups      Manage consumer groups and offsets")
-	fmt.Println()
+	cli.Header("consume - Fetch messages (one-time batch read)")
+	fmt.Printf("\n%s flymq-cli consume <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Topic to consume from")
+
+	cli.Section("Options")
+	cli.Option("-o", "--offset", "n", "Starting offset (default: 0)")
+	cli.Option("-n", "--count", "n", "Number of messages to fetch (default: 10)")
+	cli.Option("-p", "--partition", "n", "Partition to consume from (default: 0)")
+	cli.Option("-k", "--show-key", "", "Display message keys in output")
+	cli.Option("-F", "--filter", "pattern", "Filter: substring, regex, or $.json.path")
+	cli.Option("-d", "--decoder", "name", "Decoder: string, json, binary, avro, protobuf")
+	cli.Option("-s", "--schema", "file", "Local schema file (for Avro/Protobuf)")
+	cli.Option("-q", "--quiet", "", "Suppress headers and info messages")
+	cli.Option("-r", "--raw", "", "Raw output: just message content")
+	cli.Option("", "--no-offset", "", "Hide offset prefix in output")
+
+	cli.Section("Examples")
+	cli.Example("Read first 10 messages", "flymq-cli consume my-topic")
+	cli.Example("Read 50 messages starting at offset 100", "flymq-cli consume my-topic --offset 100 --count 50")
+	cli.Example("Raw output for piping", "flymq-cli consume my-topic --raw | grep 'error'")
+
+	fmt.Printf("%s One-time reads don't track progress. Use 'subscribe' for persistent consumption.\n\n", cli.Colorize(cli.Dim, "Note:"))
 }
 
 func printSubscribeHelp() {
-	cli.Header("subscribe - Stream messages with automatic offset tracking")
-	fmt.Println()
-	fmt.Println("  This command continuously streams messages and tracks your position.")
-	fmt.Println("  If you restart, it resumes from where you left off. Use this for production.")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  flymq-cli subscribe <topic> [options]")
-	fmt.Println()
-	fmt.Println("Arguments:")
-	fmt.Println("  <topic>     Topic to subscribe to")
-	fmt.Println()
-	fmt.Println("Consumer Group Options:")
-	fmt.Println("  --group, -g <id>        Consumer group ID (default: 'default')")
-	fmt.Println("                          Messages are tracked per group. Use a unique name")
-	fmt.Println("                          for each application that consumes from this topic.")
-	fmt.Println()
-	fmt.Println("Starting Position:")
-	fmt.Println("  --from-beginning        Start from the first message (for new groups)")
-	fmt.Println("  --from-latest           Start from new messages only (default for new groups)")
-	fmt.Println("  --from, -f <mode>       Explicit mode: earliest, latest, committed")
-	fmt.Println("                          Note: Existing groups always resume from committed offset")
-	fmt.Println()
-	fmt.Println("Other Options:")
-	fmt.Println("  --partition, -p <n>     Partition number (default: 0)")
-	fmt.Println("  --show-key, -k          Display message keys in output")
-	fmt.Println("  --filter, -F <pattern>  Filter messages by content (substring, regex, or $.json.path)")
-	fmt.Println("  --decoder, -d <name>    Client-side decoder to use (string, json, binary, avro, protobuf)")
-	fmt.Println("  --schema, -s <file>     Local schema file (required for Avro/Protobuf decoders)")
-	fmt.Println("  --show-lag, -l          Show consumer lag periodically")
-	fmt.Println("  --quiet, -q             Suppress headers and info messages")
-	fmt.Println("  --raw, -r               Raw output: just message content")
-	fmt.Println("  --no-timestamp          Hide timestamp in output")
-	fmt.Println("  --no-offset             Hide offset in output")
-	fmt.Println()
-	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  # Stream new messages (like tail -f)")
-	fmt.Println("  flymq-cli subscribe my-topic")
-	fmt.Println()
-	fmt.Println("  # Process all messages from beginning with tracking")
-	fmt.Println("  flymq-cli subscribe my-topic --group my-app --from-beginning")
-	fmt.Println()
-	fmt.Println("  # Resume from where you left off (after restart)")
-	fmt.Println("  flymq-cli subscribe my-topic --group my-app")
-	fmt.Println()
-	fmt.Println("  # Monitor lag while consuming")
-	fmt.Println("  flymq-cli subscribe my-topic --group my-app --show-lag")
-	fmt.Println()
-	fmt.Println("How Consumer Groups Work:")
-	fmt.Println("  - Each group tracks its own position independently")
-	fmt.Println("  - Multiple apps with different groups each see ALL messages")
-	fmt.Println("  - Multiple consumers with SAME group share the workload")
-	fmt.Println("  - Offsets are committed automatically after processing")
-	fmt.Println()
-	fmt.Println("See also:")
-	fmt.Println("  consume     One-time batch read (no tracking)")
-	fmt.Println("  groups      Manage consumer groups and offsets")
-	fmt.Println()
+	cli.Header("subscribe - Stream messages with offset tracking")
+	fmt.Printf("\n%s flymq-cli subscribe <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Topic to subscribe to")
+
+	cli.Section("Consumer Group Options")
+	cli.Option("-g", "--group", "id", "Consumer group ID (default: 'default')")
+	cli.Option("", "--from-beginning", "", "Start from the first message")
+	cli.Option("", "--from-latest", "", "Start from new messages only (default)")
+	cli.Option("-f", "--from", "mode", "Explicit mode: earliest, latest, committed")
+
+	cli.Section("Other Options")
+	cli.Option("-p", "--partition", "n", "Partition number (default: 0)")
+	cli.Option("-k", "--show-key", "", "Display message keys in output")
+	cli.Option("-F", "--filter", "pattern", "Filter: substring, regex, or $.json.path")
+	cli.Option("-d", "--decoder", "name", "Decoder: string, json, binary, avro, protobuf")
+	cli.Option("-s", "--schema", "file", "Local schema file (for Avro/Protobuf)")
+	cli.Option("-l", "--show-lag", "", "Show consumer lag periodically")
+	cli.Option("-q", "--quiet", "", "Suppress headers and info messages")
+	cli.Option("-r", "--raw", "", "Raw output: just message content")
+	cli.Option("", "--no-timestamp", "", "Hide timestamp in output")
+	cli.Option("", "--no-offset", "", "Hide offset in output")
+
+	cli.Section("Examples")
+	cli.Example("Simple subscription (tail -f)", "flymq-cli subscribe my-topic")
+	cli.Example("Process all messages from beginning with tracking", "flymq-cli subscribe my-topic --group my-app --from-beginning")
+	cli.Example("Resume from where you left off", "flymq-cli subscribe my-topic --group my-app")
+
+	fmt.Printf("%s Subscription tracks progress. Use same group ID to resume later.\n\n", cli.Colorize(cli.Dim, "Note:"))
 }
 
 func printCreateHelp() {
 	cli.Header("create - Create a new topic")
-	fmt.Println()
-	fmt.Println("Usage:")
-	fmt.Println("  flymq-cli create <topic> [options]")
-	fmt.Println()
-	fmt.Println("Arguments:")
-	fmt.Println("  <topic>     Name of the topic to create")
-	fmt.Println()
-	fmt.Println("Options:")
-	fmt.Println("  --partitions, -p <n>    Number of partitions (default: 1)")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  # Create topic with 1 partition")
-	fmt.Println("  flymq-cli create my-topic")
-	fmt.Println()
-	fmt.Println("  # Create topic with 4 partitions")
-	fmt.Println("  flymq-cli create orders --partitions 4")
-	fmt.Println()
+	fmt.Printf("\n%s flymq-cli create <topic> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Arguments")
+	cli.Command("<topic>", "", "Name of the topic to create")
+
+	cli.Section("Options")
+	cli.Option("-p", "--partitions", "n", "Number of partitions (default: 1)")
+
+	cli.Section("Examples")
+	cli.Example("Create topic with 1 partition", "flymq-cli create my-topic")
+	cli.Example("Create topic with 4 partitions", "flymq-cli create orders --partitions 4")
 }
 
 // ============================================================================
@@ -3355,38 +3414,34 @@ func cmdAudit(args []string) {
 }
 
 func printAuditUsage() {
-	cli.Header("Audit Trail Commands:")
-	fmt.Println("  audit list                    List recent audit events")
-	fmt.Println("  audit query                   Query audit events with filters")
-	fmt.Println("  audit tail                    Tail audit events in real-time")
-	fmt.Println("  audit export                  Export audit events to file")
-	fmt.Println()
-	cli.Header("Query Options:")
-	fmt.Println("  --user <username>             Filter by user")
-	fmt.Println("  --resource <resource>         Filter by resource (topic, user, etc.)")
-	fmt.Println("  --type <type>                 Filter by event type (auth.success, topic.create, etc.)")
-	fmt.Println("  --result <result>             Filter by result (success, failure, denied)")
-	fmt.Println("  --start <RFC3339>             Start time (e.g., 2026-01-01T00:00:00Z)")
-	fmt.Println("  --end <RFC3339>               End time")
-	fmt.Println("  --search <text>               Full-text search")
-	fmt.Println("  --limit <n>                   Maximum events to return (default: 100)")
-	fmt.Println("  --offset <n>                  Offset for pagination")
-	fmt.Println("  -f, --follow                  Follow/tail audit events")
-	fmt.Println()
-	cli.Header("Export Options:")
-	fmt.Println("  --format <json|csv>           Export format (default: json)")
-	fmt.Println("  --output <file>               Output file (default: stdout)")
-	fmt.Println()
-	cli.Header("Examples:")
-	fmt.Println("  # List recent audit events")
-	fmt.Println("  flymq-cli audit list")
-	fmt.Println()
-	fmt.Println("  # Query auth failures")
-	fmt.Println("  flymq-cli audit query --type auth.failure")
-	fmt.Println()
-	fmt.Println("  # Export events for a user")
-	fmt.Println("  flymq-cli audit export --user admin --format csv --output audit.csv")
-	fmt.Println()
+	cli.Header("audit - Query and export audit logs")
+	fmt.Printf("\n%s flymq-cli audit <command> [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Commands")
+	cli.Command("list", "", "List recent audit events")
+	cli.Command("query", "", "Query audit events with filters")
+	cli.Command("tail", "", "Tail audit events in real-time")
+	cli.Command("export", "", "Export audit events to file")
+
+	cli.Section("Query Options")
+	cli.Option("", "--user", "username", "Filter by user")
+	cli.Option("", "--resource", "resource", "Filter by resource (topic, user, etc.)")
+	cli.Option("", "--type", "type", "Filter by event type (e.g., auth.success)")
+	cli.Option("", "--result", "result", "Filter by result (success, failure, denied)")
+	cli.Option("", "--start", "RFC3339", "Start time (e.g., 2026-01-01T00:00:00Z)")
+	cli.Option("", "--end", "RFC3339", "End time")
+	cli.Option("", "--search", "text", "Full-text search")
+	cli.Option("", "--limit", "n", "Maximum events to return (default: 100)")
+	cli.Option("-f", "--follow", "", "Follow/tail audit events")
+
+	cli.Section("Export Options")
+	cli.Option("", "--format", "json|csv", "Export format (default: json)")
+	cli.Option("", "--output", "file", "Output file (default: stdout)")
+
+	cli.Section("Examples")
+	cli.Example("List recent audit events", "flymq-cli audit list")
+	cli.Example("Query auth failures", "flymq-cli audit query --type auth.failure")
+	cli.Example("Export events to CSV", "flymq-cli audit export --user admin --format csv --output audit.csv")
 }
 
 func cmdAuditQuery(args []string) {
@@ -3640,20 +3695,16 @@ func cmdAuditExport(args []string) {
 }
 
 func printExploreHelp() {
-	fmt.Println("Usage: flymq-cli explore [flags]")
-	fmt.Println()
-	fmt.Println("Interactive topic explorer and message browser.")
-	fmt.Println()
-	fmt.Println("Flags:")
-	fmt.Println("  -d, --decoder <name>    Client-side decoder to use for message payloads (string, json, binary, avro, protobuf). Default: string")
-	fmt.Println("  -s, --schema <file>     Local schema file (required for Avro/Protobuf decoders)")
-	fmt.Println("  -a, --addr <addr>       Server address (default: localhost:9092)")
-	fmt.Println()
-	fmt.Println("Note: Client-side decoders (SerDe) are separate from server-side Schema Store validation.")
-	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  flymq-cli explore")
-	fmt.Println("  flymq-cli explore --decoder json")
+	cli.Header("explore - Interactive topic explorer")
+	fmt.Printf("\n%s flymq-cli explore [options]\n", cli.Colorize(cli.Bold, "Usage:"))
+
+	cli.Section("Options")
+	cli.Option("-d", "--decoder", "name", "Decoder for message payloads (string, json, binary, avro, protobuf)")
+	cli.Option("-s", "--schema", "file", "Local schema file (for Avro/Protobuf)")
+
+	cli.Section("Examples")
+	cli.Example("Launch interactive explorer", "flymq-cli explore")
+	cli.Example("Explore with JSON decoding", "flymq-cli explore --decoder json")
 }
 
 func cmdExplore(args []string) {
