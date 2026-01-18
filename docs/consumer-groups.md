@@ -200,11 +200,14 @@ flymq-cli consume <topic> --offset <n> --count <n>
 # List all consumer groups
 flymq-cli groups list
 
+# Check consumer group details and state
+flymq-cli groups describe <group-id>
+
 # Check consumer group lag
-flymq-cli groups lag --group <group-id> --topic <topic>
+flymq-cli groups lag <group-id>
 
 # Reset consumer group offset
-flymq-cli groups reset-offsets --group <group-id> --topic <topic> --to-earliest
+flymq-cli groups reset <group-id>
 ```
 
 ## Troubleshooting
@@ -217,12 +220,12 @@ flymq-cli groups reset-offsets --group <group-id> --topic <topic> --to-earliest
 ### "Why am I missing messages?"
 
 1. **Started with `--from-latest`**: Only sees new messages
-2. **Solution**: Use `--from-beginning` or `--from-earliest` to read historical messages
+2. **Solution**: Use `--from-beginning` to read historical messages
 
 ### "How do I reprocess all messages?"
 
 ```bash
 # Reset offset to beginning
-flymq-cli groups reset-offsets --group my-app --topic my-topic --to-earliest
+flymq-cli groups reset my-app
 ```
 

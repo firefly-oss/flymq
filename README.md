@@ -863,50 +863,45 @@ FlyMQ uses a custom binary protocol for efficiency:
 ## CLI Reference
 
 ```bash
-# Topic management
-flymq-cli create <topic> [--partitions N]
-flymq-cli delete <topic>
-flymq-cli topics                    # List all topics
-flymq-cli info <topic>              # Topic details
-flymq-cli explore                   # Interactive topic explorer (Metadata, Messages, Filter, Commit)
+# Messaging
+flymq-cli produce <topic> <msg>         # Send a message to a topic
+flymq-cli consume <topic>               # Fetch messages from a topic (batch)
+flymq-cli subscribe <topic>             # Stream messages from a topic (tail)
+flymq-cli explore                       # Interactive topic explorer and message browser
 
-# Producing messages
-flymq-cli produce <topic> <message> [--key KEY] [--encoder json|string|binary|avro|protobuf]
+# Topics
+flymq-cli topics                        # List all topics
+flymq-cli create <topic>                # Create a new topic
+flymq-cli delete <topic>                # Delete an existing topic
+flymq-cli info <topic>                  # Show detailed topic information
 
-# Consuming messages
-flymq-cli consume <topic> [--offset N] [--count N] [--show-key] [--decoder json|string|binary] [--filter PATTERN]
-flymq-cli subscribe <topic> [--group GROUP] [--from earliest|latest] [--show-key] [--filter PATTERN]
-
-# Consumer groups
-flymq-cli groups list               # List all groups
-flymq-cli groups describe <group>   # Group details
-flymq-cli groups lag <group>        # Consumer lag
+# Consumer Groups
+flymq-cli groups list                   # List all consumer groups
+flymq-cli groups describe <grp>         # Show group members and state
+flymq-cli groups lag <grp>              # Show consumer lag for a group
+flymq-cli groups reset <grp>            # Reset group offsets
+flymq-cli groups delete <grp>           # Delete a consumer group
 
 # Advanced Commands
-flymq-cli produce-delayed <topic> <message> <delay-ms>
-flymq-cli produce-ttl <topic> <message> <ttl-ms>
-flymq-cli txn <topic> <message1> [message2] ...
+flymq-cli produce-delayed <topic> <delay> <msg>  # Send with delayed delivery
+flymq-cli produce-ttl <topic> <ttl> <msg>        # Send with time-to-live
+flymq-cli txn                           # Transactional messaging operations
+flymq-cli schema                        # Schema registry management
+flymq-cli dlq                           # Dead letter queue management
 
-# Dead letter queue
-flymq-cli dlq list <topic> [--count N]
-flymq-cli dlq replay <topic> <message-id>
-flymq-cli dlq purge <topic>
-
-# Schema registry
-flymq-cli schema register <name> <type> <schema>
-flymq-cli schema produce <topic> <schema-name> <message>
-flymq-cli schema list
-
-# Cluster & Admin
-flymq-cli cluster                   # Cluster status
-flymq-cli health                    # Health checks
-flymq-cli admin                     # Admin API
-
-# Security
-flymq-cli auth                      # Authenticate
-flymq-cli whoami                    # Current user
-flymq-cli users/roles/acl           # Access control
+# Security & Admin
+flymq-cli auth                          # Authenticate and save credentials
+flymq-cli whoami                        # Display current authenticated user
+flymq-cli users                         # Manage users and permissions
+flymq-cli roles                         # Manage RBAC roles
+flymq-cli acl                           # Manage access control lists
+flymq-cli audit                         # Query and export audit logs
+flymq-cli cluster                       # Cluster nodes and partition management
+flymq-cli admin                         # Direct Admin API access
+flymq-cli health                        # Check server health status
 ```
+
+Run `flymq-cli <command> --help` for command-specific details and examples.
 
 ---
 

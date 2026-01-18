@@ -116,6 +116,7 @@ flymq-cli cluster status --admin-tls --admin-insecure \
 |--------|--------------|-------------|
 | `--admin-user` | `FLYMQ_ADMIN_USER` | Username for Admin API authentication |
 | `--admin-pass` | `FLYMQ_ADMIN_PASS` | Password for Admin API authentication |
+| `--admin-addr` | `FLYMQ_ADMIN_ADDR` | Admin API address (default: localhost:9094) |
 | `--admin-tls` | `FLYMQ_ADMIN_TLS` | Enable HTTPS for Admin API calls |
 | `--admin-ca-cert` | `FLYMQ_ADMIN_CA_FILE` | CA certificate for Admin API TLS |
 | `--admin-insecure` | `FLYMQ_ADMIN_TLS_INSECURE` | Skip TLS certificate verification |

@@ -376,17 +376,11 @@ flymq-cli groups list
 # Describe a group
 flymq-cli groups describe order-processors
 
-# Check consumer lag
+# Check consumer group lag
 flymq-cli groups lag order-processors --topic orders
 
 # Reset offsets to beginning
-flymq-cli groups reset-offsets order-processors --topic orders --to-earliest
-
-# Reset to latest
-flymq-cli groups reset-offsets order-processors --topic orders --to-latest
-
-# Reset to specific offset
-flymq-cli groups reset-offsets order-processors --topic orders --to-offset 1000
+flymq-cli groups reset order-processors --topic orders --to-earliest
 ```
 
 ### Topic Management

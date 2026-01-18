@@ -243,7 +243,7 @@ flymq-cli produce my-topic "Hello, FlyMQ!"
 
 ### Subscribe to Messages
 ```bash
-flymq-cli subscribe my-topic --from earliest
+flymq-cli subscribe my-topic --from-beginning
 ```
 
 ### List Topics
@@ -251,10 +251,12 @@ flymq-cli subscribe my-topic --from earliest
 flymq-cli topics
 ```
 
-### Check Cluster Status (Cluster Mode)
+### Check Cluster Status
 ```bash
 flymq-cli cluster status
 ```
+
+Run `flymq-cli --help` to see all available commands and options.
 
 ---
 

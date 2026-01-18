@@ -316,7 +316,7 @@ Handle failed messages:
 flymq-cli dlq list my-topic
 
 # Replay a failed message
-flymq-cli dlq replay my-topic <message-id>
+flymq-cli dlq replay my-topic MSG-123
 
 # Purge all DLQ messages
 flymq-cli dlq purge my-topic
