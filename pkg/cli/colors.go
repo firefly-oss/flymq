@@ -166,6 +166,56 @@ func Header(text string) {
 	fmt.Println(Colorize(Bold+Cyan, text))
 }
 
+// Section prints a section header with spacing.
+func Section(name string) {
+	fmt.Println()
+	fmt.Println(Colorize(Bold+Cyan, strings.ToUpper(name)))
+}
+
+// Command prints a command with its arguments and description.
+func Command(name, args, description string) {
+	cmdPart := Colorize(Green, name)
+	if args != "" {
+		cmdPart += " " + Colorize(Dim, args)
+	}
+	// Use 30 as fixed width for command + args part for alignment
+	padding := 30 - visibleLen(cmdPart)
+	if padding < 1 {
+		padding = 1
+	}
+	fmt.Printf("  %s%s%s\n", cmdPart, strings.Repeat(" ", padding), description)
+}
+
+// SubCommandSection prints a dimmed section header for grouping commands.
+func SubCommandSection(name string) {
+	fmt.Println(Colorize(Dim, "  "+name))
+}
+
+// Option prints a CLI option with its description.
+func Option(short, long, placeholder, description string) {
+	var optPart string
+	if short != "" {
+		optPart = Colorize(Dim, short) + ", "
+	}
+	optPart += Colorize(Dim, long)
+	if placeholder != "" {
+		optPart += " " + Colorize(Dim, "<"+placeholder+">")
+	}
+
+	padding := 30 - visibleLen(optPart)
+	if padding < 1 {
+		padding = 1
+	}
+	fmt.Printf("  %s%s%s\n", optPart, strings.Repeat(" ", padding), description)
+}
+
+// Example prints an example command with a description.
+func Example(description, command string) {
+	fmt.Println(Colorize(Dim, "    # "+description))
+	fmt.Println("    " + command)
+	fmt.Println()
+}
+
 // KeyValue prints a key-value pair.
 func KeyValue(key string, value interface{}) {
 	fmt.Printf("  %s: %v\n", Colorize(Dim, key), value)
@@ -249,10 +299,4 @@ func TableString(headers []string, rows [][]string) string {
 	}
 
 	return sb.String()
-}
-
-// Example prints an example command.
-func Example(description, command string) {
-	fmt.Printf("  %s\n", Colorize(Dim, "# "+description))
-	fmt.Printf("  %s\n", Colorize(Cyan, command))
 }
