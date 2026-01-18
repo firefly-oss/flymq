@@ -45,8 +45,8 @@ CFG_LOG_LEVEL="info"
 CFG_SEGMENT_BYTES="67108864"
 CFG_RETENTION_BYTES="0"
 
-# TLS/SSL - Disabled by default (use reverse proxy for TLS in production)
-CFG_TLS_ENABLED="false"
+# TLS/SSL - ENABLED by default with auto-generated self-signed certificate
+CFG_TLS_ENABLED="true"
 CFG_TLS_CERT_FILE=""
 CFG_TLS_KEY_FILE=""
 
@@ -264,7 +264,7 @@ print_banner() {
     echo -e "  ${DIM}High-Performance Message Queue for Modern Applications${RESET}"
     echo ""
     echo -e "  ${CYAN}✓${RESET} Sub-millisecond latency     ${CYAN}✓${RESET} Zero external dependencies"
-    echo -e "  ${CYAN}✓${RESET} Single binary deployment    ${CYAN}✓${RESET} Built-in encryption & auth"
+    echo -e "  ${CYAN}✓${RESET} Single binary deployment    ${CYAN}✓${RESET} TLS encryption by default"
     echo -e "  ${CYAN}✓${RESET} Consumer groups & offsets   ${CYAN}✓${RESET} Production-ready defaults"
     echo ""
 }
@@ -2034,10 +2034,31 @@ print_post_install() {
     echo -e "  flymq --config $config_dir/flymq.json -quiet"
     echo ""
     echo -e "  ${DIM}# Send a message${RESET}"
-    echo -e "  flymq-cli produce my-topic \"Hello World\""
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]] && [[ -f "$CFG_TLS_CERT_FILE" ]]; then
+            # Self-signed certificate - show insecure flag
+            echo -e "  ${DIM}# With self-signed cert (testing only):${RESET}"
+            echo -e "  flymq-cli --tls --insecure produce my-topic \"Hello World\""
+            echo ""
+            echo -e "  ${DIM}# Or with CA cert verification:${RESET}"
+            echo -e "  flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} produce my-topic \"Hello World\""
+        else
+            echo -e "  flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} produce my-topic \"Hello World\""
+        fi
+    else
+        echo -e "  flymq-cli produce my-topic \"Hello World\""
+    fi
     echo ""
     echo -e "  ${DIM}# Subscribe to messages${RESET}"
-    echo -e "  flymq-cli subscribe my-topic"
+    if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+        if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]] && [[ -f "$CFG_TLS_CERT_FILE" ]]; then
+            echo -e "  flymq-cli --tls --insecure subscribe my-topic"
+        else
+            echo -e "  flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} subscribe my-topic"
+        fi
+    else
+        echo -e "  flymq-cli subscribe my-topic"
+    fi
     echo ""
 
     # Endpoints
@@ -2063,7 +2084,16 @@ print_post_install() {
         echo -e "  ${DIM}Password${RESET}       ${CYAN}${CFG_AUTH_ADMIN_PASS}${RESET}"
         echo ""
         echo -e "  ${DIM}# Use with CLI${RESET}"
-        echo -e "  flymq-cli -u ${CFG_AUTH_ADMIN_USER} -P '***' produce my-topic \"Hello\""
+        if [[ "$CFG_TLS_ENABLED" == "true" ]]; then
+            if [[ "$CFG_TLS_CERT_FILE" == *"/server.crt" ]] && [[ -f "$CFG_TLS_CERT_FILE" ]]; then
+                echo -e "  ${DIM}# With self-signed cert (testing):${RESET}"
+                echo -e "  flymq-cli --tls --insecure -u ${CFG_AUTH_ADMIN_USER} -P '***' produce my-topic \"Hello\""
+            else
+                echo -e "  flymq-cli --tls --ca-cert ${CFG_TLS_CERT_FILE} -u ${CFG_AUTH_ADMIN_USER} -P '***' produce my-topic \"Hello\""
+            fi
+        else
+            echo -e "  flymq-cli -u ${CFG_AUTH_ADMIN_USER} -P '***' produce my-topic \"Hello\""
+        fi
         echo ""
     fi
 
@@ -2239,7 +2269,7 @@ show_default_configuration() {
 
     # Section 2: Security
     echo -e "  ${WHITE}${BOLD}[${CYAN}2${WHITE}]${RESET} ${BOLD}SECURITY${RESET}"
-    echo -e "      TLS/SSL:           ${YELLOW}Disabled${RESET} ${DIM}(use reverse proxy for TLS)${RESET}"
+    echo -e "      TLS/SSL:           ${GREEN}Enabled${RESET} ${DIM}(auto-generated self-signed cert)${RESET}"
     echo -e "      Data Encryption:   ${GREEN}Enabled${RESET} ${DIM}(AES-256-GCM, auto-generated key)${RESET}"
     echo -e "      Authentication:    ${GREEN}Enabled${RESET} ${DIM}(auto-generated credentials)${RESET}"
     echo -e "      Admin User:        ${CYAN}${CFG_AUTH_ADMIN_USER}${RESET}"
@@ -2465,12 +2495,53 @@ configure_section_security() {
 
     echo -e "  ${BOLD}TLS/SSL Encryption (Client Connections)${RESET}"
     echo -e "  ${DIM}Enable TLS for encrypted client-server communication.${RESET}"
-    echo -e "  ${DIM}Note: For production, consider using a reverse proxy (nginx, traefik) for TLS.${RESET}"
+    echo -e "  ${DIM}Enabled by default with auto-generated self-signed certificate.${RESET}"
     echo ""
-    if prompt_yes_no "Enable TLS encryption" "n"; then
+    if prompt_yes_no "Enable TLS encryption" "y"; then
         CFG_TLS_ENABLED="true"
-        CFG_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
-        CFG_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
+        echo ""
+        echo -e "  ${BOLD}TLS Certificate Options:${RESET}"
+        echo -e "    ${CYAN}1${RESET}) Auto-generate self-signed certificate ${DIM}(testing/development)${RESET}"
+        echo -e "    ${CYAN}2${RESET}) Provide existing certificate files ${DIM}(production)${RESET}"
+        echo ""
+        
+        local cert_choice
+        cert_choice=$(prompt_choice "Certificate option" "1" "1" "2")
+        
+        if [[ "$cert_choice" == "1" ]]; then
+            # Auto-generate self-signed certificate
+            local cert_dir="${CFG_CONFIG_DIR:-$(get_default_config_dir)}"
+            mkdir -p "$cert_dir"
+            
+            print_info "Generating self-signed TLS certificate..."
+            
+            # Generate certificate
+            openssl req -x509 -newkey rsa:4096 -nodes \
+                -keyout "$cert_dir/server.key" \
+                -out "$cert_dir/server.crt" \
+                -days 365 \
+                -subj "/CN=localhost/O=FlyMQ/C=US" 2>/dev/null
+            
+            if [[ $? -eq 0 ]]; then
+                CFG_TLS_CERT_FILE="$cert_dir/server.crt"
+                CFG_TLS_KEY_FILE="$cert_dir/server.key"
+                chmod 600 "$cert_dir/server.key"
+                print_success "Generated certificate: ${CYAN}$cert_dir/server.crt${RESET}"
+                print_warning "Self-signed certificate is for testing only. Use a proper CA certificate in production."
+                echo ""
+                echo -e "  ${YELLOW}${BOLD}TLS CLI Usage:${RESET}"
+                echo -e "  ${DIM}Use ${CYAN}--tls --insecure${RESET} ${DIM}to skip certificate verification (testing only)${RESET}"
+                echo -e "  ${DIM}Or use ${CYAN}--tls --ca-cert $cert_dir/server.crt${RESET} ${DIM}to verify with the self-signed cert${RESET}"
+            else
+                print_error "Failed to generate certificate. Please provide existing certificates."
+                CFG_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
+                CFG_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
+            fi
+        else
+            # Use existing certificates
+            CFG_TLS_CERT_FILE=$(prompt_value "TLS certificate file" "")
+            CFG_TLS_KEY_FILE=$(prompt_value "TLS key file" "")
+        fi
     else
         CFG_TLS_ENABLED="false"
     fi
@@ -3246,6 +3317,31 @@ main() {
     # Skip config generation for binary-only reinstalls
     if [[ "$binary_only" != true ]]; then
         create_data_dir
+        
+        # Auto-generate TLS certificates if TLS is enabled and no cert file specified
+        if [[ "$CFG_TLS_ENABLED" == "true" ]] && [[ -z "$CFG_TLS_CERT_FILE" ]]; then
+            print_step "Generating TLS certificate"
+            echo ""
+            mkdir -p "$config_dir"
+            
+            if openssl req -x509 -newkey rsa:4096 -nodes \
+                -keyout "$config_dir/server.key" \
+                -out "$config_dir/server.crt" \
+                -days 365 \
+                -subj "/CN=localhost/O=FlyMQ/C=US" 2>/dev/null; then
+                
+                CFG_TLS_CERT_FILE="$config_dir/server.crt"
+                CFG_TLS_KEY_FILE="$config_dir/server.key"
+                chmod 600 "$config_dir/server.key"
+                print_success "Generated self-signed certificate: ${CYAN}$config_dir/server.crt${RESET}"
+                print_info "Use ${CYAN}--tls --insecure${RESET} flag with flymq-cli for testing"
+            else
+                print_error "Failed to generate TLS certificate"
+                CFG_TLS_ENABLED="false"
+            fi
+            echo ""
+        fi
+        
         generate_config "$config_dir"
     else
         print_step "Skipping config generation (binary-only reinstall)"
