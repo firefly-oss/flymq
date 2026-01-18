@@ -1,249 +1,315 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Firefly Software Solutions Inc.
+# Licensed under the Apache License, Version 2.0
+
 """
-09_tls_authentication.py - TLS/SSL and Authentication
+TLS and Authentication Example for PyFlyMQ.
 
-This example demonstrates:
-- Basic TLS connection (server verification)
-- Mutual TLS (client certificates)
-- Authentication with username/password
-- Environment-based credential loading
-
-Prerequisites:
-    - FlyMQ server running with TLS on port 9093 (or 9092)
-    - pyflymq installed
-    - SSL certificates (for TLS examples)
-
-Run with:
-    python 09_tls_authentication.py
-
-Note: Requires proper server configuration and certificates
+This example demonstrates all TLS security levels:
+1. No TLS (plain text) - development only
+2. TLS with system CA - basic production
+3. TLS with custom CA - private PKI
+4. Mutual TLS - high security
+5. Insecure TLS - testing/debugging only
 """
 
-from pyflymq import FlyMQClient
-import os
+from pyflymq import connect, TLSConfig
 
 
-def basic_tls_example():
-    """Basic TLS connection with server verification"""
-    print("Basic TLS Connection (Server Verification)")
-    print("-" * 50)
+def example_1_no_tls():
+    """Example 1: Plain text connection (development only)."""
+    print("=" * 60)
+    print("Example 1: No TLS (Plain Text)")
+    print("=" * 60)
     
-    print("""
-This example shows connecting with TLS and server certificate verification:
+    client = connect("localhost:9092")
+    
+    # Create topic and produce message
+    client.create_topic("tls-test")
+    meta = client.produce("tls-test", b"Hello without TLS!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    
+    # Consume message
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
+    
+    client.close()
+    print()
 
-    client = FlyMQClient(
+
+def example_2_tls_system_ca():
+    """Example 2: TLS with system CA certificates."""
+    print("=" * 60)
+    print("Example 2: TLS with System CA")
+    print("=" * 60)
+    
+    # Method 1: Using TLSConfig (recommended)
+    tls = TLSConfig(enabled=True)
+    client = connect("localhost:9093", tls=tls)
+    
+    meta = client.produce("tls-test", b"Hello with TLS!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    
+    client.close()
+    
+    # Method 2: Using parameters directly
+    client = connect("localhost:9093", tls_enabled=True)
+    
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
+    
+    client.close()
+    print()
+
+
+def example_3_tls_custom_ca():
+    """Example 3: TLS with custom CA certificate."""
+    print("=" * 60)
+    print("Example 3: TLS with Custom CA")
+    print("=" * 60)
+    
+    # Method 1: Using TLSConfig (recommended)
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/etc/flymq/ca.crt"
+    )
+    client = connect("localhost:9093", tls=tls)
+    
+    meta = client.produce("tls-test", b"Hello with custom CA!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    
+    client.close()
+    
+    # Method 2: Using parameters directly
+    client = connect(
         "localhost:9093",
         tls_enabled=True,
-        tls_ca_file="/path/to/ca.crt"
+        tls_ca_file="/etc/flymq/ca.crt"
     )
-
-Key points:
-    - tls_enabled=True: Enable TLS
-    - tls_ca_file: Path to CA certificate for verification
-    - Server certificate will be validated against the CA
-    """)
     
-    try:
-        # This will fail without proper TLS setup, but shows the API
-        client = FlyMQClient(
-            "localhost:9092",  # Note: most tests run on 9092 without TLS
-            tls_enabled=False   # Disabled for demo, would need certs
-        )
-        print("✓ Connected with TLS configuration")
-        client.close()
-    except Exception as e:
-        print(f"Note: {type(e).__name__} (expected without TLS server)")
-
-
-def mutual_tls_example():
-    """Mutual TLS (mTLS) with client certificates"""
-    print("\nMutual TLS (mTLS) Configuration")
-    print("-" * 50)
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
     
-    print("""
-This example shows mutual TLS with client certificates:
+    client.close()
+    print()
 
-    client = FlyMQClient(
+
+def example_4_mutual_tls():
+    """Example 4: Mutual TLS (client + server certificates)."""
+    print("=" * 60)
+    print("Example 4: Mutual TLS (High Security)")
+    print("=" * 60)
+    
+    # Method 1: Using TLSConfig (recommended)
+    tls = TLSConfig(
+        enabled=True,
+        cert_file="/etc/flymq/client.crt",
+        key_file="/etc/flymq/client.key",
+        ca_file="/etc/flymq/ca.crt",
+        server_name="flymq-server"  # Optional: override hostname verification
+    )
+    client = connect("localhost:9093", tls=tls)
+    
+    meta = client.produce("tls-test", b"Hello with mutual TLS!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    
+    client.close()
+    
+    # Method 2: Using parameters directly
+    client = connect(
         "localhost:9093",
         tls_enabled=True,
-        tls_ca_file="/path/to/ca.crt",
-        tls_cert_file="/path/to/client.crt",
-        tls_key_file="/path/to/client.key"
-    )
-
-Key points:
-    - tls_ca_file: CA certificate for server verification
-    - tls_cert_file: Client certificate for authentication
-    - tls_key_file: Client private key (PKCS#8 format)
-    - Server can authenticate the client
-    """)
-
-
-def authentication_example():
-    """Username/password authentication"""
-    print("\nUsername/Password Authentication")
-    print("-" * 50)
-    
-    # Example with hardcoded credentials (not recommended for production)
-    print("""
-Method 1: Hardcoded credentials (NOT recommended for production):
-
-    client = FlyMQClient(
-        "localhost:9092",
-        username="alice",
-        password="secret123"
-    )
-    """)
-    
-    # Better approach: Load from environment
-    print("""
-Method 2: Environment variables (recommended):
-
-    import os
-    username = os.getenv("FLYMQ_USERNAME")
-    password = os.getenv("FLYMQ_PASSWORD")
-    
-    client = FlyMQClient(
-        "localhost:9092",
-        username=username,
-        password=password
+        tls_cert_file="/etc/flymq/client.crt",
+        tls_key_file="/etc/flymq/client.key",
+        tls_ca_file="/etc/flymq/ca.crt",
+        tls_server_name="flymq-server"
     )
     
-Then set environment variables before running:
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
     
-    export FLYMQ_USERNAME=alice
-    export FLYMQ_PASSWORD=secret123
-    python script.py
-    """)
+    client.close()
+    print()
+
+
+def example_5_insecure_tls():
+    """Example 5: Insecure TLS (skip certificate verification)."""
+    print("=" * 60)
+    print("Example 5: Insecure TLS (Testing Only)")
+    print("=" * 60)
+    print("⚠️  WARNING: This skips certificate verification!")
+    print("⚠️  Use only for testing/debugging, NOT for production!")
+    print()
     
-    # Demonstrate environment variable approach
-    username = os.getenv("FLYMQ_USERNAME", "admin")
-    password = os.getenv("FLYMQ_PASSWORD", "default")
+    # Method 1: Using TLSConfig (recommended)
+    tls = TLSConfig(
+        enabled=True,
+        insecure_skip_verify=True
+    )
+    client = connect("localhost:9093", tls=tls)
     
-    print(f"\nTesting authentication with username={username}...")
+    meta = client.produce("tls-test", b"Hello with insecure TLS!")
+    print(f"✓ Produced message at offset {meta.offset}")
     
-    try:
-        client = FlyMQClient(
-            "localhost:9092",
-            username=username,
-            password=password
-        )
+    client.close()
+    
+    # Method 2: Using parameters directly
+    client = connect(
+        "localhost:9093",
+        tls_enabled=True,
+        tls_insecure_skip_verify=True
+    )
+    
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
+    
+    client.close()
+    print()
+
+
+def example_6_tls_with_authentication():
+    """Example 6: TLS + Authentication."""
+    print("=" * 60)
+    print("Example 6: TLS + Authentication")
+    print("=" * 60)
+    
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/etc/flymq/ca.crt"
+    )
+    
+    client = connect(
+        "localhost:9093",
+        tls=tls,
+        username="admin",
+        password="secret"
+    )
+    
+    # Check authentication status
+    whoami = client.whoami()
+    print(f"✓ Authenticated as: {whoami.username}")
+    print(f"✓ Roles: {', '.join(whoami.roles)}")
+    
+    meta = client.produce("tls-test", b"Secure and authenticated!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    
+    client.close()
+    print()
+
+
+def example_7_full_security_stack():
+    """Example 7: Complete security stack (TLS + Authentication)."""
+    print("=" * 60)
+    print("Example 7: Complete Security Stack")
+    print("=" * 60)
+    
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/etc/flymq/ca.crt"
+    )
+    
+    # TLS encrypts data in transit
+    # Authentication provides access control
+    # Server handles data-at-rest encryption with FLYMQ_ENCRYPTION_KEY
+    client = connect(
+        "localhost:9093",
+        tls=tls,
+        username="admin",
+        password="secret"
+    )
+    
+    # Check authentication status
+    whoami = client.whoami()
+    print(f"✓ Authenticated as: {whoami.username}")
+    print(f"✓ Roles: {', '.join(whoami.roles)}")
+    
+    meta = client.produce("tls-test", b"Fully secured message!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    print("✓ Data encrypted in transit (TLS)")
+    print("✓ Data encrypted at rest (server-side)")
+    
+    msg = client.consume("tls-test", meta.offset)
+    print(f"✓ Consumed: {msg.data.decode()}")
+    
+    client.close()
+    print()
+
+
+def example_8_context_manager():
+    """Example 8: TLS with context manager (recommended)."""
+    print("=" * 60)
+    print("Example 8: TLS with Context Manager")
+    print("=" * 60)
+    
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/etc/flymq/ca.crt"
+    )
+    
+    with connect("localhost:9093", tls=tls) as client:
+        meta = client.produce("tls-test", b"Hello from context manager!")
+        print(f"✓ Produced message at offset {meta.offset}")
         
-        # Test authentication
-        client.authenticate(username, password)
-        print("✓ Authentication successful")
-        
-        client.close()
-    except Exception as e:
-        print(f"Note: Authentication failed - {type(e).__name__}")
-        print("  (This may be expected if auth is disabled on server)")
-
-
-def combined_security_example():
-    """TLS + Authentication together"""
-    print("\nTLS + Authentication (Combined)")
-    print("-" * 50)
+        msg = client.consume("tls-test", meta.offset)
+        print(f"✓ Consumed: {msg.data.decode()}")
+    # Connection automatically closed
     
-    print("""
-Using TLS and authentication together:
+    print("✓ Connection automatically closed")
+    print()
 
-    client = FlyMQClient(
-        "localhost:9093",
-        # TLS settings
-        tls_enabled=True,
-        tls_ca_file="/path/to/ca.crt",
-        tls_cert_file="/path/to/client.crt",
-        tls_key_file="/path/to/client.key",
-        # Authentication settings
-        username=os.getenv("FLYMQ_USERNAME"),
-        password=os.getenv("FLYMQ_PASSWORD")
+
+def example_9_high_availability_with_tls():
+    """Example 9: High availability with TLS."""
+    print("=" * 60)
+    print("Example 9: High Availability with TLS")
+    print("=" * 60)
+    
+    tls = TLSConfig(
+        enabled=True,
+        ca_file="/etc/flymq/ca.crt"
     )
-
-This provides:
-    - Encrypted connection (TLS)
-    - Client certificate authentication (mTLS)
-    - User/password authentication (application-level)
-    - Complete security chain
-    """)
-
-
-def certificate_generation():
-    """Guide for generating test certificates"""
-    print("\nGenerating Test Certificates")
-    print("-" * 50)
     
-    print("""
-To set up TLS, generate certificates with OpenSSL:
-
-# Generate CA key and certificate
-openssl genrsa -out ca.key 4096
-openssl req -new -x509 -days 365 -key ca.key -out ca.crt
-
-# Generate server certificate
-openssl genrsa -out server.key 2048
-openssl req -new -key server.key -out server.csr
-openssl x509 -req -days 365 -in server.csr -CA ca.crt -CAkey ca.key \\
-    -out server.crt -CAcreateserial
-
-# Generate client certificate
-openssl genrsa -out client.key 2048
-openssl req -new -key client.key -out client.csr
-openssl x509 -req -days 365 -in client.csr -CA ca.crt -CAkey ca.key \\
-    -out client.crt -CAcreateserial
-
-# Convert client key to PKCS#8 format
-openssl pkcs8 -topk8 -nocrypt -in client.key -out client-pkcs8.key
-
-Use client-pkcs8.key in tls_key_file parameter.
-    """)
-
-
-def security_best_practices():
-    """Best practices for security"""
-    print("\nSecurity Best Practices")
-    print("-" * 50)
+    # Multiple servers for automatic failover
+    servers = ["server1:9093", "server2:9093", "server3:9093"]
     
-    print("""
-Credentials:
-    - Never hardcode credentials in source code
-    - Use environment variables
-    - Use config files (with restricted permissions)
-    - Use secrets management (Vault, AWS Secrets Manager, etc.)
-
-TLS Certificates:
-    - Use proper certificates from a CA
-    - Avoid self-signed certs in production
-    - Rotate certificates regularly
-    - Store keys securely
-
-Connection Security:
-    - Always enable TLS in production
-    - Use mutual TLS (mTLS) when possible
-    - Validate certificate chains
-    - Use strong encryption algorithms
-
-Audit and Monitoring:
-    - Log all authentication attempts
-    - Monitor for failed login attempts
-    - Set up alerts for security events
-    - Regularly audit access permissions
-    """)
+    client = connect(servers, tls=tls)
+    
+    meta = client.produce("tls-test", b"HA with TLS!")
+    print(f"✓ Produced message at offset {meta.offset}")
+    print("✓ Client will automatically failover if a server goes down")
+    
+    client.close()
+    print()
 
 
 def main():
-    print("=" * 50)
-    print("FlyMQ TLS & Authentication Example")
-    print("=" * 50)
+    """Run all TLS examples."""
+    print("\n" + "=" * 60)
+    print("PyFlyMQ TLS Examples")
+    print("=" * 60 + "\n")
     
-    basic_tls_example()
-    mutual_tls_example()
-    authentication_example()
-    combined_security_example()
-    certificate_generation()
-    security_best_practices()
-    
-    print("\n" + "=" * 50)
-    print("✓ Security examples completed!")
+    try:
+        # Run examples (comment out those that require specific setup)
+        example_1_no_tls()
+        
+        # Uncomment these when you have TLS configured:
+        # example_2_tls_system_ca()
+        # example_3_tls_custom_ca()
+        # example_4_mutual_tls()
+        # example_5_insecure_tls()
+        # example_6_tls_with_authentication()
+        # example_7_full_security_stack()
+        # example_8_context_manager()
+        # example_9_high_availability_with_tls()
+        
+        print("=" * 60)
+        print("✓ All examples completed successfully!")
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        print("\nNote: Some examples require TLS to be configured on the server.")
+        print("See docs/SECURITY.md for setup instructions.")
 
 
 if __name__ == "__main__":
