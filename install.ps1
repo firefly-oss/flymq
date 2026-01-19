@@ -20,8 +20,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Script version
-$SCRIPT_VERSION = "1.26.9"
-$FLYMQ_VERSION = if ($env:FLYMQ_VERSION) { $env:FLYMQ_VERSION } else { "1.26.9" }
+$SCRIPT_VERSION = "1.26.10"
+$FLYMQ_VERSION = if ($env:FLYMQ_VERSION) { $env:FLYMQ_VERSION } else { "1.26.10" }
 
 # Configuration variables
 $script:CFG_DEPLOYMENT_MODE = "standalone"
@@ -412,55 +412,121 @@ function Configure-Interactive {
 function Build-Binaries {
     Write-Step "Building FlyMQ"
     Write-Host ""
-    
+
     if (-not (Test-Path "bin")) {
         New-Item -ItemType Directory -Path "bin" | Out-Null
     }
-    
+
     Write-Host "  Building flymq.exe..."
-    go build -o bin\flymq.exe cmd\flymq\main.go
+    go build -o bin\flymq.exe .\cmd\flymq
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to build flymq.exe"
+        Write-ErrorMsg "Failed to build flymq.exe"
         exit 1
     }
     Write-Success "Built flymq.exe"
-    
+
     Write-Host "  Building flymq-cli.exe..."
-    go build -o bin\flymq-cli.exe cmd\flymq-cli\main.go
+    go build -o bin\flymq-cli.exe .\cmd\flymq-cli
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to build flymq-cli.exe"
+        Write-ErrorMsg "Failed to build flymq-cli.exe"
         exit 1
     }
     Write-Success "Built flymq-cli.exe"
+
+    Write-Host "  Building flymq-discover.exe..."
+    go build -o bin\flymq-discover.exe .\cmd\flymq-discover
+    if ($LASTEXITCODE -ne 0) {
+        Write-WarningMsg "Failed to build flymq-discover.exe (optional)"
+    } else {
+        Write-Success "Built flymq-discover.exe"
+    }
 }
 
 function Install-Binaries {
     param([string]$prefix)
-    
+
     Write-Step "Installing binaries"
     Write-Host ""
-    
+
     $binDir = Join-Path $prefix "bin"
     Write-Info "Install location: $binDir"
     Write-Host ""
-    
+
     if (-not (Test-Path $binDir)) {
         New-Item -ItemType Directory -Path $binDir -Force | Out-Null
     }
-    
+
     Copy-Item "bin\flymq.exe" "$binDir\flymq.exe" -Force
     Write-Success "Installed flymq.exe"
-    
+
     Copy-Item "bin\flymq-cli.exe" "$binDir\flymq-cli.exe" -Force
     Write-Success "Installed flymq-cli.exe"
-    
+
+    if (Test-Path "bin\flymq-discover.exe") {
+        Copy-Item "bin\flymq-discover.exe" "$binDir\flymq-discover.exe" -Force
+        Write-Success "Installed flymq-discover.exe"
+    }
+
     # Add to PATH if not already there
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($currentPath -notlike "*$binDir*") {
         Write-Host ""
-        Write-Warning "The bin directory is not in your PATH"
+        Write-WarningMsg "The bin directory is not in your PATH"
         Write-Info "Add it with: `$env:PATH += ';$binDir'"
         Write-Info "Or permanently: [Environment]::SetEnvironmentVariable('Path', `$env:PATH + ';$binDir', 'User')"
+    }
+}
+
+function Test-Installation {
+    param([string]$prefix)
+
+    Write-Step "Verifying installation"
+    Write-Host ""
+
+    $binDir = Join-Path $prefix "bin"
+    $allOk = $true
+
+    # Check server binary
+    $serverBin = Join-Path $binDir "flymq.exe"
+    if (Test-Path $serverBin) {
+        try {
+            $version = & $serverBin --version 2>$null | Select-Object -First 1
+            Write-Success "flymq.exe: $version"
+        } catch {
+            Write-Success "flymq.exe: installed"
+        }
+    } else {
+        Write-ErrorMsg "flymq.exe not found"
+        $allOk = $false
+    }
+
+    # Check CLI binary
+    $cliBin = Join-Path $binDir "flymq-cli.exe"
+    if (Test-Path $cliBin) {
+        try {
+            $version = & $cliBin --version 2>$null | Select-Object -First 1
+            Write-Success "flymq-cli.exe: $version"
+        } catch {
+            Write-Success "flymq-cli.exe: installed"
+        }
+    } else {
+        Write-ErrorMsg "flymq-cli.exe not found"
+        $allOk = $false
+    }
+
+    # Check discover binary (optional)
+    $discoverBin = Join-Path $binDir "flymq-discover.exe"
+    if (Test-Path $discoverBin) {
+        Write-Success "flymq-discover.exe: installed"
+    } else {
+        Write-Info "flymq-discover.exe: not installed (optional)"
+    }
+
+    Write-Host ""
+    if ($allOk) {
+        Write-Success "All core binaries verified"
+    } else {
+        Write-WarningMsg "Some binaries could not be verified"
     }
 }
 
@@ -912,18 +978,6 @@ if (-not $Yes) {
     Write-Host ""
     Write-Host "  Observability:" -ForegroundColor White
     Write-Host "  → Prometheus Metrics: $(if ($script:CFG_METRICS_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
-    Write-Host "  → Health Checks:      enabled" -ForegroundColor Cyan
-    Write-Host "  → Admin API:          $(if ($script:CFG_ADMIN_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "  Security:" -ForegroundColor White
-    Write-Host "  → Authentication:     $(if ($script:CFG_AUTH_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
-    if ($script:CFG_AUTH_ENABLED) {
-        Write-Host "  → Admin User:         $($script:CFG_AUTH_ADMIN_USER)" -ForegroundColor Cyan
-        Write-Host "  → Allow Anonymous:    $(if ($script:CFG_AUTH_ALLOW_ANONYMOUS) { 'yes' } else { 'no' })" -ForegroundColor Cyan
-    }
-    Write-Host ""
-    Write-Host "  Observability:" -ForegroundColor White
-    Write-Host "  → Prometheus Metrics: $(if ($script:CFG_METRICS_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
     Write-Host "  → Health Checks:      $(if ($script:CFG_HEALTH_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
     Write-Host "  → Admin API:          $(if ($script:CFG_ADMIN_ENABLED) { 'enabled' } else { 'disabled' })" -ForegroundColor Cyan
     Write-Host ""
@@ -943,6 +997,7 @@ if (-not $Yes) {
 
 Build-Binaries
 Install-Binaries -prefix $prefix
+Test-Installation -prefix $prefix
 New-DataDirectory -dataDir $dataDir
 New-Config -configDir $configDir -dataDir $dataDir
 Show-PostInstall -prefix $prefix -configDir $configDir

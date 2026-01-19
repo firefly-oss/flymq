@@ -147,8 +147,7 @@ CFG_AUTH_ENABLED="true"
 CFG_AUTH_ADMIN_USER="admin"
 CFG_AUTH_ADMIN_PASS=""
 CFG_AUTH_ALLOW_ANONYMOUS="true"   # Allow anonymous connections to public topics
-CFG_AUTH_DEFAULT_PUBLIC="true"    # Topics are public by default (anyone can produce/consume)
-CFG_AUTH_DEFAULT_PUBLIC="false"  # Topics are private by default (secure)
+CFG_AUTH_DEFAULT_PUBLIC="false"   # Topics are private by default (secure)
 
 # Partition Management (Horizontal Scaling) - Sensible defaults
 CFG_PARTITION_DISTRIBUTION_STRATEGY="round-robin"
@@ -1945,6 +1944,62 @@ print_binary_reinstall_complete() {
     echo ""
 }
 
+# Verify installation by checking binaries exist and are executable
+verify_installation() {
+    local prefix="$1"
+    local bin_dir="$prefix/bin"
+    local all_ok=true
+
+    print_step "Verifying installation"
+    echo ""
+
+    # Check server binary
+    local server_bin="$bin_dir/flymq"
+    [[ "$OS" == "windows" ]] && server_bin="$bin_dir/flymq.exe"
+
+    if [[ -x "$server_bin" ]] || [[ "$OS" == "windows" && -f "$server_bin" ]]; then
+        local version
+        version=$("$server_bin" --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "flymq: ${CYAN}$version${RESET}"
+    else
+        print_error "flymq binary not found or not executable"
+        all_ok=false
+    fi
+
+    # Check CLI binary
+    local cli_bin="$bin_dir/flymq-cli"
+    [[ "$OS" == "windows" ]] && cli_bin="$bin_dir/flymq-cli.exe"
+
+    if [[ -x "$cli_bin" ]] || [[ "$OS" == "windows" && -f "$cli_bin" ]]; then
+        local version
+        version=$("$cli_bin" --version 2>/dev/null | head -1 || echo "unknown")
+        print_success "flymq-cli: ${CYAN}$version${RESET}"
+    else
+        print_error "flymq-cli binary not found or not executable"
+        all_ok=false
+    fi
+
+    # Check discover binary (optional)
+    local discover_bin="$bin_dir/flymq-discover"
+    [[ "$OS" == "windows" ]] && discover_bin="$bin_dir/flymq-discover.exe"
+
+    if [[ -x "$discover_bin" ]] || [[ "$OS" == "windows" && -f "$discover_bin" ]]; then
+        print_success "flymq-discover: ${CYAN}installed${RESET}"
+    else
+        print_info "flymq-discover: ${DIM}not installed (optional)${RESET}"
+    fi
+
+    echo ""
+
+    if [[ "$all_ok" == true ]]; then
+        print_success "All core binaries verified"
+    else
+        print_warning "Some binaries could not be verified"
+    fi
+
+    return 0
+}
+
 print_post_install() {
     local prefix="$1"
     local config_dir="$2"
@@ -3689,10 +3744,13 @@ main() {
     
     if [[ "$config_only" != true ]]; then
         install_system_service "$config_dir" "$PREFIX"
+        # Verify installation
+        verify_installation "$PREFIX"
     fi
-    
+
     # Show appropriate completion message based on install type
     if [[ "$binary_only" == true ]]; then
+        verify_installation "$PREFIX"
         print_binary_reinstall_complete "$PREFIX" "$config_dir"
     else
         print_post_install "$PREFIX" "$config_dir"

@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-readonly SCRIPT_VERSION="1.26.9"
+readonly SCRIPT_VERSION="1.26.10"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detected system info
@@ -29,6 +29,8 @@ AUTO_CONFIRM=false
 REMOVE_DATA=false
 REMOVE_CONFIG=false
 DRY_RUN=false
+BACKUP_BEFORE_REMOVE=false
+BACKUP_DIR=""
 
 # =============================================================================
 # Colors and Formatting
@@ -475,6 +477,56 @@ remove_system_services() {
     fi
 }
 
+backup_before_removal() {
+    if [[ "$BACKUP_BEFORE_REMOVE" != true ]]; then
+        return 0
+    fi
+
+    print_step "Creating backup before removal"
+    echo ""
+
+    # Determine backup directory
+    local backup_base="${BACKUP_DIR:-$HOME/flymq-backup}"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_path="${backup_base}/flymq-backup-${timestamp}"
+
+    mkdir -p "$backup_path"
+
+    local backed_up=false
+
+    # Backup configuration
+    if [[ -n "$CONFIG_DIR" ]] && [[ -d "$CONFIG_DIR" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            print_info "[DRY RUN] Would backup: $CONFIG_DIR → $backup_path/config"
+        else
+            cp -r "$CONFIG_DIR" "$backup_path/config"
+            print_success "Backed up config: ${CYAN}$backup_path/config${RESET}"
+            backed_up=true
+        fi
+    fi
+
+    # Backup data (if being removed)
+    if [[ "$REMOVE_DATA" == true ]] && [[ -n "$DATA_DIR" ]] && [[ -d "$DATA_DIR" ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+            print_info "[DRY RUN] Would backup: $DATA_DIR → $backup_path/data"
+        else
+            cp -r "$DATA_DIR" "$backup_path/data"
+            print_success "Backed up data: ${CYAN}$backup_path/data${RESET}"
+            backed_up=true
+        fi
+    fi
+
+    if [[ "$backed_up" == true ]]; then
+        echo ""
+        print_success "Backup created: ${CYAN}$backup_path${RESET}"
+        echo ""
+        echo -e "  ${DIM}To restore, copy files back to their original locations:${RESET}"
+        [[ -d "$backup_path/config" ]] && echo -e "    ${DIM}cp -r $backup_path/config/* $CONFIG_DIR/${RESET}"
+        [[ -d "$backup_path/data" ]] && echo -e "    ${DIM}cp -r $backup_path/data/* $DATA_DIR/${RESET}"
+        echo ""
+    fi
+}
+
 remove_data_directory() {
     if [[ "$REMOVE_DATA" != true ]] || [[ -z "$DATA_DIR" ]]; then
         return 0
@@ -572,6 +624,15 @@ parse_args() {
                 PREFIX="$2"
                 shift 2
                 ;;
+            --backup)
+                BACKUP_BEFORE_REMOVE=true
+                shift
+                ;;
+            --backup-dir)
+                BACKUP_DIR="$2"
+                BACKUP_BEFORE_REMOVE=true
+                shift 2
+                ;;
             --help|-h)
                 print_banner
                 echo "Usage: ./uninstall.sh [options]"
@@ -581,6 +642,8 @@ parse_args() {
                 echo "  --remove-data    Remove data directory (messages, topics)"
                 echo "  --remove-config  Remove configuration directory"
                 echo "  --remove-all     Remove both data and configuration"
+                echo "  --backup         Backup config and data before removal"
+                echo "  --backup-dir DIR Specify backup directory (implies --backup)"
                 echo "  --dry-run        Show what would be removed without removing"
                 echo "  --prefix PATH    Specify installation prefix"
                 echo "  --help, -h       Show this help"
@@ -589,6 +652,7 @@ parse_args() {
                 echo "  ./uninstall.sh                    # Interactive uninstall"
                 echo "  ./uninstall.sh --yes              # Quick uninstall, keep data"
                 echo "  ./uninstall.sh --yes --remove-all # Complete removal"
+                echo "  ./uninstall.sh --backup --remove-all  # Backup then remove all"
                 echo "  ./uninstall.sh --dry-run          # Preview what would be removed"
                 exit 0
                 ;;
@@ -656,6 +720,7 @@ main() {
     # Perform uninstallation (functions print their own status)
     stop_running_processes
     stop_services
+    backup_before_removal
     remove_binaries
     remove_system_services
     remove_data_directory
