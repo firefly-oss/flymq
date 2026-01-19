@@ -18,6 +18,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
@@ -49,17 +52,55 @@ func newWrappedStream(s grpc.ServerStream, ctx context.Context) grpc.ServerStrea
 	return &wrappedStream{s, ctx}
 }
 
+// Default configuration values for gRPC server
+const (
+	// DefaultConsumePollInterval is the default interval for polling messages in Consume stream
+	DefaultConsumePollInterval = 100 * time.Millisecond
+	// DefaultMaxConnectionIdle is the maximum time a connection can be idle before being closed
+	DefaultMaxConnectionIdle = 5 * time.Minute
+	// DefaultMaxConnectionAge is the maximum age of a connection before it's gracefully closed
+	DefaultMaxConnectionAge = 30 * time.Minute
+	// DefaultKeepaliveTime is the interval for sending keepalive pings
+	DefaultKeepaliveTime = 30 * time.Second
+	// DefaultKeepaliveTimeout is the timeout for keepalive ping acknowledgment
+	DefaultKeepaliveTimeout = 10 * time.Second
+)
+
 // Server implements the FlyMQService gRPC service.
+//
+// The gRPC server provides a high-performance API for FlyMQ operations including:
+//   - Produce: Send messages to topics (unary RPC)
+//   - Consume: Stream messages from topics (server-streaming RPC)
+//   - GetMetadata: Retrieve cluster and topic metadata (unary RPC)
+//
+// Security Features:
+//   - TLS/mTLS encryption support
+//   - Authentication via gRPC metadata (username/password)
+//   - Per-operation authorization checks
+//   - gRPC health check protocol support
+//
+// Performance Features:
+//   - Connection keepalive for long-lived connections
+//   - Graceful shutdown support
+//   - Efficient binary protocol via protobuf
 type Server struct {
 	flymqv1.UnimplementedFlyMQServiceServer
-	broker     Broker
-	config     *config.Config
-	authorizer *auth.Authorizer
-	logger     *logging.Logger
-	gs         *grpc.Server
+	broker       Broker
+	config       *config.Config
+	authorizer   *auth.Authorizer
+	logger       *logging.Logger
+	gs           *grpc.Server
+	healthServer *health.Server
 }
 
-// NewServer creates a new gRPC server.
+// NewServer creates a new gRPC server with best-practice configuration.
+//
+// The server is configured with:
+//   - TLS encryption (if enabled in config)
+//   - Authentication interceptors (if auth is enabled)
+//   - Connection keepalive settings for long-lived connections
+//   - gRPC health check service for load balancer integration
+//   - Reflection service for debugging with grpcurl
 func NewServer(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger *logging.Logger) *Server {
 	s := &Server{
 		broker:     b,
@@ -69,6 +110,26 @@ func NewServer(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger
 	}
 
 	var opts []grpc.ServerOption
+
+	// Configure keepalive settings for long-lived connections
+	// This is essential for:
+	// - Detecting dead connections behind NAT/firewalls
+	// - Preventing connection timeouts in cloud environments
+	// - Managing resource usage by closing idle connections
+	opts = append(opts, grpc.KeepaliveParams(keepalive.ServerParameters{
+		MaxConnectionIdle:     DefaultMaxConnectionIdle,
+		MaxConnectionAge:      DefaultMaxConnectionAge,
+		MaxConnectionAgeGrace: 30 * time.Second,
+		Time:                  DefaultKeepaliveTime,
+		Timeout:               DefaultKeepaliveTimeout,
+	}))
+
+	// Configure keepalive enforcement policy
+	// Allows clients to send keepalive pings even without active streams
+	opts = append(opts, grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime:             10 * time.Second,
+		PermitWithoutStream: true,
+	}))
 
 	// Configure TLS if enabled
 	tlsEnabled, certFile, keyFile, caFile := cfg.GetGRPCTLSConfig()
@@ -96,6 +157,14 @@ func NewServer(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger
 
 	gs := grpc.NewServer(opts...)
 	flymqv1.RegisterFlyMQServiceServer(gs, s)
+
+	// Register gRPC health check service
+	// This enables load balancers and orchestrators (like Kubernetes) to check server health
+	s.healthServer = health.NewServer()
+	grpc_health_v1.RegisterHealthServer(gs, s.healthServer)
+	s.healthServer.SetServingStatus("flymq.v1.FlyMQService", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	// Register reflection service for debugging with grpcurl
 	reflection.Register(gs)
 	s.gs = gs
 
@@ -103,6 +172,10 @@ func NewServer(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger
 }
 
 // Start starts the gRPC server.
+//
+// The server starts listening on the configured address and begins accepting
+// connections in a background goroutine. The health check service is set to
+// SERVING status when the server starts successfully.
 func (s *Server) Start() error {
 	lis, err := net.Listen("tcp", s.config.GRPC.Addr)
 	if err != nil {
@@ -119,8 +192,16 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop stops the gRPC server.
+// Stop stops the gRPC server gracefully.
+//
+// The server first sets the health check status to NOT_SERVING to signal
+// load balancers to stop sending new requests, then performs a graceful
+// shutdown allowing in-flight requests to complete.
 func (s *Server) Stop() {
+	if s.healthServer != nil {
+		// Signal to load balancers that we're shutting down
+		s.healthServer.SetServingStatus("flymq.v1.FlyMQService", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	}
 	if s.gs != nil {
 		s.gs.GracefulStop()
 	}
@@ -252,20 +333,27 @@ func (s *Server) Consume(req *flymqv1.ConsumeRequest, stream flymqv1.FlyMQServic
 		}
 	}
 
-	// Simple polling loop for now. In production, this should use a subscription mechanism.
+	// Polling loop for message consumption.
+	// Uses a configurable poll interval to balance latency vs CPU usage.
+	// In production, consider implementing a push-based subscription mechanism
+	// for lower latency at the cost of more complex connection management.
 	offset := req.Offset
+	pollInterval := DefaultConsumePollInterval
+
 	for {
 		select {
 		case <-stream.Context().Done():
+			s.logger.Debug("Consume stream closed by client", "topic", req.Topic, "partition", req.Partition)
 			return nil
 		default:
 			msgs, nextOffset, err := s.broker.FetchWithKeys(req.Topic, int(req.Partition), offset, int(req.MaxMessages), "")
 			if err != nil {
-				return err
+				s.logger.Error("Failed to fetch messages", "topic", req.Topic, "partition", req.Partition, "error", err)
+				return status.Errorf(codes.Internal, "failed to fetch messages: %v", err)
 			}
 
 			if len(msgs) == 0 {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(pollInterval)
 				continue
 			}
 
@@ -277,6 +365,7 @@ func (s *Server) Consume(req *flymqv1.ConsumeRequest, stream flymqv1.FlyMQServic
 					// Headers could be added here if supported by broker
 				}
 				if err := stream.Send(resp); err != nil {
+					s.logger.Debug("Failed to send message to stream", "error", err)
 					return err
 				}
 			}
