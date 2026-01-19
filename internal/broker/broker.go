@@ -1307,13 +1307,14 @@ func (b *Broker) ListConsumerGroups() []*ConsumerGroupInfo {
 		for k, v := range g.Offsets {
 			offsets[k] = v
 		}
+		memberCount := len(g.members)
 		g.mu.RUnlock()
 
 		result = append(result, &ConsumerGroupInfo{
 			GroupID: g.GroupID,
 			Topic:   g.Topic,
 			Offsets: offsets,
-			Members: 0, // Active members tracking not implemented yet
+			Members: memberCount,
 		})
 	}
 	return result
@@ -1331,19 +1332,31 @@ func (b *Broker) GetConsumerGroup(topic, groupID string) (*ConsumerGroupInfo, er
 	for k, v := range group.Offsets {
 		offsets[k] = v
 	}
+	memberCount := len(group.members)
 	group.mu.RUnlock()
 
 	return &ConsumerGroupInfo{
 		GroupID: group.GroupID,
 		Topic:   group.Topic,
 		Offsets: offsets,
-		Members: 0,
+		Members: memberCount,
 	}, nil
 }
 
 // DeleteConsumerGroup removes a consumer group.
 func (b *Broker) DeleteConsumerGroup(topic, groupID string) error {
 	return b.consumers.DeleteGroup(topic, groupID)
+}
+
+// RegisterConsumerMember registers a consumer as an active member of a group.
+// memberID should be a unique identifier for the consumer (e.g., connection ID).
+func (b *Broker) RegisterConsumerMember(topic, groupID, memberID string) {
+	b.consumers.RegisterMember(topic, groupID, memberID)
+}
+
+// UnregisterConsumerMember removes a consumer from a group's active members.
+func (b *Broker) UnregisterConsumerMember(topic, groupID, memberID string) {
+	b.consumers.UnregisterMember(topic, groupID, memberID)
 }
 
 // ============================================================================

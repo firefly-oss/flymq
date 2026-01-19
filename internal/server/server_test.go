@@ -246,6 +246,14 @@ func (b *MockBroker) DeleteConsumerGroup(topic, groupID string) error {
 	return nil
 }
 
+func (b *MockBroker) RegisterConsumerMember(topic, groupID, memberID string) {
+	// Mock implementation - no-op for tests
+}
+
+func (b *MockBroker) UnregisterConsumerMember(topic, groupID, memberID string) {
+	// Mock implementation - no-op for tests
+}
+
 func (b *MockBroker) GetTopicInfo(topic string) (*broker.TopicInfo, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

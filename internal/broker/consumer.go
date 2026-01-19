@@ -64,7 +64,8 @@ type ConsumerGroup struct {
 	GroupID string         `json:"group_id"` // Unique group identifier
 	Topic   string         `json:"topic"`    // Topic being consumed
 	Offsets map[int]uint64 `json:"offsets"`  // partition ID -> committed offset
-	mu      sync.RWMutex   // Protects offset updates
+	members map[string]struct{}              // Active member IDs (not persisted)
+	mu      sync.RWMutex                     // Protects offset and member updates
 }
 
 // ConsumerGroupManager manages all consumer groups.
@@ -128,6 +129,7 @@ func (m *ConsumerGroupManager) GetOrCreateGroup(topic, groupID string) *Consumer
 		GroupID: groupID,
 		Topic:   topic,
 		Offsets: make(map[int]uint64),
+		members: make(map[string]struct{}),
 	}
 	m.groups[key] = group
 	return group
@@ -223,4 +225,48 @@ func (m *ConsumerGroupManager) DeleteGroup(topic, groupID string) error {
 		return err
 	}
 	return nil
+}
+
+// RegisterMember adds a member to a consumer group.
+// memberID should be a unique identifier for the consumer (e.g., connection ID).
+func (m *ConsumerGroupManager) RegisterMember(topic, groupID, memberID string) {
+	group := m.GetOrCreateGroup(topic, groupID)
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	if group.members == nil {
+		group.members = make(map[string]struct{})
+	}
+	group.members[memberID] = struct{}{}
+}
+
+// UnregisterMember removes a member from a consumer group.
+func (m *ConsumerGroupManager) UnregisterMember(topic, groupID, memberID string) {
+	m.mu.RLock()
+	key := fmt.Sprintf("%s:%s", topic, groupID)
+	group, exists := m.groups[key]
+	m.mu.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	group.mu.Lock()
+	defer group.mu.Unlock()
+	delete(group.members, memberID)
+}
+
+// GetMemberCount returns the number of active members in a consumer group.
+func (m *ConsumerGroupManager) GetMemberCount(topic, groupID string) int {
+	m.mu.RLock()
+	key := fmt.Sprintf("%s:%s", topic, groupID)
+	group, exists := m.groups[key]
+	m.mu.RUnlock()
+
+	if !exists {
+		return 0
+	}
+
+	group.mu.RLock()
+	defer group.mu.RUnlock()
+	return len(group.members)
 }

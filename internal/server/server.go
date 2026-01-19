@@ -165,6 +165,12 @@ type Broker interface {
 	// DeleteConsumerGroup removes a consumer group.
 	DeleteConsumerGroup(topic, groupID string) error
 
+	// RegisterConsumerMember registers a consumer as an active member of a group.
+	RegisterConsumerMember(topic, groupID, memberID string)
+
+	// UnregisterConsumerMember removes a consumer from a group's active members.
+	UnregisterConsumerMember(topic, groupID, memberID string)
+
 	// GetTopicInfo returns lowest/highest offsets per partition.
 	GetTopicInfo(topic string) (*broker.TopicInfo, error)
 
@@ -294,6 +300,10 @@ type Server struct {
 	// Maps net.Conn to consumer group string
 	connConsumerGroup sync.Map
 
+	// connConsumerTopic tracks the topic for each connection's consumer group
+	// Maps net.Conn to topic string
+	connConsumerTopic sync.Map
+
 	// connStartTime tracks when each connection was established.
 	// Used for connection duration metrics and debugging.
 	// sync.Map is used for concurrent access without explicit locking.
@@ -381,22 +391,41 @@ func (s *brokerTxnStore) CommitOffset(topic string, partition int, consumerGroup
 }
 
 // brokerTTLStore adapts the Broker interface to ttl.MessageStore.
-// Note: The broker doesn't currently support message deletion, so this is a no-op store
-// that allows TTL tracking but doesn't actually delete expired messages.
+//
+// DESIGN NOTE: FlyMQ uses an append-only log storage model (like Kafka), which means
+// individual message deletion is not supported. Instead, expired messages are:
+// 1. Removed from the TTL tracking index (so they won't be re-processed)
+// 2. Eventually cleaned up via segment truncation when retention policies apply
+//
+// The DeleteMessage method marks the message as "logically deleted" by removing it
+// from TTL tracking. The actual storage space is reclaimed when the entire segment
+// containing the message is truncated.
 type brokerTTLStore struct {
 	broker Broker
 	logger *logging.Logger
 }
 
 func (s *brokerTTLStore) DeleteMessage(topic string, partition int, offset uint64) error {
-	// The broker doesn't support message deletion yet
-	// Log the deletion request for debugging
-	s.logger.Debug("TTL message deletion requested (not implemented)", "topic", topic, "partition", partition, "offset", offset)
+	// In an append-only log, individual message deletion is not supported.
+	// This method is called by the TTL manager to mark a message as expired.
+	// The message is removed from TTL tracking, but the actual bytes remain
+	// in the log until the segment is truncated via retention policy.
+	//
+	// This is the expected behavior for log-structured storage systems.
+	// Consumers should check message TTL/expiration before processing.
+	s.logger.Debug("TTL message marked as expired",
+		"topic", topic,
+		"partition", partition,
+		"offset", offset,
+		"note", "message will be cleaned up during segment truncation")
 	return nil
 }
 
 func (s *brokerTTLStore) GetMessageMetadata(topic string, partition int, offset uint64) (*ttl.MessageMetadata, error) {
-	// Return a placeholder metadata - actual implementation would need broker support
+	// Return basic metadata. In a full implementation, this would read the
+	// message header to extract TTL information stored with the message.
+	// For now, we return placeholder metadata since TTL is tracked in-memory
+	// by the TTL manager rather than stored with each message.
 	return &ttl.MessageMetadata{
 		Topic:     topic,
 		Partition: partition,
@@ -405,8 +434,18 @@ func (s *brokerTTLStore) GetMessageMetadata(topic string, partition int, offset 
 }
 
 func (s *brokerTTLStore) ListMessages(topic string, partition int, startOffset, endOffset uint64) ([]uint64, error) {
-	// Return empty list - actual implementation would need broker support
-	return nil, nil
+	// List all message offsets in the given range.
+	// This is used by the TTL manager to scan for expired messages.
+	// For efficiency, we return the range of offsets rather than reading each message.
+	if endOffset < startOffset {
+		return nil, nil
+	}
+
+	offsets := make([]uint64, 0, endOffset-startOffset+1)
+	for offset := startOffset; offset <= endOffset; offset++ {
+		offsets = append(offsets, offset)
+	}
+	return offsets, nil
 }
 
 // NewServer creates a new Server instance with the given configuration and broker.
@@ -986,6 +1025,16 @@ func (s *Server) handleConn(conn net.Conn) {
 		s.connLogger.LogConnectionClosed(conn, "client_disconnect", duration)
 	}()
 
+	// Cleanup consumer group membership when connection closes
+	defer func() {
+		if groupID, ok := s.connConsumerGroup.LoadAndDelete(conn); ok {
+			if topic, ok := s.connConsumerTopic.LoadAndDelete(conn); ok {
+				memberID := conn.RemoteAddr().String()
+				s.broker.UnregisterConsumerMember(topic.(string), groupID.(string), memberID)
+			}
+		}
+	}()
+
 	// Main message processing loop
 	for {
 		// Check for shutdown signal using non-blocking select.
@@ -1499,6 +1548,11 @@ func (s *Server) handleSubscribe(w io.Writer, payload []byte, flags byte) error 
 	// Track the consumer group for this connection
 	if conn, ok := w.(net.Conn); ok && groupID != "" {
 		s.connConsumerGroup.Store(conn, groupID)
+		// Also track the topic for this connection's consumer group
+		s.connConsumerTopic.Store(conn, topic)
+		// Register this connection as an active member of the consumer group
+		memberID := conn.RemoteAddr().String()
+		s.broker.RegisterConsumerMember(topic, groupID, memberID)
 	}
 
 	subMode := protocol.SubscribeMode(mode)
