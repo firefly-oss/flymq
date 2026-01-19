@@ -545,3 +545,222 @@ All SDKs support:
 - Consumer groups
 - Automatic reconnection
 
+---
+
+## Alternative Protocol APIs
+
+In addition to the native binary protocol, FlyMQ supports alternative access protocols for different use cases.
+
+### gRPC API
+
+The gRPC API provides a high-performance interface for cloud-native applications. It uses Protocol Buffers for efficient serialization.
+
+**Default Port:** 9097
+
+**Proto Definition:** `api/proto/flymq/v1/flymq.proto`
+
+**Services:**
+
+```protobuf
+service FlyMQService {
+  // Produce a message to a topic
+  rpc Produce(ProduceRequest) returns (ProduceResponse);
+
+  // Consume messages from a topic (server-streaming)
+  rpc Consume(ConsumeRequest) returns (stream ConsumeResponse);
+
+  // Get cluster and topic metadata
+  rpc GetMetadata(MetadataRequest) returns (MetadataResponse);
+}
+```
+
+**Authentication:**
+Credentials are passed via gRPC metadata:
+```go
+md := metadata.Pairs("username", "myuser", "password", "mypass")
+ctx := metadata.NewOutgoingContext(context.Background(), md)
+```
+
+**Example (Go):**
+```go
+import (
+    "google.golang.org/grpc"
+    flymqv1 "flymq/api/proto/flymq/v1"
+)
+
+conn, _ := grpc.Dial("localhost:9097", grpc.WithInsecure())
+client := flymqv1.NewFlyMQServiceClient(conn)
+
+// Produce
+resp, _ := client.Produce(ctx, &flymqv1.ProduceRequest{
+    Topic: "orders",
+    Value: []byte(`{"id": 123}`),
+})
+
+// Consume (streaming)
+stream, _ := client.Consume(ctx, &flymqv1.ConsumeRequest{
+    Topic:       "orders",
+    Partition:   0,
+    Offset:      0,
+    MaxMessages: 100,
+})
+for {
+    msg, err := stream.Recv()
+    if err == io.EOF {
+        break
+    }
+    fmt.Printf("Offset: %d, Value: %s\n", msg.Offset, msg.Value)
+}
+```
+
+**Health Checks:**
+The gRPC server implements the standard health check protocol:
+```bash
+grpcurl -plaintext localhost:9097 grpc.health.v1.Health/Check
+```
+
+### WebSocket API
+
+The WebSocket API provides a JSON-based interface for browser clients and web applications.
+
+**Default Port:** 9098
+**Endpoint:** `ws://localhost:9098/ws` (or `wss://` for TLS)
+
+**Request Format:**
+```json
+{
+  "id": "unique-request-id",
+  "command": "command-name",
+  "params": { ... }
+}
+```
+
+**Response Format:**
+```json
+{
+  "id": "unique-request-id",
+  "success": true,
+  "data": { ... },
+  "error": "error message if success is false"
+}
+```
+
+**Push Message Format (for subscriptions):**
+```json
+{
+  "command": "message",
+  "data": {
+    "topic": "orders",
+    "partition": 0,
+    "offset": 123,
+    "key": "base64-encoded-key",
+    "value": "base64-encoded-value"
+  }
+}
+```
+
+**Commands:**
+
+| Command | Description | Parameters |
+|---------|-------------|------------|
+| `login` | Authenticate | `username`, `password` |
+| `produce` | Send message | `topic`, `value`, `key` (optional), `partition` (optional) |
+| `consume` | Fetch messages | `topic`, `partition`, `offset` |
+| `subscribe` | Start subscription | `topic`, `partition`, `group_id`, `mode` |
+| `unsubscribe` | Stop subscription | `topic`, `partition` |
+| `list_topics` | List all topics | (none) |
+| `get_cluster_metadata` | Get cluster info | `topic` (optional) |
+| `commit` | Commit offset | `topic`, `group_id`, `partition`, `offset` |
+
+**Example (JavaScript):**
+```javascript
+const ws = new WebSocket('ws://localhost:9098/ws');
+
+ws.onopen = () => {
+  // Login
+  ws.send(JSON.stringify({
+    id: '1',
+    command: 'login',
+    params: { username: 'admin', password: 'secret' }
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.command === 'message') {
+    console.log('Received:', msg.data);
+  } else {
+    console.log('Response:', msg);
+  }
+};
+
+// Produce a message
+ws.send(JSON.stringify({
+  id: '2',
+  command: 'produce',
+  params: { topic: 'orders', value: btoa('{"id": 123}') }
+}));
+
+// Subscribe to a topic
+ws.send(JSON.stringify({
+  id: '3',
+  command: 'subscribe',
+  params: { topic: 'orders', partition: 0, group_id: 'web-app' }
+}));
+```
+
+### MQTT API
+
+The MQTT bridge enables MQTT v3.1.1 clients to interact with FlyMQ topics.
+
+**Default Port:** 1883 (or 8883 for TLS)
+
+**Supported MQTT Features:**
+- CONNECT with username/password authentication
+- PUBLISH (QoS 0 only)
+- SUBSCRIBE (QoS 0 only)
+- PINGREQ/PINGRESP
+- DISCONNECT
+
+**Limitations:**
+- QoS 1 and QoS 2 are not supported
+- Retained messages are not supported
+- Wildcard subscriptions (+, #) are not supported
+- MQTT v5.0 features are not supported
+
+**Topic Mapping:**
+MQTT topics map directly to FlyMQ topics. All messages are published to partition 0.
+
+**Example (Python with paho-mqtt):**
+```python
+import paho.mqtt.client as mqtt
+
+def on_connect(client, userdata, flags, rc):
+    print(f"Connected with result code {rc}")
+    client.subscribe("orders")
+
+def on_message(client, userdata, msg):
+    print(f"{msg.topic}: {msg.payload.decode()}")
+
+client = mqtt.Client()
+client.username_pw_set("admin", "secret")
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.connect("localhost", 1883, 60)
+
+# Publish a message
+client.publish("orders", '{"id": 123}')
+
+client.loop_forever()
+```
+
+**Example (mosquitto CLI):**
+```bash
+# Subscribe
+mosquitto_sub -h localhost -p 1883 -t orders -u admin -P secret
+
+# Publish
+mosquitto_pub -h localhost -p 1883 -t orders -m '{"id": 123}' -u admin -P secret
+```
+

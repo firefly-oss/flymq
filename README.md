@@ -30,6 +30,7 @@ and enterprise-grade security features.
 - [Architecture](#architecture)
 - [CLI Reference](#cli-reference)
 - [Client SDKs](#client-sdks) - Python and Java
+- [Multi-Protocol Support](#multi-protocol-support) - gRPC, WebSocket, MQTT
 - [Benchmarks](#benchmarks)
 - [Project Structure](#project-structure)
 - [Contributing](#contributing)
@@ -1540,6 +1541,179 @@ All SDKs support:
 - **TTL** - Time-based message expiration
 - **Dead Letter Queues** - Failed message handling with retry policies
 - **Consumer Groups** - Coordinated consumption with offset tracking
+
+---
+
+## Multi-Protocol Support
+
+FlyMQ supports multiple access protocols beyond the native binary protocol, enabling integration with diverse client ecosystems.
+
+### Protocol Overview
+
+| Protocol | Port | Use Case | Features |
+|----------|------|----------|----------|
+| **TCP** | 9092 | High-performance native clients | Binary protocol, lowest latency |
+| **gRPC** | 9097 | Cloud-native applications | Protobuf, streaming, health checks |
+| **WebSocket** | 9098 | Browser clients, web apps | JSON protocol, push subscriptions |
+| **MQTT** | 1883 | IoT devices, embedded systems | MQTT v3.1.1, QoS 0 |
+
+### gRPC API
+
+The gRPC server provides a high-performance API for modern cloud-native applications.
+
+**Enable gRPC:**
+```bash
+FLYMQ_GRPC_ENABLED=true FLYMQ_GRPC_ADDR=:9097 ./bin/flymq
+```
+
+**Features:**
+- Unary RPCs for produce and metadata operations
+- Server-streaming RPC for message consumption
+- Connection keepalive for long-lived connections
+- gRPC health check protocol for load balancer integration
+- TLS/mTLS encryption support
+
+**Example with grpcurl:**
+```bash
+# Check health
+grpcurl -plaintext localhost:9097 grpc.health.v1.Health/Check
+
+# Get metadata
+grpcurl -plaintext localhost:9097 flymq.v1.FlyMQService/GetMetadata
+
+# Produce a message (with authentication)
+grpcurl -plaintext \
+  -H "username: admin" -H "password: secret" \
+  -d '{"topic": "orders", "value": "eyJpZCI6IDEyM30="}' \
+  localhost:9097 flymq.v1.FlyMQService/Produce
+```
+
+### WebSocket Gateway
+
+The WebSocket gateway enables browser-based and other WebSocket clients using a JSON-based command protocol.
+
+**Enable WebSocket:**
+```bash
+FLYMQ_WS_ENABLED=true FLYMQ_WS_ADDR=:9098 ./bin/flymq
+```
+
+**Features:**
+- JSON-based request/response protocol with message correlation
+- Push-based subscriptions for real-time message delivery
+- Ping/pong heartbeat for connection health monitoring
+- WebSocket compression for bandwidth efficiency
+
+**JavaScript Example:**
+```javascript
+const ws = new WebSocket('ws://localhost:9098/ws');
+
+ws.onopen = () => {
+  // Login
+  ws.send(JSON.stringify({
+    id: '1',
+    command: 'login',
+    params: { username: 'admin', password: 'secret' }
+  }));
+};
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.command === 'message') {
+    console.log('Received:', atob(msg.data.value));
+  }
+};
+
+// Produce a message
+ws.send(JSON.stringify({
+  id: '2',
+  command: 'produce',
+  params: { topic: 'orders', value: btoa('{"id": 123}') }
+}));
+
+// Subscribe to a topic
+ws.send(JSON.stringify({
+  id: '3',
+  command: 'subscribe',
+  params: { topic: 'orders', partition: 0, group_id: 'web-app' }
+}));
+```
+
+**Supported Commands:** `login`, `produce`, `consume`, `subscribe`, `unsubscribe`, `list_topics`, `get_cluster_metadata`, `commit`
+
+### MQTT Bridge
+
+The MQTT bridge enables MQTT v3.1.1 clients (IoT devices, existing MQTT applications) to interact with FlyMQ.
+
+**Enable MQTT:**
+```bash
+FLYMQ_MQTT_ENABLED=true FLYMQ_MQTT_ADDR=:1883 ./bin/flymq
+```
+
+**Supported Features:**
+- CONNECT with username/password authentication
+- PUBLISH (QoS 0 only)
+- SUBSCRIBE (QoS 0 only)
+- PINGREQ/PINGRESP for keep-alive
+- DISCONNECT
+
+**Limitations:**
+- QoS 1 and QoS 2 are not supported (messages are delivered at-most-once)
+- Retained messages are not supported
+- Wildcard subscriptions (+, #) are not supported
+
+**Example with mosquitto:**
+```bash
+# Subscribe to a topic
+mosquitto_sub -h localhost -p 1883 -t orders -u admin -P secret
+
+# Publish a message
+mosquitto_pub -h localhost -p 1883 -t orders -m '{"id": 123}' -u admin -P secret
+```
+
+**Python Example (paho-mqtt):**
+```python
+import paho.mqtt.client as mqtt
+
+client = mqtt.Client()
+client.username_pw_set("admin", "secret")
+client.connect("localhost", 1883, 60)
+
+# Publish
+client.publish("orders", '{"id": 123}')
+
+# Subscribe
+client.subscribe("orders")
+client.loop_forever()
+```
+
+### TLS Configuration
+
+All protocols support TLS encryption:
+
+```bash
+# gRPC with TLS
+FLYMQ_GRPC_ENABLED=true \
+FLYMQ_GRPC_TLS_ENABLED=true \
+FLYMQ_GRPC_TLS_CERT_FILE=/path/to/cert.pem \
+FLYMQ_GRPC_TLS_KEY_FILE=/path/to/key.pem \
+./bin/flymq
+
+# WebSocket with TLS (WSS)
+FLYMQ_WS_ENABLED=true \
+FLYMQ_WS_TLS_ENABLED=true \
+FLYMQ_WS_TLS_CERT_FILE=/path/to/cert.pem \
+FLYMQ_WS_TLS_KEY_FILE=/path/to/key.pem \
+./bin/flymq
+
+# MQTT with TLS
+FLYMQ_MQTT_ENABLED=true \
+FLYMQ_MQTT_TLS_ENABLED=true \
+FLYMQ_MQTT_TLS_CERT_FILE=/path/to/cert.pem \
+FLYMQ_MQTT_TLS_KEY_FILE=/path/to/key.pem \
+./bin/flymq
+```
+
+For detailed API documentation, see [docs/api-reference.md](docs/api-reference.md).
 
 ---
 

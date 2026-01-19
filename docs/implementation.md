@@ -1056,23 +1056,40 @@ Audit events are recorded at key points in the server:
 
 ## Multi-Protocol Bridges (gRPC, WS, MQTT)
 
-FlyMQ supports multiple access protocols via lightweight bridges that map protocol-specific requests to core broker operations.
+FlyMQ supports multiple access protocols via lightweight bridges that map protocol-specific requests to core broker operations. Each bridge is designed with security, performance, and operational best practices in mind.
 
 ### 1. gRPC Server Implementation
 
 The gRPC server is implemented in `internal/server/grpc/server.go` using the `google.golang.org/grpc` package.
 
 **Security:**
-- **TLS**: Uses the project's standard `crypto` package to load server certificates and optionally CA certificates for mTLS.
+- **TLS/mTLS**: Uses the project's standard `crypto` package to load server certificates and optionally CA certificates for mutual TLS authentication.
 - **Authentication**: Implements both `UnaryInterceptor` and `StreamInterceptor`. Credentials are expected in gRPC metadata under the `username` and `password` keys.
+- **Authorization**: Per-operation authorization checks via the `Authorizer` interface.
+
+**Performance Features:**
+- **Connection Keepalive**: Configured with server-side keepalive parameters to detect dead connections and manage resources:
+  - `MaxConnectionIdle`: 5 minutes (closes idle connections)
+  - `MaxConnectionAge`: 30 minutes (graceful connection recycling)
+  - `KeepaliveTime`: 30 seconds (ping interval)
+  - `KeepaliveTimeout`: 10 seconds (ping acknowledgment timeout)
+- **Configurable Poll Interval**: The `Consume` stream uses a configurable poll interval (default 100ms) to balance latency vs CPU usage.
+
+**Health Checks:**
+- Implements the standard gRPC health check protocol (`grpc.health.v1.Health`)
+- Enables integration with load balancers and orchestrators (Kubernetes, Consul, etc.)
+- Health status is set to `NOT_SERVING` during graceful shutdown
 
 **Cluster Awareness:**
 - The `GetMetadata` RPC returns partition-to-node mappings by calling `Broker.GetClusterMetadata`.
 - Write operations return "not leader" errors if the client connects to the wrong node, including the address of the correct leader.
 
+**Debugging:**
+- gRPC reflection is enabled for debugging with tools like `grpcurl`
+
 ### 2. WebSocket Gateway Implementation
 
-The WebSocket gateway (`internal/server/ws/gateway.go`) provides a JSON-based command protocol over persistent WebSocket connections.
+The WebSocket gateway (`internal/server/ws/gateway.go`) provides a JSON-based command protocol over persistent WebSocket connections, enabling browser-based and other WebSocket clients.
 
 **Command Protocol:**
 Requests follow a standard JSON format:
@@ -1080,20 +1097,92 @@ Requests follow a standard JSON format:
 {"id": "req_1", "command": "produce", "params": {"topic": "orders", "value": "..."}}
 ```
 
-**Authentication:**
-- Clients must send a `login` command before performing other operations (unless `allow_anonymous` is enabled).
-- Authenticated usernames are stored in the `wsConn` struct for subsequent authorization checks.
+Responses:
+```json
+{"id": "req_1", "success": true, "data": {"offset": 123, "partition": 0}}
+```
+
+Push messages for subscriptions:
+```json
+{"command": "message", "data": {"topic": "orders", "partition": 0, "offset": 123, "key": "...", "value": "..."}}
+```
+
+**Supported Commands:**
+- `login` - Authenticate with username/password
+- `produce` - Send a message to a topic
+- `consume` - Fetch messages from a topic/partition
+- `subscribe` - Start a push-based subscription
+- `unsubscribe` - Stop a subscription
+- `list_topics` - List available topics
+- `get_cluster_metadata` - Get cluster topology
+- `commit` - Commit consumer group offset
+
+**Security:**
+- **Origin Checking**: Configurable allowed origins for CORS security (defaults to allow all for development)
+- **Authentication**: Clients must send a `login` command before performing other operations (unless `allow_anonymous` is enabled)
+- **Authorization**: Per-command authorization checks
+
+**Connection Health:**
+- **Ping/Pong Heartbeat**: Automatic ping frames every 30 seconds to detect dead connections
+- **Pong Timeout**: Connections are closed if no pong is received within 10 seconds
+- **Write Timeouts**: 10-second timeout on write operations to prevent blocking on slow clients
+
+**Performance:**
+- **Compression**: WebSocket compression is enabled for better performance over slow networks
+- **Configurable Buffer Sizes**: 4KB read/write buffers (configurable)
+- **Exponential Backoff**: Subscription loops use exponential backoff on errors (capped at 30 seconds)
 
 ### 3. MQTT Bridge Implementation
 
-The MQTT bridge (`internal/server/bridge/mqtt.go`) supports MQTT v3.1.1 clients by adapting MQTT packets to FlyMQ operations.
+The MQTT bridge (`internal/server/bridge/mqtt.go`) supports MQTT v3.1.1 clients by adapting MQTT packets to FlyMQ operations. This enables existing IoT devices and MQTT-based applications to integrate with FlyMQ.
 
-**Packet Handling:**
-- **CONNECT**: Custom parser extracts `username` and `password` fields from the payload.
-- **PUBLISH**: Mapped to `Broker.ProduceWithKeyAndPartition`.
-- **SUBSCRIBE**: Spawns a background goroutine (`subscriptionLoop`) that polls the broker and pushes messages to the client using MQTT `PUBLISH` packets.
+**Supported MQTT Features:**
+- **CONNECT**: Client authentication with username/password
+- **CONNACK**: Connection acknowledgment with return codes
+- **PUBLISH**: Message publishing (QoS 0 only)
+- **SUBSCRIBE**: Topic subscription (QoS 0 only)
+- **SUBACK**: Subscription acknowledgment
+- **PINGREQ/PINGRESP**: Keep-alive mechanism
+- **DISCONNECT**: Clean session termination
 
-**Cluster Design:**
-- All bridges use the `Broker` interface, ensuring that operations are replicated via Raft in cluster mode.
-- Bridges are designed to be stateless (with the exception of authenticated connection state), allowing them to scale horizontally behind a load balancer.
+**Limitations (by design):**
+- **QoS 0 only**: Messages are delivered at-most-once. QoS 1/2 are not supported.
+- **No retained messages**: Retained message flag is parsed but not implemented.
+- **No will messages**: Will topic/message are parsed but not implemented.
+- **No wildcard subscriptions**: MQTT wildcards (+, #) are not supported.
+- **No UNSUBSCRIBE**: Subscriptions are cleaned up on disconnect only.
+- **No session persistence**: Clean session is always assumed.
+
+**Topic Mapping:**
+MQTT topics are mapped directly to FlyMQ topics. All messages are published to partition 0.
+
+**Security:**
+- **TLS**: Full TLS support for encrypted connections
+- **Authentication**: Username/password from CONNECT packet
+- **Authorization**: Per-operation authorization checks for PUBLISH and SUBSCRIBE
+
+**Connection Management:**
+- **Read Timeout**: 60-second idle timeout for detecting dead connections
+- **Write Timeout**: 10-second timeout on write operations
+- **Exponential Backoff**: Subscription loops use exponential backoff on errors (capped at 30 seconds)
+
+### Cluster Design
+
+All bridges share common design principles:
+
+1. **Broker Interface**: All bridges use the `Broker` interface, ensuring that operations are replicated via Raft in cluster mode.
+
+2. **Stateless Design**: Bridges are designed to be stateless (with the exception of authenticated connection state), allowing them to scale horizontally behind a load balancer.
+
+3. **Graceful Shutdown**: All bridges support graceful shutdown, allowing in-flight requests to complete.
+
+4. **Consistent Security Model**: All bridges use the same `Authorizer` interface for authentication and authorization.
+
+### Configuration Summary
+
+| Protocol | Default Port | TLS Config | Auth Config |
+|----------|-------------|------------|-------------|
+| gRPC | 9094 | `grpc.tls.*` | `auth.enabled` |
+| WebSocket | 9095 | `ws.tls.*` | `auth.enabled` |
+| MQTT | 1883 | `mqtt.tls.*` | `auth.enabled` |
 

@@ -44,12 +44,37 @@ FlyMQ was designed with the following principles in mind:
 
 ### 1. Server (`internal/server/`)
 
-The server layer handles client connections and routes protocol messages to the broker. It supports multiple access protocols:
+The server layer handles client connections and routes protocol messages to the broker. It supports multiple access protocols, each optimized for different use cases:
 
-- **TCP Server**: The primary high-performance interface using FlyMQ's custom binary protocol.
-- **gRPC Server**: A high-performance API for modern cloud-native applications, supporting unary and streaming operations.
-- **WebSocket Gateway**: A JSON-based interface for browser-based clients and web applications.
-- **MQTT Bridge**: A protocol adapter for IoT workloads, supporting MQTT v3.1.1 clients.
+| Protocol | Port | Use Case | Features |
+|----------|------|----------|----------|
+| **TCP** | 9092 | High-performance native clients | Binary protocol, lowest latency |
+| **gRPC** | 9097 | Cloud-native applications | Protobuf, streaming, health checks |
+| **WebSocket** | 9098 | Browser clients, web apps | JSON protocol, push subscriptions |
+| **MQTT** | 1883 | IoT devices, embedded systems | MQTT v3.1.1, QoS 0 |
+
+**Protocol Details:**
+
+- **TCP Server**: The primary high-performance interface using FlyMQ's custom binary protocol. Provides the lowest latency and highest throughput for native clients.
+
+- **gRPC Server**: A high-performance API for modern cloud-native applications. Features include:
+  - Unary RPCs for produce and metadata operations
+  - Server-streaming RPC for message consumption
+  - Connection keepalive for long-lived connections
+  - gRPC health check protocol for load balancer integration
+  - TLS/mTLS encryption support
+
+- **WebSocket Gateway**: A JSON-based interface for browser-based clients. Features include:
+  - Request/response correlation with message IDs
+  - Push-based subscriptions for real-time message delivery
+  - Ping/pong heartbeat for connection health monitoring
+  - WebSocket compression for bandwidth efficiency
+
+- **MQTT Bridge**: A protocol adapter for IoT workloads. Features include:
+  - MQTT v3.1.1 protocol support
+  - Username/password authentication via CONNECT packet
+  - QoS 0 message delivery (at-most-once)
+  - PINGREQ/PINGRESP for keep-alive
 
 **Key responsibilities:**
 - Accept TCP/TLS client connections (WSS for WebSockets)
@@ -60,9 +85,9 @@ The server layer handles client connections and routes protocol messages to the 
 
 **Files:**
 - `server.go` - Main TCP server with connection handling and message routing
-- `grpc/server.go` - gRPC server implementation with TLS and Auth interceptors
-- `ws/gateway.go` - WebSocket gateway with JSON-to-Broker mapping
-- `bridge/mqtt.go` - MQTT protocol bridge
+- `grpc/server.go` - gRPC server with TLS, auth interceptors, and health checks
+- `ws/gateway.go` - WebSocket gateway with JSON protocol and ping/pong
+- `bridge/mqtt.go` - MQTT v3.1.1 protocol bridge
 
 ### 2. Broker (`internal/broker/`)
 

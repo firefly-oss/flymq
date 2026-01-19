@@ -154,24 +154,67 @@ FlyMQ provides enterprise-grade authentication and authorization through a Role-
 
 ### gRPC Configuration
 
+The gRPC server provides a high-performance binary API for FlyMQ operations.
+
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
 | `grpc.enabled` | `FLYMQ_GRPC_ENABLED` | `false` | Enable gRPC server |
 | `grpc.addr` | `FLYMQ_GRPC_ADDR` | `:9097` | gRPC listen address |
+| `grpc.tls.enabled` | `FLYMQ_GRPC_TLS_ENABLED` | `false` | Enable TLS for gRPC |
+| `grpc.tls.cert_file` | `FLYMQ_GRPC_TLS_CERT_FILE` | `""` | Path to TLS certificate file |
+| `grpc.tls.key_file` | `FLYMQ_GRPC_TLS_KEY_FILE` | `""` | Path to TLS private key file |
+| `grpc.tls.ca_file` | `FLYMQ_GRPC_TLS_CA_FILE` | `""` | Path to CA certificate for mTLS |
+
+**Built-in Features:**
+- Connection keepalive with configurable idle timeout (5 min) and max age (30 min)
+- gRPC health check protocol for load balancer integration
+- gRPC reflection for debugging with `grpcurl`
+- Authentication via metadata (`username`/`password` keys)
 
 ### WebSocket Configuration
+
+The WebSocket gateway enables browser-based and other WebSocket clients to interact with FlyMQ using a JSON-based command protocol.
 
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
 | `ws.enabled` | `FLYMQ_WS_ENABLED` | `false` | Enable WebSocket gateway |
 | `ws.addr` | `FLYMQ_WS_ADDR` | `:9098` | WebSocket listen address |
+| `ws.tls.enabled` | `FLYMQ_WS_TLS_ENABLED` | `false` | Enable TLS (WSS) |
+| `ws.tls.cert_file` | `FLYMQ_WS_TLS_CERT_FILE` | `""` | Path to TLS certificate file |
+| `ws.tls.key_file` | `FLYMQ_WS_TLS_KEY_FILE` | `""` | Path to TLS private key file |
+| `ws.tls.ca_file` | `FLYMQ_WS_TLS_CA_FILE` | `""` | Path to CA certificate for mTLS |
+
+**Built-in Features:**
+- Ping/pong heartbeat for connection health monitoring (30s interval)
+- WebSocket compression for better performance over slow networks
+- JSON-based command protocol with request/response correlation
+- Push-based subscriptions for real-time message delivery
 
 ### MQTT Configuration
+
+The MQTT bridge enables MQTT v3.1.1 clients (IoT devices, existing MQTT applications) to interact with FlyMQ.
 
 | Option | Env Variable | Default | Description |
 |--------|--------------|---------|-------------|
 | `mqtt.enabled` | `FLYMQ_MQTT_ENABLED` | `false` | Enable MQTT bridge |
 | `mqtt.addr` | `FLYMQ_MQTT_ADDR` | `:1883` | MQTT listen address |
+| `mqtt.tls.enabled` | `FLYMQ_MQTT_TLS_ENABLED` | `false` | Enable TLS for MQTT |
+| `mqtt.tls.cert_file` | `FLYMQ_MQTT_TLS_CERT_FILE` | `""` | Path to TLS certificate file |
+| `mqtt.tls.key_file` | `FLYMQ_MQTT_TLS_KEY_FILE` | `""` | Path to TLS private key file |
+| `mqtt.tls.ca_file` | `FLYMQ_MQTT_TLS_CA_FILE` | `""` | Path to CA certificate for mTLS |
+
+**Supported Features:**
+- CONNECT with username/password authentication
+- PUBLISH (QoS 0 only)
+- SUBSCRIBE (QoS 0 only)
+- PINGREQ/PINGRESP for keep-alive
+- DISCONNECT for clean session termination
+
+**Limitations:**
+- QoS 1 and QoS 2 are not supported (messages are delivered at-most-once)
+- Retained messages are not supported
+- Wildcard subscriptions (+, #) are not supported
+- MQTT v5.0 features are not supported
 
 **Public Topics:**
 
