@@ -32,7 +32,7 @@ set -e
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BANNER_FILE="${SCRIPT_DIR}/banner.txt"
 readonly TOKEN_FILE="/var/lib/flymq/cluster-token"
-readonly VERSION="1.26.1"
+readonly VERSION="1.26.11"
 
 # -----------------------------------------------------------------------------
 # ANSI Colors (matching internal/banner/banner.go)

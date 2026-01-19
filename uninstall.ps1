@@ -22,7 +22,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$SCRIPT_VERSION = "1.26.10"
+$SCRIPT_VERSION = "1.26.11"
 
 # Helper Functions
 function Write-Success { param([string]$msg) Write-Host "✓ $msg" -ForegroundColor Green }

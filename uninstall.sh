@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-readonly SCRIPT_VERSION="1.26.10"
+readonly SCRIPT_VERSION="1.26.11"
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detected system info

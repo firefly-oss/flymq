@@ -60,7 +60,7 @@ const (
 
 // Version information
 const (
-	Version   = "1.26.10"
+	Version   = "1.26.11"
 	Copyright = "Copyright (c) 2026 Firefly Software Solutions Inc."
 	License   = "Licensed under Apache License 2.0"
 )
