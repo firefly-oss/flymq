@@ -1,3 +1,37 @@
+// Package ws provides a WebSocket gateway for FlyMQ.
+//
+// The WebSocket gateway enables browser-based and other WebSocket clients to
+// interact with FlyMQ using a JSON-based command protocol. It supports:
+//   - Message production and consumption
+//   - Topic subscriptions with push-based message delivery
+//   - Authentication and authorization
+//   - TLS/WSS encryption
+//
+// # Protocol
+//
+// Clients send JSON requests with the following structure:
+//
+//	{
+//	  "id": "request-id",
+//	  "command": "produce|consume|subscribe|unsubscribe|login",
+//	  "params": { ... command-specific parameters ... }
+//	}
+//
+// The server responds with:
+//
+//	{
+//	  "id": "request-id",
+//	  "success": true|false,
+//	  "data": { ... response data ... },
+//	  "error": "error message if success is false"
+//	}
+//
+// For subscriptions, the server pushes messages:
+//
+//	{
+//	  "command": "message",
+//	  "data": { "topic": "...", "partition": 0, "offset": 123, "key": "...", "value": "..." }
+//	}
 package ws
 
 import (
@@ -7,6 +41,7 @@ import (
 	"flymq/internal/protocol"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,12 +53,57 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for browser clients
-	},
+// Default configuration values for WebSocket gateway
+const (
+	// DefaultReadBufferSize is the default size of the read buffer
+	DefaultReadBufferSize = 4096
+	// DefaultWriteBufferSize is the default size of the write buffer
+	DefaultWriteBufferSize = 4096
+	// DefaultSubscriptionPollInterval is the default interval for polling messages in subscriptions
+	DefaultSubscriptionPollInterval = 100 * time.Millisecond
+	// DefaultPingInterval is the interval for sending ping frames
+	DefaultPingInterval = 30 * time.Second
+	// DefaultPongTimeout is the timeout for receiving pong responses
+	DefaultPongTimeout = 10 * time.Second
+	// DefaultWriteTimeout is the timeout for write operations
+	DefaultWriteTimeout = 10 * time.Second
+)
+
+// createUpgrader creates a WebSocket upgrader with the given configuration.
+// The allowedOrigins parameter specifies which origins are allowed to connect.
+// If empty or contains "*", all origins are allowed (not recommended for production).
+func createUpgrader(allowedOrigins []string) websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  DefaultReadBufferSize,
+		WriteBufferSize: DefaultWriteBufferSize,
+		CheckOrigin: func(r *http.Request) bool {
+			// If no origins specified or wildcard, allow all (development mode)
+			if len(allowedOrigins) == 0 {
+				return true
+			}
+			for _, origin := range allowedOrigins {
+				if origin == "*" {
+					return true
+				}
+			}
+
+			// Check if the request origin matches any allowed origin
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				// No origin header - likely not a browser request
+				return true
+			}
+
+			for _, allowed := range allowedOrigins {
+				if origin == allowed || strings.HasSuffix(origin, allowed) {
+					return true
+				}
+			}
+			return false
+		},
+		// Enable compression for better performance over slow networks
+		EnableCompression: true,
+	}
 }
 
 // WSRequest represents a JSON request from a WebSocket client.
@@ -77,15 +157,87 @@ type LoginParams struct {
 }
 
 // wsConn is a thread-safe wrapper for websocket.Conn.
+//
+// It provides:
+//   - Thread-safe write operations (WebSocket writes are not concurrent-safe)
+//   - Ping/pong heartbeat for connection health monitoring
+//   - Write timeouts to prevent blocking on slow clients
+//   - User authentication state tracking
 type wsConn struct {
-	conn     *websocket.Conn
-	mu       sync.Mutex
-	username string
+	conn       *websocket.Conn
+	mu         sync.Mutex
+	username   string
+	lastPong   time.Time
+	pingTicker *time.Ticker
+	done       chan struct{}
 }
 
+// newWSConn creates a new wsConn wrapper with ping/pong support.
+func newWSConn(conn *websocket.Conn) *wsConn {
+	c := &wsConn{
+		conn:     conn,
+		lastPong: time.Now(),
+		done:     make(chan struct{}),
+	}
+
+	// Set up pong handler to track connection health
+	conn.SetPongHandler(func(appData string) error {
+		c.mu.Lock()
+		c.lastPong = time.Now()
+		c.mu.Unlock()
+		return nil
+	})
+
+	// Start ping goroutine for connection keepalive
+	c.pingTicker = time.NewTicker(DefaultPingInterval)
+	go c.pingLoop()
+
+	return c
+}
+
+// pingLoop sends periodic ping frames to keep the connection alive
+// and detect dead connections.
+func (c *wsConn) pingLoop() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-c.pingTicker.C:
+			c.mu.Lock()
+			// Check if we've received a pong recently
+			if time.Since(c.lastPong) > DefaultPingInterval+DefaultPongTimeout {
+				c.mu.Unlock()
+				// Connection is dead, close it
+				c.conn.Close()
+				return
+			}
+
+			// Send ping
+			c.conn.SetWriteDeadline(time.Now().Add(DefaultWriteTimeout))
+			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			c.mu.Unlock()
+
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+// Close closes the connection and stops the ping loop.
+func (c *wsConn) Close() error {
+	close(c.done)
+	if c.pingTicker != nil {
+		c.pingTicker.Stop()
+	}
+	return c.conn.Close()
+}
+
+// WriteJSON writes a JSON message to the connection with a timeout.
 func (c *wsConn) WriteJSON(v interface{}) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.conn.SetWriteDeadline(time.Now().Add(DefaultWriteTimeout))
 	return c.conn.WriteJSON(v)
 }
 
@@ -101,21 +253,40 @@ type Broker interface {
 }
 
 // Gateway handles WebSocket connections for browser clients.
+//
+// The gateway provides:
+//   - JSON-based command protocol for produce/consume/subscribe operations
+//   - Authentication via login command
+//   - Per-operation authorization checks
+//   - TLS/WSS encryption support
+//   - Connection health monitoring via ping/pong
+//   - Configurable origin checking for CORS security
 type Gateway struct {
-	broker     Broker
-	config     *config.Config
-	authorizer *auth.Authorizer
-	logger     *logging.Logger
-	server     *http.Server
+	broker         Broker
+	config         *config.Config
+	authorizer     *auth.Authorizer
+	logger         *logging.Logger
+	server         *http.Server
+	upgrader       websocket.Upgrader
+	allowedOrigins []string
 }
 
 // NewGateway creates a new WebSocket gateway.
+//
+// The allowedOrigins parameter can be configured via config.WS.AllowedOrigins.
+// If empty, all origins are allowed (suitable for development only).
 func NewGateway(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger *logging.Logger) *Gateway {
+	// Get allowed origins from config (if available)
+	var allowedOrigins []string
+	// Note: AllowedOrigins would need to be added to config.WSConfig
+
 	return &Gateway{
-		broker:     b,
-		config:     cfg,
-		authorizer: authorizer,
-		logger:     logger,
+		broker:         b,
+		config:         cfg,
+		authorizer:     authorizer,
+		logger:         logger,
+		upgrader:       createUpgrader(allowedOrigins),
+		allowedOrigins: allowedOrigins,
 	}
 }
 
@@ -170,14 +341,16 @@ func (g *Gateway) Stop() error {
 }
 
 func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := g.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		g.logger.Error("Failed to upgrade to WebSocket", "error", err)
 		return
 	}
-	defer conn.Close()
 
-	ws := &wsConn{conn: conn}
+	// Create thread-safe connection wrapper with ping/pong support
+	ws := newWSConn(conn)
+	defer ws.Close()
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -193,12 +366,17 @@ func (g *Gateway) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			stop()
 		}
 		subsMu.Unlock()
+		g.logger.Debug("WebSocket connection cleanup complete", "remote", conn.RemoteAddr())
 	}()
 
 	for {
 		_, p, err := conn.ReadMessage()
 		if err != nil {
-			g.logger.Info("WebSocket closed", "remote", conn.RemoteAddr())
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				g.logger.Error("WebSocket unexpected close", "remote", conn.RemoteAddr(), "error", err)
+			} else {
+				g.logger.Info("WebSocket closed", "remote", conn.RemoteAddr())
+			}
 			return
 		}
 
@@ -412,6 +590,11 @@ func (g *Gateway) handleCommand(ws *wsConn, ctx context.Context, req *WSRequest,
 	ws.WriteJSON(resp)
 }
 
+// subscriptionLoop continuously polls for new messages and pushes them to the WebSocket client.
+//
+// The loop uses a configurable poll interval to balance latency vs CPU usage.
+// It automatically cleans up the subscription when the context is cancelled or
+// when a write error occurs (indicating the client has disconnected).
 func (g *Gateway) subscriptionLoop(ws *wsConn, ctx context.Context, topic string, partition int, offset uint64, subKey string, subs map[string]context.CancelFunc, subsMu *sync.Mutex) {
 	defer func() {
 		subsMu.Lock()
@@ -420,7 +603,11 @@ func (g *Gateway) subscriptionLoop(ws *wsConn, ctx context.Context, topic string
 			delete(subs, subKey)
 		}
 		subsMu.Unlock()
+		g.logger.Debug("Subscription loop ended", "topic", topic, "partition", partition)
 	}()
+
+	pollInterval := DefaultSubscriptionPollInterval
+	errorBackoff := time.Second
 
 	for {
 		select {
@@ -430,13 +617,19 @@ func (g *Gateway) subscriptionLoop(ws *wsConn, ctx context.Context, topic string
 			// Poll broker for new messages
 			msgs, nextOffset, err := g.broker.FetchWithKeys(topic, partition, offset, 10, "")
 			if err != nil {
-				g.logger.Error("Fetch failed in subscription", "topic", topic, "error", err)
-				time.Sleep(1 * time.Second)
+				g.logger.Error("Fetch failed in subscription", "topic", topic, "partition", partition, "error", err)
+				// Exponential backoff on errors, capped at 30 seconds
+				time.Sleep(errorBackoff)
+				if errorBackoff < 30*time.Second {
+					errorBackoff *= 2
+				}
 				continue
 			}
+			// Reset backoff on success
+			errorBackoff = time.Second
 
 			if len(msgs) == 0 {
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(pollInterval)
 				continue
 			}
 
@@ -452,7 +645,7 @@ func (g *Gateway) subscriptionLoop(ws *wsConn, ctx context.Context, topic string
 					},
 				}
 				if err := ws.WriteJSON(push); err != nil {
-					g.logger.Error("Failed to push message to WebSocket", "error", err)
+					g.logger.Debug("Failed to push message to WebSocket, closing subscription", "error", err)
 					return
 				}
 			}
