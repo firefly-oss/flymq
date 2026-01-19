@@ -653,13 +653,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		return s.authMw.RequirePermission(perm, h)
 	}
 
-	wrapAdminOrSelf := func(extractUsername func(r *http.Request) string, h http.HandlerFunc) http.HandlerFunc {
-		if s.authMw == nil {
-			return h
-		}
-		return s.authMw.RequireAdminOrSelf(extractUsername, h)
-	}
-
 	// Public endpoints - no auth required (basic health check)
 	mux.HandleFunc("/api/v1/health", s.handleHealthCheck)
 
@@ -713,9 +706,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Audit trail routes - admin only
 	mux.HandleFunc("/api/v1/audit/events", wrap(PermissionAdmin, s.handleAuditQuery))
 	mux.HandleFunc("/api/v1/audit/export", wrap(PermissionAdmin, s.handleAuditExport))
-
-	// Keep the helper variable to silence unused warning
-	_ = wrapAdminOrSelf
 }
 
 // handleCluster handles GET /api/v1/cluster

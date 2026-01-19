@@ -66,6 +66,7 @@ import (
 	"flymq/internal/health"
 	"flymq/internal/logging"
 	"flymq/internal/metrics"
+	"flymq/internal/schema"
 	"flymq/internal/server"
 )
 
@@ -309,6 +310,10 @@ func main() {
 		if auditStore := srv.GetAuditStore(); auditStore != nil {
 			adminHandler.SetAuditStore(auditStore)
 		}
+		// Wire schema registry to admin handler for schema operations via REST API
+		if schemaRegistry := srv.GetSchemaRegistry(); schemaRegistry != nil {
+			adminHandler.SetSchemaRegistry(&schemaRegistryAdapter{schema.NewAdminAdapter(schemaRegistry)})
+		}
 		adminServer = admin.NewServer(&cfg.Observability.Admin, adminHandler)
 		// Wire authorizer to admin server for HTTP authentication
 		if authorizer != nil {
@@ -401,4 +406,46 @@ func verifyEncryptionKey(cfg *config.Config, logger *logging.Logger) error {
 	}
 
 	return nil
+}
+
+// schemaRegistryAdapter adapts schema.AdminAdapter to broker.SchemaRegistry interface.
+type schemaRegistryAdapter struct {
+	adapter *schema.AdminAdapter
+}
+
+func (a *schemaRegistryAdapter) Register(topic string, schemaType, definition string, compat string) error {
+	return a.adapter.Register(topic, schemaType, definition, compat)
+}
+
+func (a *schemaRegistryAdapter) Get(topic string, version int) (name string, schemaType string, definition string, err error) {
+	return a.adapter.Get(topic, version)
+}
+
+func (a *schemaRegistryAdapter) GetLatest(topic string) (name string, version int, schemaType string, definition string, err error) {
+	return a.adapter.GetLatest(topic)
+}
+
+func (a *schemaRegistryAdapter) ListSchemas(topic string) ([]broker.SchemaRegistryInfo, error) {
+	schemas, err := a.adapter.ListSchemas(topic)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]broker.SchemaRegistryInfo, len(schemas))
+	for i, s := range schemas {
+		result[i] = broker.SchemaRegistryInfo{
+			Name:       s.Name,
+			Version:    s.Version,
+			Type:       s.Type,
+			Definition: s.Definition,
+		}
+	}
+	return result, nil
+}
+
+func (a *schemaRegistryAdapter) ListTopics() []string {
+	return a.adapter.ListTopics()
+}
+
+func (a *schemaRegistryAdapter) Delete(topic string, version int) error {
+	return a.adapter.Delete(topic, version)
 }

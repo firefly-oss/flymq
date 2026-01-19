@@ -49,11 +49,15 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+
+	"github.com/hamba/avro/v2"
 )
 
 // Validator validates messages against schemas.
 type Validator struct {
-	registry *Registry
+	registry    *Registry
+	avroSchemas sync.Map // cache of parsed Avro schemas: schemaID -> avro.Schema
 }
 
 // NewValidator creates a new validator.
@@ -222,28 +226,135 @@ func (v *Validator) validateType(value interface{}, expectedType, path string) s
 
 // validateAvro validates a message against an Avro schema.
 func (v *Validator) validateAvro(schema *Schema, message []byte) *ValidationResult {
-	// Basic Avro validation - check if message is valid binary
 	if len(message) == 0 {
 		return &ValidationResult{
 			Valid:  false,
 			Errors: []string{"empty message"},
 		}
 	}
-	// Full Avro validation would require an Avro library
+
+	// Get or parse the Avro schema
+	schemaKey := fmt.Sprintf("%s-v%d", schema.Topic, schema.Version)
+	var avroSchema avro.Schema
+	if cached, ok := v.avroSchemas.Load(schemaKey); ok {
+		avroSchema = cached.(avro.Schema)
+	} else {
+		var err error
+		avroSchema, err = avro.Parse(schema.Definition)
+		if err != nil {
+			return &ValidationResult{
+				Valid:  false,
+				Errors: []string{fmt.Sprintf("invalid Avro schema: %v", err)},
+			}
+		}
+		v.avroSchemas.Store(schemaKey, avroSchema)
+	}
+
+	// Try to unmarshal the message to validate it conforms to the schema
+	var decoded interface{}
+	if err := avro.Unmarshal(avroSchema, message, &decoded); err != nil {
+		return &ValidationResult{
+			Valid:  false,
+			Errors: []string{fmt.Sprintf("Avro validation failed: %v", err)},
+		}
+	}
+
 	return &ValidationResult{Valid: true}
 }
 
 // validateProto validates a message against a Protobuf schema.
+// Note: Full Protobuf validation requires compiled descriptors which are not
+// available at runtime. This performs basic structural validation only.
 func (v *Validator) validateProto(schema *Schema, message []byte) *ValidationResult {
-	// Basic Protobuf validation - check if message is valid binary
 	if len(message) == 0 {
 		return &ValidationResult{
 			Valid:  false,
 			Errors: []string{"empty message"},
 		}
 	}
-	// Full Protobuf validation would require a Protobuf library
+
+	// Protobuf messages have a specific wire format. We can do basic validation
+	// by checking that the message can be parsed as valid protobuf wire format.
+	// However, without the compiled descriptor, we cannot validate field types
+	// or required fields.
+	//
+	// Basic wire format validation:
+	// - Each field is encoded as (field_number << 3) | wire_type
+	// - Wire types: 0=varint, 1=64-bit, 2=length-delimited, 5=32-bit
+	if err := validateProtobufWireFormat(message); err != nil {
+		return &ValidationResult{
+			Valid:  false,
+			Errors: []string{fmt.Sprintf("invalid Protobuf wire format: %v", err)},
+		}
+	}
+
 	return &ValidationResult{Valid: true}
+}
+
+// validateProtobufWireFormat performs basic validation of protobuf wire format.
+func validateProtobufWireFormat(data []byte) error {
+	pos := 0
+	for pos < len(data) {
+		// Read the tag (varint)
+		tag, n := decodeVarint(data[pos:])
+		if n <= 0 {
+			return fmt.Errorf("invalid varint at position %d", pos)
+		}
+		pos += n
+
+		wireType := tag & 0x7
+		switch wireType {
+		case 0: // Varint
+			_, n := decodeVarint(data[pos:])
+			if n <= 0 {
+				return fmt.Errorf("invalid varint value at position %d", pos)
+			}
+			pos += n
+		case 1: // 64-bit
+			if pos+8 > len(data) {
+				return fmt.Errorf("truncated 64-bit value at position %d", pos)
+			}
+			pos += 8
+		case 2: // Length-delimited
+			length, n := decodeVarint(data[pos:])
+			if n <= 0 {
+				return fmt.Errorf("invalid length at position %d", pos)
+			}
+			pos += n
+			if pos+int(length) > len(data) {
+				return fmt.Errorf("truncated length-delimited value at position %d", pos)
+			}
+			pos += int(length)
+		case 5: // 32-bit
+			if pos+4 > len(data) {
+				return fmt.Errorf("truncated 32-bit value at position %d", pos)
+			}
+			pos += 4
+		case 3, 4: // Start/end group (deprecated)
+			// Groups are deprecated but valid
+			continue
+		default:
+			return fmt.Errorf("unknown wire type %d at position %d", wireType, pos)
+		}
+	}
+	return nil
+}
+
+// decodeVarint decodes a varint from the buffer and returns the value and bytes consumed.
+func decodeVarint(buf []byte) (uint64, int) {
+	var x uint64
+	var s uint
+	for i, b := range buf {
+		if i >= 10 { // varint is at most 10 bytes
+			return 0, -1
+		}
+		if b < 0x80 {
+			return x | uint64(b)<<s, i + 1
+		}
+		x |= uint64(b&0x7f) << s
+		s += 7
+	}
+	return 0, -1
 }
 
 // ValidateWithVersion validates a message against a specific schema version.

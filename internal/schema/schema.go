@@ -430,3 +430,102 @@ func (r *Registry) ApplyRegister(name, schemaType, definition, compatibility str
 func (r *Registry) ApplyDelete(name string, version int) error {
 	return r.Delete(name, version)
 }
+
+// SchemaInfoData contains schema metadata for admin API.
+// This struct is used by the AdminAdapter to return schema information
+// in a format compatible with the broker.SchemaRegistry interface.
+type SchemaInfoData struct {
+	Name       string
+	Version    int
+	Type       string
+	Definition string
+}
+
+// AdminAdapter wraps a Registry to provide a generic interface for admin operations.
+type AdminAdapter struct {
+	registry *Registry
+}
+
+// NewAdminAdapter creates a new admin adapter for the registry.
+func NewAdminAdapter(r *Registry) *AdminAdapter {
+	return &AdminAdapter{registry: r}
+}
+
+// Register registers a new schema.
+func (a *AdminAdapter) Register(topic string, schemaType, definition string, compat string) error {
+	var st SchemaType
+	switch schemaType {
+	case "json":
+		st = SchemaTypeJSON
+	case "avro":
+		st = SchemaTypeAvro
+	case "protobuf", "proto":
+		st = SchemaTypeProto
+	default:
+		st = SchemaTypeJSON
+	}
+
+	var cm CompatibilityMode
+	switch compat {
+	case "none":
+		cm = CompatibilityNone
+	case "backward":
+		cm = CompatibilityBackward
+	case "forward":
+		cm = CompatibilityForward
+	case "full":
+		cm = CompatibilityFull
+	default:
+		cm = CompatibilityBackward
+	}
+
+	_, err := a.registry.Register(topic, st, definition, cm)
+	return err
+}
+
+// Get retrieves a schema by topic and version.
+func (a *AdminAdapter) Get(topic string, version int) (name string, schemaType string, definition string, err error) {
+	schema, err := a.registry.Get(topic, version)
+	if err != nil {
+		return "", "", "", err
+	}
+	return schema.Topic, string(schema.Type), schema.Definition, nil
+}
+
+// GetLatest retrieves the latest schema for a topic.
+func (a *AdminAdapter) GetLatest(topic string) (name string, version int, schemaType string, definition string, err error) {
+	schema, err := a.registry.GetLatest(topic)
+	if err != nil {
+		return "", 0, "", "", err
+	}
+	return schema.Topic, schema.Version, string(schema.Type), schema.Definition, nil
+}
+
+// ListSchemas returns all schemas for a topic.
+func (a *AdminAdapter) ListSchemas(topic string) ([]SchemaInfoData, error) {
+	schemas, err := a.registry.List(topic)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]SchemaInfoData, 0, len(schemas))
+	for _, s := range schemas {
+		result = append(result, SchemaInfoData{
+			Name:       s.Topic,
+			Version:    s.Version,
+			Type:       string(s.Type),
+			Definition: s.Definition,
+		})
+	}
+	return result, nil
+}
+
+// ListTopics returns all topics with schemas.
+func (a *AdminAdapter) ListTopics() []string {
+	return a.registry.ListTopics()
+}
+
+// Delete removes a schema version.
+func (a *AdminAdapter) Delete(topic string, version int) error {
+	return a.registry.Delete(topic, version)
+}

@@ -29,15 +29,34 @@ import (
 	"flymq/internal/dlq"
 )
 
+// SchemaRegistryInfo contains schema metadata returned by the registry.
+type SchemaRegistryInfo struct {
+	Name       string
+	Version    int
+	Type       string
+	Definition string
+}
+
+// SchemaRegistry interface for schema operations.
+type SchemaRegistry interface {
+	Register(topic string, schemaType, definition string, compat string) error
+	Get(topic string, version int) (name string, schemaType string, definition string, err error)
+	GetLatest(topic string) (name string, version int, schemaType string, definition string, err error)
+	ListSchemas(topic string) ([]SchemaRegistryInfo, error)
+	ListTopics() []string
+	Delete(topic string, version int) error
+}
+
 // AdminHandler implements the admin.AdminHandler interface.
 type AdminHandler struct {
-	broker     *Broker
-	config     *config.Config
-	version    string
-	startTime  time.Time
-	authorizer *auth.Authorizer
-	dlqManager *dlq.Manager
-	auditStore audit.Store
+	broker         *Broker
+	config         *config.Config
+	version        string
+	startTime      time.Time
+	authorizer     *auth.Authorizer
+	dlqManager     *dlq.Manager
+	auditStore     audit.Store
+	schemaRegistry SchemaRegistry
 }
 
 // NewAdminHandler creates a new admin handler.
@@ -63,6 +82,11 @@ func (h *AdminHandler) SetDLQManager(m *dlq.Manager) {
 // SetAuditStore sets the audit store for audit trail operations.
 func (h *AdminHandler) SetAuditStore(s audit.Store) {
 	h.auditStore = s
+}
+
+// SetSchemaRegistry sets the schema registry for schema operations.
+func (h *AdminHandler) SetSchemaRegistry(r SchemaRegistry) {
+	h.schemaRegistry = r
 }
 
 // GetClusterInfo returns cluster information.
@@ -326,30 +350,74 @@ func (h *AdminHandler) DeleteConsumerGroup(name string) error {
 }
 
 // ListSchemas returns all schemas.
-// Note: Schema operations are available if the broker has a schema registry.
-// For now, this returns an empty list as schema registration is typically done separately.
 func (h *AdminHandler) ListSchemas() ([]admin.SchemaInfo, error) {
-	// Schema registry is not directly exposed through broker
-	// Return empty list - schemas are managed through separate schema API
-	return []admin.SchemaInfo{}, nil
+	if h.schemaRegistry == nil {
+		return []admin.SchemaInfo{}, nil
+	}
+
+	topics := h.schemaRegistry.ListTopics()
+	var result []admin.SchemaInfo
+
+	for _, topic := range topics {
+		schemas, err := h.schemaRegistry.ListSchemas(topic)
+		if err != nil {
+			continue
+		}
+		for _, s := range schemas {
+			result = append(result, admin.SchemaInfo{
+				Name:    s.Name,
+				Version: s.Version,
+				Type:    s.Type,
+				Schema:  s.Definition,
+			})
+		}
+	}
+
+	return result, nil
 }
 
 // GetSchema returns schema information.
 func (h *AdminHandler) GetSchema(name string) (*admin.SchemaInfo, error) {
-	return nil, fmt.Errorf("schema not found: %s", name)
+	if h.schemaRegistry == nil {
+		return nil, fmt.Errorf("schema registry not configured")
+	}
+
+	schemaName, version, schemaType, definition, err := h.schemaRegistry.GetLatest(name)
+	if err != nil {
+		return nil, fmt.Errorf("schema not found: %s", name)
+	}
+
+	return &admin.SchemaInfo{
+		Name:    schemaName,
+		Version: version,
+		Type:    schemaType,
+		Schema:  definition,
+	}, nil
 }
 
 // RegisterSchema registers a new schema.
-// Note: Full schema registration should be done through the schema registry API.
 func (h *AdminHandler) RegisterSchema(name string, schema []byte) error {
-	// Schema registration is handled by the schema registry
-	// This is a placeholder for the admin API
-	return fmt.Errorf("schema registration not supported through admin API, use schema registry directly")
+	if h.schemaRegistry == nil {
+		return fmt.Errorf("schema registry not configured")
+	}
+
+	// Default to JSON schema type and backward compatibility
+	return h.schemaRegistry.Register(name, "json", string(schema), "backward")
 }
 
 // DeleteSchema deletes a schema.
 func (h *AdminHandler) DeleteSchema(name string) error {
-	return fmt.Errorf("schema not found: %s", name)
+	if h.schemaRegistry == nil {
+		return fmt.Errorf("schema registry not configured")
+	}
+
+	// Get the latest version to delete
+	_, version, _, _, err := h.schemaRegistry.GetLatest(name)
+	if err != nil {
+		return fmt.Errorf("schema not found: %s", name)
+	}
+
+	return h.schemaRegistry.Delete(name, version)
 }
 
 // ============================================================================
