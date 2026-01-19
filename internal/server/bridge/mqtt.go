@@ -1,3 +1,35 @@
+// Package bridge provides protocol bridges for FlyMQ.
+//
+// The MQTT bridge enables MQTT v3.1.1 clients to interact with FlyMQ topics
+// using the standard MQTT protocol. This allows existing MQTT-based IoT devices
+// and applications to seamlessly integrate with FlyMQ.
+//
+// # Protocol Support
+//
+// The bridge implements a subset of MQTT v3.1.1 (OASIS Standard):
+//   - CONNECT: Client authentication with username/password
+//   - CONNACK: Connection acknowledgment
+//   - PUBLISH: Message publishing (QoS 0 only)
+//   - SUBSCRIBE: Topic subscription (QoS 0 only)
+//   - SUBACK: Subscription acknowledgment
+//   - PINGREQ/PINGRESP: Keep-alive mechanism
+//   - DISCONNECT: Clean session termination
+//
+// # Limitations
+//
+// The following MQTT features are NOT supported:
+//   - QoS 1 (at-least-once) and QoS 2 (exactly-once) delivery
+//   - Retained messages
+//   - Will messages (parsed but not implemented)
+//   - MQTT v5.0 features
+//   - Wildcard subscriptions (+, #)
+//   - UNSUBSCRIBE command
+//   - Session persistence
+//
+// # Topic Mapping
+//
+// MQTT topics are mapped directly to FlyMQ topics. The MQTT topic name
+// becomes the FlyMQ topic name. All messages are published to partition 0.
 package bridge
 
 import (
@@ -18,6 +50,18 @@ import (
 	"flymq/internal/protocol"
 )
 
+// Default configuration values for MQTT bridge
+const (
+	// DefaultSubscriptionPollInterval is the default interval for polling messages in subscriptions
+	DefaultMQTTSubscriptionPollInterval = 100 * time.Millisecond
+	// DefaultReadTimeout is the default timeout for read operations
+	DefaultMQTTReadTimeout = 60 * time.Second
+	// DefaultWriteTimeout is the default timeout for write operations
+	DefaultMQTTWriteTimeout = 10 * time.Second
+	// DefaultMaxMessageSize is the maximum allowed MQTT message size (256KB)
+	DefaultMaxMessageSize = 256 * 1024
+)
+
 // Broker is a minimal interface for the MQTT bridge to interact with the broker.
 type Broker interface {
 	ProduceWithKeyAndPartition(topic string, key, data []byte) (uint64, int, error)
@@ -25,23 +69,32 @@ type Broker interface {
 	FetchWithKeys(topic string, partition int, offset uint64, maxMessages int, filter string) ([]broker.FetchedMessage, uint64, error)
 }
 
-// MQTTBridge provides a basic bridge for MQTT clients.
-// This is a placeholder implementation for protocol bridging.
+// MQTTBridge provides a bridge for MQTT v3.1.1 clients to interact with FlyMQ.
+//
+// The bridge translates MQTT protocol messages to FlyMQ operations:
+//   - PUBLISH → ProduceWithKeyAndPartition
+//   - SUBSCRIBE → Subscribe + FetchWithKeys polling
+//
+// See package documentation for supported features and limitations.
 type MQTTBridge struct {
-	broker     Broker
-	config     *config.Config
-	authorizer *auth.Authorizer
-	logger     *logging.Logger
-	ln         net.Listener
+	broker       Broker
+	config       *config.Config
+	authorizer   *auth.Authorizer
+	logger       *logging.Logger
+	ln           net.Listener
+	readTimeout  time.Duration
+	writeTimeout time.Duration
 }
 
-// NewMQTTBridge creates a new MQTT bridge.
+// NewMQTTBridge creates a new MQTT bridge with default timeouts.
 func NewMQTTBridge(cfg *config.Config, b Broker, authorizer *auth.Authorizer, logger *logging.Logger) *MQTTBridge {
 	return &MQTTBridge{
-		broker:     b,
-		config:     cfg,
-		authorizer: authorizer,
-		logger:     logger,
+		broker:       b,
+		config:       cfg,
+		authorizer:   authorizer,
+		logger:       logger,
+		readTimeout:  DefaultMQTTReadTimeout,
+		writeTimeout: DefaultMQTTWriteTimeout,
 	}
 }
 
@@ -89,15 +142,26 @@ func (b *MQTTBridge) acceptLoop() {
 	}
 }
 
+// mqttConn is a thread-safe wrapper for MQTT connections.
+//
+// It provides:
+//   - Thread-safe write operations
+//   - Write timeouts to prevent blocking on slow clients
+//   - User authentication state tracking
 type mqttConn struct {
-	conn     net.Conn
-	mu       sync.Mutex
-	username string
+	conn         net.Conn
+	mu           sync.Mutex
+	username     string
+	writeTimeout time.Duration
 }
 
+// Write writes data to the connection with a timeout.
 func (c *mqttConn) Write(p []byte) (n int, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.writeTimeout > 0 {
+		c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	}
 	return c.conn.Write(p)
 }
 
@@ -105,15 +169,26 @@ func (b *MQTTBridge) handleConn(conn net.Conn) {
 	defer conn.Close()
 	b.logger.Info("New MQTT connection", "remote", conn.RemoteAddr())
 
-	mqtt := &mqttConn{conn: conn}
+	mqtt := &mqttConn{
+		conn:         conn,
+		writeTimeout: b.writeTimeout,
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Basic MQTT packet reader
+	// Basic MQTT packet reader with read timeout
 	for {
+		// Set read deadline for idle connection detection
+		if b.readTimeout > 0 {
+			conn.SetReadDeadline(time.Now().Add(b.readTimeout))
+		}
+
 		header := make([]byte, 1)
 		_, err := io.ReadFull(conn, header)
 		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				b.logger.Debug("MQTT connection timed out", "remote", conn.RemoteAddr())
+			}
 			return
 		}
 
@@ -301,31 +376,46 @@ func (b *MQTTBridge) handleConn(conn net.Conn) {
 	}
 }
 
+// subscriptionLoop continuously polls for new messages and sends them to the MQTT client.
+//
+// The loop uses a configurable poll interval to balance latency vs CPU usage.
+// It implements exponential backoff on errors to prevent overwhelming the broker.
 func (b *MQTTBridge) subscriptionLoop(mqtt *mqttConn, ctx context.Context, topic string, partition int, offset uint64) {
+	pollInterval := DefaultMQTTSubscriptionPollInterval
+	errorBackoff := time.Second
+
 	for {
 		select {
 		case <-ctx.Done():
+			b.logger.Debug("MQTT subscription loop ended", "topic", topic, "partition", partition)
 			return
 		default:
 			msgs, nextOffset, err := b.broker.FetchWithKeys(topic, partition, offset, 10, "")
 			if err != nil {
-				time.Sleep(1 * time.Second)
+				b.logger.Error("MQTT subscription fetch failed", "topic", topic, "partition", partition, "error", err)
+				// Exponential backoff on errors, capped at 30 seconds
+				time.Sleep(errorBackoff)
+				if errorBackoff < 30*time.Second {
+					errorBackoff *= 2
+				}
 				continue
 			}
+			// Reset backoff on success
+			errorBackoff = time.Second
 
 			if len(msgs) == 0 {
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(pollInterval)
 				continue
 			}
 
 			for _, msg := range msgs {
-				// Send MQTT PUBLISH packet
+				// Send MQTT PUBLISH packet (QoS 0)
 				topicBytes := []byte(topic)
 				varLen := 2 + len(topicBytes)
 				remainingLen := varLen + len(msg.Value)
 
 				packet := make([]byte, 0, 5+remainingLen)
-				packet = append(packet, 0x30)
+				packet = append(packet, 0x30) // PUBLISH, QoS 0, no retain
 				packet = append(packet, b.encodeRemainingLength(remainingLen)...)
 
 				packet = append(packet, byte(len(topicBytes)>>8), byte(len(topicBytes)&0xFF))
@@ -333,6 +423,7 @@ func (b *MQTTBridge) subscriptionLoop(mqtt *mqttConn, ctx context.Context, topic
 				packet = append(packet, msg.Value...)
 
 				if _, err := mqtt.Write(packet); err != nil {
+					b.logger.Debug("MQTT subscription write failed, closing", "error", err)
 					return
 				}
 			}
