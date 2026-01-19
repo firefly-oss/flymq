@@ -191,9 +191,18 @@ func SetAvroSchema(schema string) error {
 	return AvroSerde.SetSchema(schema)
 }
 
-// SetProtoDescriptor is a placeholder for future dynamic Protobuf support.
-func SetProtoDescriptor(descriptor []byte) {
-	// In a real implementation, we would load the descriptor to allow dynamic encoding/decoding
+// SetProtoDescriptor is reserved for future dynamic Protobuf support.
+//
+// Currently, Protobuf serialization requires compiled proto.Message types.
+// Use the generated Go types from your .proto files with ProtoSerde.
+//
+// Dynamic Protobuf support (using descriptors at runtime) would require
+// additional dependencies and is not currently implemented.
+//
+// Deprecated: This function is a no-op. Use compiled proto.Message types instead.
+func SetProtoDescriptor(_ []byte) {
+	// Dynamic Protobuf descriptor loading is not implemented.
+	// Use compiled proto.Message types with ProtoSerde.Encode/Decode instead.
 }
 
 // RegisterSerde registers an encoder and decoder.

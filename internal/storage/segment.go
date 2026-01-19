@@ -154,8 +154,6 @@ func NewSegment(dir string, baseOffset uint64, c Config) (*Segment, error) {
 		}
 		s.store = batchedStore
 		s.storeSize = &batchedStore.size
-		// Debug: log that we're using batched store
-		// fmt.Printf("DEBUG: Using BatchedStore for segment %d (acks=%s)\n", baseOffset, c.Performance.Acks)
 	} else {
 		store, err := NewStore(storeFile)
 		if err != nil {
@@ -163,8 +161,6 @@ func NewSegment(dir string, baseOffset uint64, c Config) (*Segment, error) {
 		}
 		s.store = store
 		s.storeSize = &store.size
-		// Debug: log that we're using regular store
-		// fmt.Printf("DEBUG: Using regular Store for segment %d (acks=%s)\n", baseOffset, c.Performance.Acks)
 	}
 
 	// Open/create the index file
