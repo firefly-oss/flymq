@@ -2,7 +2,7 @@
 
 This document outlines the planned features and improvements for FlyMQ.
 
-## Current Status (v1.26.10)
+## Current Status (v1.26.11)
 
 The following features are implemented and available:
 
@@ -48,8 +48,16 @@ The following features are implemented and available:
 - ✅ **mDNS Service Discovery** - Zero-configuration cluster node discovery
 - ✅ **Cluster Metadata API** - Partition-to-node mappings for smart client routing
 - ✅ **gRPC Support** - High-performance gRPC API for production and consumption
+  - gRPC health check protocol for load balancer integration
+  - Connection keepalive for long-lived connections
+  - Graceful shutdown with health status signaling
 - ✅ **WebSocket Gateway** - Direct browser-based messaging support
+  - Ping/pong heartbeat for connection health monitoring
+  - Configurable origin checking for CORS security
+  - Write timeouts and exponential backoff
 - ✅ **MQTT Bridge** - Basic MQTT v3.1.1 protocol bridging support
+  - Read/write timeouts for connection management
+  - Exponential backoff for subscription errors
 
 ### Performance Improvements
 - ✅ Zero-copy message delivery
@@ -60,12 +68,16 @@ The following features are implemented and available:
 
 ### Advanced Messaging Features
 - ✅ Message schemas with validation (JSON Schema, Avro, Protobuf)
+  - Real Avro validation using `hamba/avro` library
+  - Protobuf wire format validation
+  - Schema registry REST API integration
 - ✅ Dead letter queues with retry policies
 - ✅ **DLQ Re-injection** - Manual re-injection of failed messages by offset
 - ✅ Message TTL and expiration
 - ✅ Delayed message delivery
 - ✅ Transaction support (exactly-once semantics)
 - ✅ **Typed SerDe System** - Pluggable encoders/decoders for multiple payload formats
+- ✅ **Consumer Group Member Tracking** - Active member tracking with automatic cleanup
 
 ### Observability
 - ✅ Prometheus metrics endpoint
@@ -91,6 +103,8 @@ The following features are implemented and available:
 
 ### Deployment & Operations
 - ✅ Interactive installer for Linux, macOS, Windows
+  - Installation verification with version checking
+  - Backup before removal option in uninstaller
 - ✅ Docker deployment with enterprise setup script
 - ✅ Cloud deployment guides (AWS, Azure, GCP)
 - ✅ On-premise deployment documentation

@@ -5,7 +5,7 @@ All notable changes to FlyMQ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January 2026, Patch 1).
 
-## [1.26.11] - 2026-01-18
+## [1.26.11] - 2026-01-19
 
 ### Added
 
@@ -15,16 +15,25 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
   - Authentication and authorization integration
   - TLS support with auto-generated certificates
   - Protobuf definitions for type-safe client generation
+  - **gRPC Health Check Protocol** - Standard health check service for load balancer integration
+  - **Connection Keepalive** - Configurable keepalive settings for long-lived connections
+  - **Graceful Shutdown** - Health status signaling during shutdown for zero-downtime deployments
 - **WebSocket Gateway** - Direct browser-based messaging support
   - JSON-based WebSocket API for web applications
   - Real-time message streaming with subscription management
   - Authentication support with session management
   - CORS-enabled for cross-origin browser requests
+  - **Ping/Pong Heartbeat** - Connection health monitoring with automatic dead connection detection
+  - **Configurable Origin Checking** - Security-focused CORS configuration for production
+  - **Write Timeouts** - Protection against slow clients blocking the server
+  - **Exponential Backoff** - Smart retry logic for subscription polling errors
 - **MQTT Bridge** - IoT workload support with MQTT v3.1.1 compatibility
   - Basic MQTT packet handling (CONNECT, PUBLISH, SUBSCRIBE, PINGREQ)
   - Topic bridging between MQTT and FlyMQ topics
   - Authentication integration with FlyMQ's RBAC system
   - TLS support for secure MQTT connections
+  - **Read/Write Timeouts** - Configurable timeouts for connection management
+  - **Exponential Backoff** - Smart retry logic for subscription errors
 
 #### Message Compression
 - **Multi-Algorithm Support** - Efficient message compression to reduce network overhead
@@ -59,6 +68,46 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 - **Java SDK** - Updated `Serdes` utility with registry support and real Avro/Protobuf implementations.
 - **CLI Flags** - Enhanced `produce`, `consume`, `subscribe`, and `explore` with `--encoder`, `--decoder`, and `--schema` flags.
 
+#### Schema Registry REST API
+- **Admin API Integration** - Schema registry now accessible via REST API
+  - `GET /schemas` - List all registered schemas
+  - `GET /schemas/{name}` - Get schema by name (returns latest version)
+  - `POST /schemas` - Register new schema
+  - `DELETE /schemas/{name}` - Delete schema
+- **Schema Admin Adapter** - New adapter layer connecting schema registry to admin handler
+  - Type conversion between schema registry and admin API formats
+  - Support for JSON, Avro, and Protobuf schema types
+
+#### Enhanced Schema Validation
+- **Real Avro Validation** - Full Avro schema validation using `hamba/avro` library
+  - Schema parsing and caching for performance
+  - Binary message validation against Avro schemas
+- **Protobuf Wire Format Validation** - Basic protobuf wire format validation
+  - Varint, fixed32, fixed64, and length-delimited field validation
+  - Wire type checking for protocol conformance
+
+#### Consumer Group Member Tracking
+- **Active Member Tracking** - Consumer groups now track active members
+  - `RegisterConsumerMember()` / `UnregisterConsumerMember()` APIs
+  - Automatic cleanup on connection close
+  - Member count visible in consumer group info
+- **Connection-to-Group Mapping** - Server tracks consumer group membership per connection
+  - Automatic member registration on subscribe
+  - Automatic member unregistration on disconnect
+
+#### Installer Improvements
+- **Installation Verification** - New verification step after installation
+  - Checks all binaries exist and are executable
+  - Displays version information for each binary
+  - Reports optional components (flymq-discover)
+- **Backup Before Removal** - Uninstaller now supports backup option
+  - `--backup` flag to backup config and data before removal
+  - `--backup-dir` to specify custom backup location
+  - Restore instructions provided after backup
+- **Build Improvements** - Fixed PowerShell installer build commands
+  - Proper module path syntax for Go build
+  - Added flymq-discover to Windows installer
+
 ### Changed
 - **Protocol Enhancement** - Extended binary protocol with compression support and flags parameter in `WriteMessage()`
 - **Server Architecture** - Modular server design with separate gRPC, WebSocket, and MQTT components
@@ -66,6 +115,13 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 - **Documentation Clarity** - Updated `README.md` to clearly distinguish between **Client-Side SerDe** and **Server-Side Schema Store**.
 - **Installation Experience** - Updated `install.sh` with dedicated prompts for Avro/Protobuf SerDe options and clarified Schema Store configuration.
 - **CLI Help** - Refined help messages to improve discoverability of advanced features like audit trail and schema validation.
+- **README Multi-Protocol Section** - Added comprehensive documentation for gRPC, WebSocket, and MQTT protocols
+  - Protocol comparison table with ports and use cases
+  - Code examples for JavaScript WebSocket, Python MQTT, and grpcurl
+  - TLS configuration examples for all protocols
+- **TTL Store Implementation** - Improved documentation and implementation of TTL message handling
+  - Clear explanation of append-only log semantics
+  - Proper offset range listing for TTL scanning
 
 ---
 
@@ -546,6 +602,7 @@ and this project adheres to Month.Year.Patch versioning (e.g., v1.26.1 = January
 
 ---
 
+[1.26.11]: https://github.com/firefly-oss/flymq/compare/v1.26.10...v1.26.11
 [1.26.10]: https://github.com/firefly-oss/flymq/compare/v1.26.9...v1.26.10
 [1.26.9]: https://github.com/firefly-oss/flymq/compare/v1.26.8...v1.26.9
 [1.26.8]: https://github.com/firefly-oss/flymq/compare/v1.26.7...v1.26.8
